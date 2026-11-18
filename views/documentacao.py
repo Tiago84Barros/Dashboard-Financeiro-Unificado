@@ -2574,6 +2574,9 @@ FLOW_EMPRESAS_B3_TELAS = FlowSpec(
                 "O aviso é decidido depois que a subaba carrega: pega também a leitura "
                 "que caiu na reserva no meio dela",
                 "Motivo da reserva: Configurações → Restrições (detalhe.b3.fonte_reserva)",
+                "O mesmo aviso, pela função única design.componentes.aviso_fonte_reserva_b3, "
+                "sai no topo de Dashboard Geral, Seleção de FIIs e Portfólio Global "
+                "(app.py::_ROTAS_QUE_LEEM_B3), que também leem a B3 por core.market_read",
                 "Ficam no banco do app: public.macro e public.docs_corporativos, fora do papel",
             ),
             "O papel do túnel só enxerga market, market_us e public.setores: é ele, e não o "

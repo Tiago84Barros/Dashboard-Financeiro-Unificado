@@ -3374,14 +3374,6 @@ def render() -> None:
 
 def _aviso_fonte_reserva_b3(slot) -> None:
     """Preenche o aviso do topo se alguma leitura da B3 caiu na cópia congelada."""
-    from core.fonte_b3 import aviso_reserva
+    from design.componentes import aviso_fonte_reserva_b3
 
-    motivo = aviso_reserva()
-    if not motivo:
-        return
-    with slot.container():
-        st.warning(
-            "O armazém de dados não respondeu. Os dados da B3 abaixo são a "
-            "cópia guardada em 15/11/2026 e podem estar desatualizados.")
-        detalhe_tecnico(f"B3 lida da cópia congelada do Supabase: {motivo}.",
-                        codigo="b3.fonte_reserva")
+    aviso_fonte_reserva_b3(slot)

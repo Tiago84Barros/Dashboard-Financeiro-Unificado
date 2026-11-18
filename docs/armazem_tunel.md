@@ -181,7 +181,10 @@ armazém. O ponto único é `core/fonte_b3.py::consultar`, chamado por
 4. nada disso, ou o degrau escolhido falhou: lê a cópia do Supabase congelada
    em 15/11 e registra o motivo. A tela de Empresas B3 mostra um aviso amarelo
    por até 12 h (o maior cache dos loaders) e o motivo vai para Configurações →
-   Restrições (`detalhe.b3.fonte_reserva`).
+   Restrições (`detalhe.b3.fonte_reserva`). Dashboard Geral, Seleção de FIIs e
+   Portfólio Global também leem a B3 por `core.market_read` (o Portfólio Global,
+   pelos preços mensais das posições brasileiras) e mostram o mesmo aviso no
+   topo, pelo roteador (`app.py::_ROTAS_QUE_LEEM_B3`).
 
 A barreira de segurança da rota é o papel `app4_leitura`, não o filtro do
 texto: ele só enxerga `market`, `market_us` e `public.setores`. Crie (ou troque

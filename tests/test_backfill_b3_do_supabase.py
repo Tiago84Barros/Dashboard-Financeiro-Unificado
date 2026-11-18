@@ -4,7 +4,9 @@ from __future__ import annotations
 import datetime as dt
 
 import pandas as pd
+import pytest
 
+from scripts import backfill_b3_precos_proventos_do_supabase as bf
 from scripts.backfill_b3_precos_proventos_do_supabase import (
     precos_faltantes,
     proventos_faltantes,
@@ -82,3 +84,95 @@ def test_provento_sem_data_ex_nao_some_quando_o_armazem_tem_outro_sem_data_ex():
                           "payment_date": [D(2025, 6, 10)], "type": ["JCP"],
                           "amount": [0.7]})
     assert len(proventos_faltantes(local, nuvem)) == 1
+
+
+# ── --apply: o manifesto de desfazer é gravado antes do commit ─────────────
+
+class _Res:
+    def __init__(self, n):
+        self._n = n
+
+    def scalar_one(self):
+        return self._n
+
+
+class _Transacao:
+    """Imita ``engine.begin()``: commit na saída limpa, rollback na exceção."""
+
+    def __init__(self, diario):
+        self.diario = diario
+        self.contagens = {"historical_prices": 10, "dividends": 5}
+
+    def execute(self, sql, params=None):
+        texto = str(sql)
+        if texto.startswith("select count(*)"):
+            return _Res(self.contagens[texto.rsplit(".", 1)[1]])
+        tabela = "historical_prices" if "historical_prices" in texto else "dividends"
+        self.contagens[tabela] += len(params)
+        self.diario.append(("insert", tabela))
+        return None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, tipo, *_):
+        self.diario.append(("rollback",) if tipo else ("commit",))
+        return False
+
+
+class _Eng:
+    def __init__(self):
+        self.diario = []
+
+    def begin(self):
+        return _Transacao(self.diario)
+
+
+def _faltas():
+    p = pd.DataFrame([{c: None for c in bf._COLS_PRECO} | {
+        "ticker": "AAA3", "date": D(2026, 1, 3), "close": 11.0}])
+    d = pd.DataFrame([{c: None for c in bf._COLS_PROVENTO} | {
+        "ticker": "AAA3", "ex_date": D(2025, 12, 26), "event_date": D(2025, 12, 26),
+        "type": "JCP", "amount": 0.5}])
+    return p, d
+
+
+def test_apply_grava_o_manifesto_antes_do_commit(tmp_path, monkeypatch):
+    eng = _Eng()
+    destino = tmp_path / "bk" / "m.json"
+    original = bf.gravar_manifesto
+
+    def _espia(dest, man):
+        eng.diario.append(("manifesto",))
+        original(dest, man)
+
+    monkeypatch.setattr(bf, "gravar_manifesto", _espia)
+    p, d = _faltas()
+    assert bf.aplicar(eng, p, d, destino) == (1, 1)
+    assert eng.diario[-2:] == [("manifesto",), ("commit",)]
+    assert destino.exists()
+    assert not destino.with_suffix(".json.tmp").exists()
+
+
+def test_falha_ao_gravar_o_manifesto_desfaz_os_inserts(tmp_path, monkeypatch):
+    eng = _Eng()
+    destino = tmp_path / "bk" / "m.json"
+
+    def _disco_cheio(*_a, **_k):
+        raise OSError("disco cheio")
+
+    monkeypatch.setattr(bf, "gravar_manifesto", _disco_cheio)
+    p, d = _faltas()
+    with pytest.raises(OSError, match="disco cheio"):
+        bf.aplicar(eng, p, d, destino)
+    assert eng.diario[-1] == ("rollback",)
+    assert ("commit",) not in eng.diario
+    assert not destino.exists()
+
+
+def test_manifesto_relido_confere_com_o_gravado(tmp_path):
+    p, d = _faltas()
+    man = bf.manifesto_de_desfazer(p, d)
+    bf.gravar_manifesto(tmp_path / "m.json", man)
+    assert man["precos"] == [["AAA3", "2026-01-03"]]
+    assert man["proventos"] == [["AAA3", "2025-12-26", "2025-12-26", "JCP", 0.5]]

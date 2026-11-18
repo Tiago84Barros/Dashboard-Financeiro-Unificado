@@ -1010,3 +1010,25 @@ def score_saude(score: int, label: str = "Saúde Financeira") -> None:
         </div>""",
         unsafe_allow_html=True,
     )
+
+
+def aviso_fonte_reserva_b3(slot) -> None:
+    """Preenche ``slot`` com o aviso se alguma leitura da B3 caiu na cópia congelada.
+
+    Chamado depois que a tela carregou (num ``finally``): as leituras que caem
+    na reserva acontecem durante o desenho, e o lugar do aviso é reservado no
+    topo antes. Vale para toda tela que lê a B3 por ``core.market_read`` --
+    Empresas B3 e, pelo roteador do ``app.py``, Dashboard Geral, Seleção de
+    FIIs e Portfólio Global (preços mensais das posições brasileiras).
+    """
+    from core.fonte_b3 import aviso_reserva
+
+    motivo = aviso_reserva()
+    if not motivo:
+        return
+    with slot.container():
+        st.warning(
+            "O armazém de dados não respondeu. Os dados da B3 desta tela podem "
+            "ser a cópia guardada em 15/11/2026 e estar desatualizados.")
+        detalhe_tecnico(f"B3 lida da cópia congelada do Supabase: {motivo}.",
+                        codigo="b3.fonte_reserva")

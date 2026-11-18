@@ -319,3 +319,51 @@ def test_aviso_do_topo_e_decidido_depois_da_subaba(monkeypatch):
     monkeypatch.setattr(fonte, "aviso_reserva", lambda: "túnel fora do ar")
     tela._aviso_fonte_reserva_b3(Slot())
     assert Slot.usado == 1 and len(avisos) == 1
+
+
+def test_rotas_que_leem_a_b3_pelo_market_read_ganham_o_aviso():
+    """Portfólio Global lê preço mensal da B3 por ``market_read``; sem o aviso
+    no roteador, a cópia congelada entraria nas contas sem ninguém saber."""
+    import ast
+    from pathlib import Path
+
+    arvore = ast.parse(Path("app.py").read_text(encoding="utf-8"))
+    rotas = conjunto = None
+    for n in ast.walk(arvore):
+        alvo = (n.target if isinstance(n, ast.AnnAssign)
+                else n.targets[0] if isinstance(n, ast.Assign) else None)
+        nome = getattr(alvo, "id", "")
+        if nome == "_ROTAS":
+            rotas = set(ast.literal_eval(n.value).values())
+        elif nome == "_ROTAS_QUE_LEEM_B3":
+            conjunto = set(ast.literal_eval(n.value.args[0]))
+    assert conjunto and conjunto <= rotas
+    # Empresas B3 reserva o próprio lugar; as demais, pelo roteador.
+    leem = {"dashboard_geral", "fiis", "portfolio_global"}
+    assert leem <= conjunto
+    assert "empresas_b3" not in conjunto
+
+
+def test_aviso_unico_serve_empresas_b3_e_o_roteador(monkeypatch):
+    import streamlit as st
+
+    import core.fonte_b3 as fb
+    from design import componentes
+
+    escritos = []
+
+    class _Slot:
+        def container(self):
+            import contextlib
+            return contextlib.nullcontext()
+
+    monkeypatch.setattr(fb, "aviso_reserva", lambda: "túnel caiu")
+    monkeypatch.setattr(st, "warning", lambda t, **_: escritos.append(t))
+    monkeypatch.setattr(componentes, "detalhe_tecnico", lambda *a, **k: None)
+    componentes.aviso_fonte_reserva_b3(_Slot())
+    assert escritos and "15/11/2026" in escritos[0]
+
+    escritos.clear()
+    monkeypatch.setattr(fb, "aviso_reserva", lambda: None)
+    componentes.aviso_fonte_reserva_b3(_Slot())
+    assert escritos == []

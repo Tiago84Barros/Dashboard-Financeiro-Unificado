@@ -170,6 +170,70 @@ def _registros(df: pd.DataFrame, cols: list[str]) -> list[dict]:
     return out
 
 
+def manifesto_de_desfazer(p_falta: pd.DataFrame, d_falta: pd.DataFrame) -> dict:
+    """As chaves do que o ``--apply`` insere: o bastante para desfazer."""
+    return {
+        "precos": [[t, str(d)] for t, d in p_falta[["ticker", "date"]].itertuples(index=False)],
+        "proventos": [[t, str(e), str(x), tp, float(a)] for t, e, x, tp, a in
+                      d_falta[["ticker", "event_date", "ex_date", "type", "amount"]]
+                      .itertuples(index=False)],
+    }
+
+
+def gravar_manifesto(destino: Path, manifesto: dict) -> None:
+    """Grava o manifesto e confere a releitura; qualquer falha levanta.
+
+    Escreve num ``.tmp`` e renomeia: o arquivo final nunca fica pela metade.
+    """
+    corpo = json.dumps(manifesto, ensure_ascii=False)
+    tmp = destino.with_suffix(destino.suffix + ".tmp")
+    tmp.write_text(corpo, encoding="utf-8")
+    tmp.replace(destino)
+    if json.loads(destino.read_text(encoding="utf-8")) != manifesto:
+        raise OSError(f"manifesto de desfazer não confere: {destino}")
+
+
+def aplicar(loc, p_falta: pd.DataFrame, d_falta: pd.DataFrame,
+            destino: Path) -> tuple[int, int]:
+    """Insere o que falta e devolve (preços, proventos) de fato inseridos.
+
+    O manifesto de desfazer é gravado e conferido DENTRO da transação: se a
+    escrita falhar (disco cheio, pasta sem permissão), a exceção desfaz os
+    inserts. Gravado depois do commit, uma falha deixaria o armazém alterado
+    sem as chaves para voltar -- e rodar de novo não as recupera, porque o que
+    entrou deixa de aparecer como faltante. Se o commit é que falhar, o
+    manifesto é apagado: ele listaria chaves que não entraram.
+    """
+    def _n(c, t):
+        return c.execute(text(f"select count(*) from market.{t}")).scalar_one()
+
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    manifesto = manifesto_de_desfazer(p_falta, d_falta)
+    try:
+        with loc.begin() as c:
+            # ``rowcount`` do executemany não soma os lotes: mede antes e depois.
+            n0_p, n0_d = _n(c, "historical_prices"), _n(c, "dividends")
+            if len(p_falta):
+                sql = text(
+                    "insert into market.historical_prices (" + ", ".join(_COLS_PRECO) + ") "
+                    "values (" + ", ".join(":" + x for x in _COLS_PRECO) + ") "
+                    "on conflict (ticker, date) do nothing")
+                c.execute(sql, _registros(p_falta, _COLS_PRECO))
+            if len(d_falta):
+                sql = text(
+                    "insert into market.dividends (" + ", ".join(_COLS_PROVENTO_INSERT) + ") "
+                    "values (" + ", ".join(":" + x for x in _COLS_PROVENTO_INSERT) + ") "
+                    "on conflict on constraint uq_dividends do nothing")
+                c.execute(sql, _registros(d_falta, _COLS_PROVENTO_INSERT))
+            ins_p = _n(c, "historical_prices") - n0_p
+            ins_d = _n(c, "dividends") - n0_d
+            gravar_manifesto(destino, manifesto)
+    except BaseException:
+        destino.unlink(missing_ok=True)
+        raise
+    return int(ins_p), int(ins_d)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--apply", action="store_true", help="grava no armazém")
@@ -226,37 +290,11 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     if args.apply and (len(p_falta) or len(d_falta)):
-        def _n(c, t):
-            return c.execute(text(f"select count(*) from market.{t}")).scalar_one()
-
-        with loc.begin() as c:
-            # ``rowcount`` do executemany não soma os lotes: mede antes e depois.
-            n0_p, n0_d = _n(c, "historical_prices"), _n(c, "dividends")
-            if len(p_falta):
-                sql = text(
-                    "insert into market.historical_prices (" + ", ".join(_COLS_PRECO) + ") "
-                    "values (" + ", ".join(":" + x for x in _COLS_PRECO) + ") "
-                    "on conflict (ticker, date) do nothing")
-                c.execute(sql, _registros(p_falta, _COLS_PRECO))
-            if len(d_falta):
-                sql = text(
-                    "insert into market.dividends (" + ", ".join(_COLS_PROVENTO_INSERT) + ") "
-                    "values (" + ", ".join(":" + x for x in _COLS_PROVENTO_INSERT) + ") "
-                    "on conflict on constraint uq_dividends do nothing")
-                c.execute(sql, _registros(d_falta, _COLS_PROVENTO_INSERT))
-            ins_p = _n(c, "historical_prices") - n0_p
-            ins_d = _n(c, "dividends") - n0_d
-        resumo["precos"]["inseridas"] = int(ins_p)
-        resumo["proventos"]["inseridas"] = int(ins_d)
-        PASTA_BACKUP.mkdir(parents=True, exist_ok=True)
         carimbo = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
         destino = PASTA_BACKUP / f"backfill_b3_do_supabase_{carimbo}.json"
-        destino.write_text(json.dumps({
-            "precos": [[t, str(d)] for t, d in p_falta[["ticker", "date"]].itertuples(index=False)],
-            "proventos": [[t, str(e), str(x), tp, float(a)] for t, e, x, tp, a in
-                          d_falta[["ticker", "event_date", "ex_date", "type", "amount"]]
-                          .itertuples(index=False)],
-        }, ensure_ascii=False), encoding="utf-8")
+        ins_p, ins_d = aplicar(loc, p_falta, d_falta, destino)
+        resumo["precos"]["inseridas"] = int(ins_p)
+        resumo["proventos"]["inseridas"] = int(ins_d)
         resumo["chaves_gravadas_em"] = str(destino.relative_to(RAIZ))
 
     print(json.dumps(resumo, ensure_ascii=False, indent=2))
