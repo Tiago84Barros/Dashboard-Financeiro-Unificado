@@ -198,7 +198,7 @@ A URL vai para o `.env` da árvore principal, que é o único que o serviço lê
 (a tarefa passa `--env` apontando para ele; a pasta `dfu-armazem-servico` não
 tem `.env`). Rodando de outro worktree, aponte para o mesmo arquivo:
 `--gravar-em ..\Dashboard-Financeiro-Unificado\.env`. Gravar em outro lugar
-deixa o serviço sem a senha nova, e a rota `POST /sql` falha.
+deixa o serviço sem a senha nova, e a leitura da B3 pelo túnel falha.
 
 Depois, reinicie a tarefa `DFU - Armazem leitura`. O script também cria a política
 `app4_leitura_select` (só SELECT, só para o papel) em cada tabela do escopo
