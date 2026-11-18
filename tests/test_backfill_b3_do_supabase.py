@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 
 import pandas as pd
 import pytest
@@ -89,27 +90,38 @@ def test_provento_sem_data_ex_nao_some_quando_o_armazem_tem_outro_sem_data_ex():
 # ── --apply: o manifesto de desfazer é gravado antes do commit ─────────────
 
 class _Res:
-    def __init__(self, n):
-        self._n = n
+    def __init__(self, linhas):
+        self._linhas = linhas
 
-    def scalar_one(self):
-        return self._n
+    def all(self):
+        return self._linhas
 
 
 class _Transacao:
-    """Imita ``engine.begin()``: commit na saída limpa, rollback na exceção."""
+    """Imita ``engine.begin()``: commit na saída limpa, rollback na exceção.
 
-    def __init__(self, diario):
+    ``ja_gravadas`` são chaves que outro processo gravou entre a varredura e o
+    insert: o ``ON CONFLICT DO NOTHING`` as pula e o ``RETURNING`` não as traz.
+    """
+
+    def __init__(self, diario, ja_gravadas):
         self.diario = diario
-        self.contagens = {"historical_prices": 10, "dividends": 5}
+        self.ja_gravadas = ja_gravadas
+        self.lote: list[dict] = []
 
     def execute(self, sql, params=None):
         texto = str(sql)
-        if texto.startswith("select count(*)"):
-            return _Res(self.contagens[texto.rsplit(".", 1)[1]])
-        tabela = "historical_prices" if "historical_prices" in texto else "dividends"
-        self.contagens[tabela] += len(params)
-        self.diario.append(("insert", tabela))
+        if texto.startswith("insert into _bf_lote"):
+            self.lote = list(params)
+        elif texto.startswith("insert into market."):
+            tabela = texto.split()[2].split(".")[1]
+            self.diario.append(("insert", tabela))
+            if tabela == "historical_prices":
+                chaves = [(r["ticker"], r["date"]) for r in self.lote]
+            else:
+                chaves = [(r["ticker"], r["payment_date"] or r["ex_date"],
+                           r["ex_date"], r["type"], r["amount"]) for r in self.lote]
+            return _Res([k for k in chaves if k[:2] not in self.ja_gravadas])
         return None
 
     def __enter__(self):
@@ -121,11 +133,12 @@ class _Transacao:
 
 
 class _Eng:
-    def __init__(self):
+    def __init__(self, ja_gravadas=()):
         self.diario = []
+        self.ja_gravadas = set(ja_gravadas)
 
     def begin(self):
-        return _Transacao(self.diario)
+        return _Transacao(self.diario, self.ja_gravadas)
 
 
 def _faltas():
@@ -171,8 +184,22 @@ def test_falha_ao_gravar_o_manifesto_desfaz_os_inserts(tmp_path, monkeypatch):
 
 
 def test_manifesto_relido_confere_com_o_gravado(tmp_path):
-    p, d = _faltas()
-    man = bf.manifesto_de_desfazer(p, d)
+    man = bf.manifesto_de_desfazer(
+        [("AAA3", D(2026, 1, 3))],
+        [("AAA3", D(2025, 12, 26), D(2025, 12, 26), "JCP", 0.5)])
     bf.gravar_manifesto(tmp_path / "m.json", man)
     assert man["precos"] == [["AAA3", "2026-01-03"]]
     assert man["proventos"] == [["AAA3", "2025-12-26", "2025-12-26", "JCP", 0.5]]
+
+
+def test_manifesto_so_lista_o_que_esta_rodada_gravou(tmp_path):
+    """Candidata gravada por outro processo depois da varredura cai no
+    ``ON CONFLICT DO NOTHING``; no manifesto, desfazer apagaria o registro
+    alheio. O manifesto sai do ``RETURNING``, não das candidatas."""
+    p, d = _faltas()
+    p = pd.concat([p, p.assign(date=D(2026, 1, 4))], ignore_index=True)
+    eng = _Eng(ja_gravadas={("AAA3", D(2026, 1, 4)), ("AAA3", D(2025, 12, 26))})
+    destino = tmp_path / "m.json"
+    assert bf.aplicar(eng, p, d, destino) == (1, 0)
+    man = json.loads(destino.read_text(encoding="utf-8"))
+    assert man == {"precos": [["AAA3", "2026-01-03"]], "proventos": []}
