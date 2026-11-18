@@ -368,17 +368,37 @@ primeira versão para sempre. Medido depois: **144 símbolos/min contra 4,7**.
 
 Duas condições que a janela não pode violar:
 
-- **Split dentro da janela devolve o símbolo ao histórico completo.** O Yahoo
-  retroajusta a série toda após um desdobramento; uma janela de dias deixaria as
-  barras antigas com o preço da era anterior. O resultado do comando reporta
-  `historico_refeito` — na passagem de 07/09/2026 foram 17 símbolos.
+- **Passado que mudou no Yahoo devolve o símbolo ao histórico completo.** O
+  Yahoo retroajusta a série toda a cada split e a cada provento; uma janela de
+  dias deixaria as barras antigas com o ajuste velho. Por isso as barras já
+  guardadas da janela são comparadas com as que acabaram de chegar
+  (`ingest.passado_retroajustado`): diferença acima de 0,05% numa barra que não
+  seja uma das duas mais novas refaz o histórico. As duas mais novas ficam de
+  fora porque o Yahoo as revisa (a última guardada pode ser de um pregão ainda
+  aberto: SLND estava 16% fora). O resultado do comando reporta
+  `historico_refeito`; numa amostra de 60 símbolos em 18/11/2026, foram 2.
+
+  Até 18/11/2026 a regra era "split dentro da janela refaz o histórico", e ela
+  falhava de dois jeitos. (1) O Yahoo ajusta o split alguns dias **depois**
+  dele: a descida completa do dia ainda vinha sem ajuste e, quando o Yahoo
+  corrigia, o split já tinha saído da janela. Grupamentos de julho a outubro
+  ficaram guardados sem ajuste (AEHL 0,51 contra 8,16; BRTX 0,206 contra 4,12).
+  (2) Provento não refazia nada: o ajustado guardado antes da data ex ficava
+  acima do Yahoo pelo tamanho do provento (KO 0,6% em todo o histórico, O 1,6%),
+  e o retorno total perdia cada provento pago depois da carga inicial.
+
+  Para o caso (1), split guardado nos últimos 180 dias alarga a janela até 30
+  dias antes dele (`splits_vigiados`), e o retroajuste tardio cai numa barra
+  comparada. Erro antigo, fora de qualquer janela, só sai com `--completo`.
 - **Preço, provento e split pedem a mesma janela.** A memoização do provedor é
   por `(símbolo, start, end)`; divergir aqui faria duas descidas por símbolo, o
   oposto do pretendido. Por isso `get_dividends`/`get_splits` passaram a aceitar
   `start`/`end` no contrato de `MarketDataProvider`.
 
 `--completo` restaura a descida integral, para reparar série — não para o dia a
-dia. Coberto por `tests/test_us_daily_incremental.py`, que verifica a **janela
+dia. O backtest e o painel leem `prices_monthly`, derivado do diário pelo
+comando `monthly`: o alvo `us_prices` da rotina deriva antes de publicar, para
+que o diário refeito chegue ao painel. Coberto por `tests/test_us_daily_incremental.py`, que verifica a **janela
 pedida ao provedor**, não tempo de parede: lentidão não falha um teste, ela
 aparece dias depois como série parada.
 

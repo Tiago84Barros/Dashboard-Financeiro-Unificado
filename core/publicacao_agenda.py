@@ -632,9 +632,15 @@ ALVOS: tuple[Alvo, ...] = (
         artefatos=("data/public/detalhe_eua.json.gz",),
     ),
     Alvo(
+        # O mensal é derivado do diário antes de publicar. Sem o `monthly`, o
+        # alvo republicava o que o último `score-history` tinha derivado: o
+        # diário refeito pelo retroajuste do Yahoo (split ou provento,
+        # `ingest.passado_retroajustado`, 18/11/2026) não chegava ao painel
+        # nem ao backtest, que leem `prices_monthly`.
         chave="us_prices",
         titulo="Preços mensais dos EUA",
-        passos=(("-m", "scripts.publish_us_prices_monthly", "--apply"),
+        passos=(("run_us_ingest.py", "monthly", "--warehouse", "--json"),
+                ("-m", "scripts.publish_us_prices_monthly", "--apply"),
                 ("-m", "scripts.publish_us_score_panel", "--apply")),
         cadencia_dias=30,
         modulo="us",
