@@ -2248,17 +2248,19 @@ def _secao_desempenho_categorias(posicoes: list) -> None:
             })
         st.dataframe(pd.DataFrame(linhas), hide_index=True, width="stretch")
         st.caption(
-            "Não é a rentabilidade da conta: usa a quantidade de hoje de cada ativo e "
+            "Não é a rentabilidade da conta. Usa a quantidade de hoje de cada ativo e "
             "ignora aportes e vendas. Cada ativo entra na linha só a partir do primeiro "
             "aporte (extrato de Negociação ou Movimentação; na falta, a primeira foto de "
-            "posição), e ativo sem essa data fica de fora — por isso a coluna Ativos com "
-            "série pode ficar menor que o total. Cada passo do retorno usa só os ativos com preço "
-            "nas duas datas. FIIs e ações pelo fechamento ajustado incluem proventos; "
-            "Tesouro com cupom cai no pagamento do cupom. Categorias americanas em reais "
-            "pelo câmbio do dia, salvo quando a coluna Moeda diz USD. Eventos marcados: "
-            "pregões em que o Ibovespa (^BVSP; na falta, o BOVA11 da fita oficial da B3) ou "
-            "o S&P 500 (^GSPC) andou 5% ou mais; dias extremos a menos de 30 dias um do "
-            "outro viram um evento só, o maior. O nome vem dos cenários do Stress."
+            "posição). Ativo sem essa data fica de fora, por isso \"Ativos com série\" "
+            "pode ser menor que o total. Cada passo do retorno usa só os ativos com "
+            "preço nas duas datas. FIIs e ações usam o fechamento ajustado, que já "
+            "inclui os proventos. Tesouro com cupom: o cupom não entra no retorno, e a "
+            "linha cai no dia do pagamento. "
+            "Categorias americanas entram em reais, pelo câmbio do dia, salvo quando a "
+            "coluna Moeda diz USD. Eventos marcados: pregões em que o Ibovespa (^BVSP; "
+            "na falta, o BOVA11 da fita oficial da B3) ou o S&P 500 (^GSPC) andou 5% "
+            "ou mais. Dias extremos a menos de 30 dias um do outro viram um evento só, "
+            "o maior. O nome vem dos cenários do Stress."
         )
 
 
@@ -2504,10 +2506,10 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
         # vários ao mesmo tempo. Dizer isso ANTES do gráfico evita que o usuário
         # tente ler seis barras como fatias de um bolo.
         st.info(
-            "**Cada fator tem escala própria, de 0 a 100.** Não são fatias da "
-            "carteira e **não somam 100%** — a mesma ação brasileira reage ao "
-            "mesmo tempo à Bolsa, ao risco fiscal e aos juros, então aparece em "
-            f"mais de uma barra. A soma das seis barras aqui é "
+            "**Cada fator tem escala própria, de 0 a 100.** As barras não são "
+            "fatias da carteira e **não somam 100%**. A mesma ação brasileira "
+            "reage ao mesmo tempo à Bolsa, ao risco fiscal e aos juros, então "
+            "aparece em mais de uma barra. A soma das seis barras aqui é "
             f"{sum(d['exposicao'] for d in deps):.0f}, e isso é esperado. "
             "Leia cada barra sozinha: *“de 0 a 100, o quanto minha carteira "
             "sente este fator”*.",
@@ -2587,13 +2589,13 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
         # frente, e ancorar na barra da seção anterior, remove a ambiguidade.
         _total_fator = float(df_macro_ativos[fator_sel].sum())
         st.info(
-            f"**Como ler os números:** cada valor é a contribuição do ativo em "
-            f"**pontos percentuais (p.p.)** — não é nota, nível nem ranking. "
+            f"**Como ler os números:** cada valor é quanto o ativo contribui, em "
+            f"**pontos percentuais (p.p.)**. Não é nota, nível nem ranking. "
             f"A conta é `peso do ativo na carteira × sensibilidade da classe`. "
-            f"Exemplo: um ativo com 5% da carteira numa classe de sensibilidade "
-            f"60/100 contribui com `5 × 0,60 = 3,0 p.p.`. "
-            f"Somando **todos** os ativos chega-se a "
-            f"**{_total_fator:.0f} de 100**, que é exatamente a barra de "
+            f"Exemplo: um ativo com 5% da carteira, numa classe de sensibilidade "
+            f"60/100, contribui com `5 × 0,60 = 3,0 p.p.`. "
+            f"A soma de **todos** os ativos dá "
+            f"**{_total_fator:.0f} de 100**, a mesma barra de "
             f"*{fator_sel}* no gráfico acima.",
             icon="🧭",
         )
@@ -2952,11 +2954,12 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
                 codigo="investimentos.historico.procedencia",
             )
         st.caption(
-            "Crescimento anual = taxa composta que leva o valor de mercado da primeira "
-            "foto ao de hoje. Inclui os aportes, então não é rentabilidade: mede quanto "
-            "o patrimônio cresceu, não quanto o dinheiro rendeu. Proventos = taxa composta "
-            "entre o primeiro e o último ano civil completo (fica de fora o ano corrente "
-            "e o primeiro ano, se não começou em janeiro), também puxada por aportes."
+            "Crescimento anual é a taxa por ano (juros compostos) que leva o valor de "
+            "mercado da primeira foto ao de hoje. Inclui os aportes, então não é "
+            "rentabilidade: mede quanto o patrimônio cresceu, não quanto o dinheiro "
+            "rendeu. Proventos usam a mesma taxa, entre o primeiro e o último ano "
+            "civil completo. Ficam de fora o ano corrente e o primeiro ano, se ele "
+            "não começou em janeiro. Os aportes também puxam essa taxa."
         )
         if evolucao.get("exterior_historico_ok") is False:
             aviso_lacuna("Não foi possível recompor o exterior (Nomad) nos meses passados; "
@@ -3452,9 +3455,9 @@ def _editor_preco_medio_manual(posicoes: list[dict]) -> None:
     with st.expander(titulo, expanded=False):
         st.caption(
             "Use quando nem as notas de negociação nem o extrato da B3 "
-            "souberem o preço médio real de um ativo. O valor fica gravado "
-            "em tabela própria — sobrevive ao próximo upload de planilha e "
-            "ao recálculo das posições — e o card passa a exibir "
+            "souberem o preço médio real de um ativo. O valor fica guardado "
+            "em tabela própria. Ele sobrevive a um novo upload de planilha e ao "
+            "recálculo das posições. O card passa a mostrar "
             "**“informado por você”**, nunca como declarado pela B3."
         )
 
@@ -3574,10 +3577,10 @@ def _editor_posicao_anterior(realizado: dict | None) -> None:
     with st.expander(titulo, expanded=False):
         st.caption(
             "Informe a quantidade e o **custo total** que você tinha de cada ativo "
-            "antes de nov/2019 — é a linha dele em *Bens e Direitos* da declaração "
-            "de IR de 2019 (situação em 31/12/2018). O app usa isso como ponto de "
-            "partida do preço médio: o lucro dessas vendas entra no Ganho total e "
-            "na apuração do IR. A carteira atual não muda."
+            "antes de nov/2019. É a linha dele em *Bens e Direitos* da declaração "
+            "de IR de 2019 (situação em 31/12/2018). O app usa esse valor como "
+            "ponto de partida do preço médio. O lucro dessas vendas entra no Ganho "
+            "total e na conta do IR. A carteira atual não muda."
         )
         if pendentes:
             st.dataframe(
