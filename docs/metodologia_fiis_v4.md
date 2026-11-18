@@ -154,6 +154,16 @@ Antes da liberação, o processo exige:
 Sem esses itens, `validation_status` permanece `blocked` e todos os snapshots
 são `diligence_only`.
 
+O walk-forward (`robust_optimizer_point_in_time_backtest`) mede a carteira
+que a tela mostraria em cada safra. Se o otimizador monta a carteira e o
+portão de transparência recusa a publicação (`can_publish=False`), a tela a
+mostra como rascunho não publicável, e o período entra na curva com
+`publicacao_recusada=True`. O desempenho desses períodos aparece separado em
+`curvas_por_publicacao`. A fração viável continua contando só os períodos com
+carteira publicável, e as datas recusadas ficam em
+`publication_refused_periods`. Os períodos em que o otimizador não monta
+carteira nenhuma continuam fora da curva.
+
 ## Implantação
 
 1. Aplicar, em ordem, as migrations pendentes até `026_fii_observation_maintenance_indexes.sql`.

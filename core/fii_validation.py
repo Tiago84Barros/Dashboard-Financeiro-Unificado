@@ -448,9 +448,10 @@ def robust_optimizer_point_in_time_backtest(
     optimizer_input_skips = 0
     # Um periodo em que o otimizador ENTREGOU carteira e a publicacao foi
     # recusada nao e a mesma coisa que um periodo em que ele nao entregou
-    # nada. Os dois contam contra a fracao viavel -- do ponto de vista de quem
-    # investia naquele mes, o sistema nao tinha carteira para dar --, mas a
-    # causa e outra, e o bloqueador precisa dizer qual delas predomina.
+    # nada. Os dois contam contra a fracao viavel -- ela mede quantas vezes
+    # havia carteira PUBLICAVEL --, mas a causa e outra, e o bloqueador
+    # precisa dizer qual delas predomina. Diferente do periodo vazio, o
+    # recusado entra na curva: a tela mostra a carteira como rascunho.
     publicacao_recusada: list[str] = []
     optimizer_failures: list[dict[str, Any]] = []
 
@@ -568,20 +569,13 @@ def robust_optimizer_point_in_time_backtest(
             optimizer_kwargs=_optimizer_kwargs,
             optimizer=optimize_diligence_portfolio,
         )
-        if not optimized.get("items") or not optimized.get("can_publish"):
-            failure_stage = str(optimized.get("failure_stage") or "optimizer")
-            if failure_stage == "data_prerequisites":
-                optimizer_input_skips += 1
-            else:
-                attempted_optimizer += 1
-                if optimized.get("items"):
-                    publicacao_recusada.append(decision.date().isoformat())
-            optimizer_failures.append({
+        def _registro_de_falha(stage: str) -> dict[str, Any]:
+            return {
                 "decision_date": decision.date().isoformat(),
                 "reason": " · ".join(
                     optimized.get("blockers") or ["otimização não publicável"]
                 ),
-                "failure_stage": failure_stage,
+                "failure_stage": stage,
                 "eligible_assets": len(eligible),
                 "dimension_coverage": optimized.get("dimension_coverage") or {},
                 "candidate_pool": optimized.get("candidate_pool")
@@ -595,10 +589,32 @@ def robust_optimizer_point_in_time_backtest(
                 "available_by_type": (
                     optimized.get("feasibility_diagnostics") or {}
                 ).get("available_by_type") or {},
-            })
+            }
+
+        if not optimized.get("items"):
+            failure_stage = str(optimized.get("failure_stage") or "optimizer")
+            if failure_stage == "data_prerequisites":
+                optimizer_input_skips += 1
+            else:
+                attempted_optimizer += 1
+            optimizer_failures.append(_registro_de_falha(failure_stage))
             continue
         attempted_optimizer += 1
-        successful_optimizer += 1
+        # Carteira montada e publicacao recusada: a tela MOSTRA esta carteira
+        # (`views/fiis.py`, "Rascunho nao publicavel", com os pesos e os
+        # motivos), e quem a seguiu naquele mes teve o retorno dela. Pular o
+        # periodo media uma estrategia que so existe nos meses em que o portao
+        # de transparencia abriu. O periodo entra na curva, marcado, e sai na
+        # coorte propria de `curvas_por_publicacao`. A fracao viavel nao muda:
+        # o periodo continua fora de `successful_optimizer`, porque a fracao
+        # mede quantas vezes havia carteira PUBLICAVEL.
+        publicavel = bool(optimized.get("can_publish"))
+        if publicavel:
+            successful_optimizer += 1
+        else:
+            publicacao_recusada.append(decision.date().isoformat())
+            optimizer_failures.append(_registro_de_falha(
+                str(optimized.get("failure_stage") or "optimizer")))
         if optimized.get("constraint_violations"):
             constraint_violation_periods += 1
             constraint_violation_details.append({
@@ -718,6 +734,9 @@ def robust_optimizer_point_in_time_backtest(
             "carteira_de_excecao": str(
                 (optimized.get("shape_cession") or {}).get("nivel") or ""
             ) == "excecao",
+            # Carteira que a tela mostrou como rascunho nao publicavel. Entra
+            # na curva de manchete e sai separada em `curvas_por_publicacao`.
+            "publicacao_recusada": not publicavel,
         })
         if cessao:
             concession_periods += 1
@@ -814,6 +833,15 @@ def robust_optimizer_point_in_time_backtest(
                 result[~result["carteira_de_excecao"].astype(bool)]),
             "excecao": _metricas_da_coorte(
                 result[result["carteira_de_excecao"].astype(bool)]),
+        },
+        # Mesma logica para o portao de transparencia: a carteira recusada
+        # entra na manchete porque a tela a mostrou, mas se o desempenho vier
+        # dela, isso precisa aparecer separado.
+        "curvas_por_publicacao": {
+            "publicavel": _metricas_da_coorte(
+                result[~result["publicacao_recusada"].astype(bool)]),
+            "publicacao_recusada": _metricas_da_coorte(
+                result[result["publicacao_recusada"].astype(bool)]),
         },
         "optimizer_attempted_periods": attempted_optimizer,
         "optimizer_successful_periods": successful_optimizer,

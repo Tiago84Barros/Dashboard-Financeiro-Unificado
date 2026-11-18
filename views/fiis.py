@@ -2836,18 +2836,41 @@ def _cards_por_padrao(curvas: dict) -> None:
     da concentração das carteiras de exceção, a manchete credita à
     metodologia um prêmio que é de risco cedido. Só a separação mostra isso.
     """
-    casa = curvas.get("padrao_da_casa") or {}
-    excecao = curvas.get("excecao") or {}
-    if not int(casa.get("periods") or 0) and not int(excecao.get("periods") or 0):
+    _cards_de_coortes("Padrão da casa × carteiras de exceção", (
+        ("Sob o padrão da casa", "#00C896", curvas.get("padrao_da_casa") or {},
+         "limites de forma íntegros ou cedidos levemente"),
+        ("Carteiras de exceção", "#F6C90E", curvas.get("excecao") or {},
+         "maior posição acima de 2× o teto, ou menos de 5 ativos"),
+    ), codigo="fii.backtest_coortes_nao_contiguas")
+
+
+def _cards_por_publicacao(curvas: dict) -> None:
+    """Separa as carteiras publicáveis das que a tela mostrou como rascunho.
+
+    O backtest mede também o mês em que o portão de transparência recusou
+    publicar: a tela mostrou a carteira, com pesos, e quem a seguiu teve o
+    retorno dela. Se o desempenho vier desses meses, a manchete credita à
+    carteira publicável um resultado que é do rascunho. Só aparece quando
+    houve recusa.
+    """
+    if not int((curvas.get("publicacao_recusada") or {}).get("periods") or 0):
+        return
+    _cards_de_coortes("Carteira publicável × rascunho não publicável", (
+        ("Carteira publicável", "#00C896", curvas.get("publicavel") or {},
+         "passou pelo portão de transparência"),
+        ("Rascunho não publicável", "#F6C90E",
+         curvas.get("publicacao_recusada") or {},
+         "montada e mostrada, publicação recusada"),
+    ), codigo="fii.backtest_coortes_publicacao")
+
+
+def _cards_de_coortes(cabecalho: str, coortes: tuple, *, codigo: str) -> None:
+    """Uma linha de cartões por coorte de períodos do backtest PIT."""
+    if not any(int(dados.get("periods") or 0) for _, _, dados, _ in coortes):
         return
 
-    st.markdown("#### Padrão da casa × carteiras de exceção")
-    for titulo, cor, dados, nota in (
-        ("Sob o padrão da casa", "#00C896", casa,
-         "limites de forma íntegros ou cedidos levemente"),
-        ("Carteiras de exceção", "#F6C90E", excecao,
-         "maior posição acima de 2× o teto, ou menos de 5 ativos"),
-    ):
+    st.markdown(f"#### {cabecalho}")
+    for titulo, cor, dados, nota in coortes:
         periodos = int(dados.get("periods") or 0)
         if not periodos:
             st.caption(f"**{titulo}** — nenhum período nesta coorte.")
@@ -2880,7 +2903,7 @@ def _cards_por_padrao(curvas: dict) -> None:
         "não quanto se teria ganho. O mês que ficou de fora não vira caixa "
         "nem índice. Por isso a queda máxima aparece como concatenada, e a "
         "validação da metodologia continua sendo julgada pela curva completa.",
-        codigo="fii.backtest_coortes_nao_contiguas")
+        codigo=codigo)
 
 
 def _texto_premissas_liquido_fii(premissas: dict) -> str:
@@ -2997,6 +3020,7 @@ def _tab_backtest() -> None:
 
     _bloco_liquido_fii(pit)
     _cards_por_padrao(pit.get("curvas_por_padrao") or {})
+    _cards_por_publicacao(pit.get("curvas_por_publicacao") or {})
 
     blockers = validation.get("blockers") or []
     if blockers:

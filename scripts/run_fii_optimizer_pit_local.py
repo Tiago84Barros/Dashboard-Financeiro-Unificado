@@ -47,6 +47,8 @@ def main() -> int:
         "constraint_violation_periods": metrics.get("constraint_violation_periods"),
         "mean_correlation_coverage": metrics.get("mean_correlation_coverage"),
         "curvas_por_padrao": metrics.get("curvas_por_padrao"),
+        "curvas_por_publicacao": metrics.get("curvas_por_publicacao"),
+        "publication_refused_periods": metrics.get("publication_refused_periods"),
         "blockers": result.get("blockers") or [],
     }
     print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
