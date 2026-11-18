@@ -2571,6 +2571,8 @@ FLOW_EMPRESAS_B3_TELAS = FlowSpec(
                 "app4_leitura (ARMAZEM_SQL_DB_URL) → rota POST /sql do túnel → cópia congelada",
                 "O degrau que falha não tenta o seguinte: a reserva é uma só e tem motivo",
                 "O aviso vale por 12 h, o maior cache dos loaders da B3",
+                "O aviso é decidido depois que a subaba carrega: pega também a leitura "
+                "que caiu na reserva no meio dela",
                 "Motivo da reserva: Configurações → Restrições (detalhe.b3.fonte_reserva)",
                 "Ficam no banco do app: public.macro e public.docs_corporativos, fora do papel",
             ),

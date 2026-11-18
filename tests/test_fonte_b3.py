@@ -287,3 +287,35 @@ def test_confianca_com_leitura_falha_e_vazia(monkeypatch):
     vazio.attrs.update(load_error="query_failed", error_type="OperationalError")
     monkeypatch.setattr(mr, "_q_b3", lambda sql, params=None: vazio)
     assert dc.compute_confidence() == []
+
+
+def test_aviso_do_topo_e_decidido_depois_da_subaba(monkeypatch):
+    """O aviso de reserva enche o espaço do topo só se houver motivo.
+
+    É chamado no ``finally`` do despacho das subabas: a leitura que cai na
+    reserva no meio da subaba ainda chega ao aviso do mesmo run.
+    """
+    import contextlib
+
+    import core.fonte_b3 as fonte
+    import views.empresas_b3 as tela
+
+    avisos = []
+    monkeypatch.setattr(tela.st, "warning", lambda msg, **k: avisos.append(msg))
+    monkeypatch.setattr(tela, "detalhe_tecnico", lambda *a, **k: None)
+
+    class Slot:
+        usado = 0
+
+        @contextlib.contextmanager
+        def container(self):
+            Slot.usado += 1
+            yield
+
+    monkeypatch.setattr(fonte, "aviso_reserva", lambda: None)
+    tela._aviso_fonte_reserva_b3(Slot())
+    assert Slot.usado == 0 and avisos == []
+
+    monkeypatch.setattr(fonte, "aviso_reserva", lambda: "túnel fora do ar")
+    tela._aviso_fonte_reserva_b3(Slot())
+    assert Slot.usado == 1 and len(avisos) == 1

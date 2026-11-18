@@ -3327,16 +3327,11 @@ def render() -> None:
 
     # Desde 15/11/2026 a B3 é lida do armazém local (core.fonte_b3). Se o
     # armazém não respondeu, os loaders caíram na cópia do Supabase congelada
-    # naquela data -- a tela diz isso em vez de mostrar dado velho calado.
-    from core.fonte_b3 import aviso_reserva
-
-    motivo_reserva = aviso_reserva()
-    if motivo_reserva:
-        st.warning(
-            "O armazém de dados não respondeu. Os dados da B3 abaixo são a "
-            "cópia guardada em 15/11/2026 e podem estar desatualizados.")
-        detalhe_tecnico(f"B3 lida da cópia congelada do Supabase: {motivo_reserva}.",
-                        codigo="b3.fonte_reserva")
+    # naquela data -- a tela diz isso em vez de mostrar dado velho calado. O
+    # lugar do aviso fica reservado aqui, no topo, mas ele só é decidido
+    # depois que a aba ativa carregou: as leituras da aba (demonstrações,
+    # histórico de múltiplos, preços) podem cair na reserva depois deste ponto.
+    slot_reserva = st.empty()
 
     if df_set.empty:
         aviso_lacuna(
@@ -3354,19 +3349,39 @@ def render() -> None:
     active = render_market_tabs(state_key="b3_active_tab", key_prefix="b3",
                                 itens=NAV_ITEMS_B3)
 
-    if active == 0:
-        _tab_empresas(df_set)
-    elif active == 1:
-        _tab_analise(df_set)
-    elif active == 2:
-        from views import portfolio_b3
+    try:
+        if active == 0:
+            _tab_empresas(df_set)
+        elif active == 1:
+            _tab_analise(df_set)
+        elif active == 2:
+            from views import portfolio_b3
 
-        portfolio_b3.render(show_header=False)
-    elif active == 3:
-        from views import analise_portfolio_b3
+            portfolio_b3.render(show_header=False)
+        elif active == 3:
+            from views import analise_portfolio_b3
 
-        analise_portfolio_b3.render(show_header=False)
-    else:
-        from views import carteira20_b3
+            analise_portfolio_b3.render(show_header=False)
+        else:
+            from views import carteira20_b3
 
-        carteira20_b3.render(show_header=False, cadastro=df_set)
+            carteira20_b3.render(show_header=False, cadastro=df_set)
+    finally:
+        # Também quando a aba para no meio (st.stop, erro): o que ela já leu
+        # da reserva continua na tela e precisa do aviso.
+        _aviso_fonte_reserva_b3(slot_reserva)
+
+
+def _aviso_fonte_reserva_b3(slot) -> None:
+    """Preenche o aviso do topo se alguma leitura da B3 caiu na cópia congelada."""
+    from core.fonte_b3 import aviso_reserva
+
+    motivo = aviso_reserva()
+    if not motivo:
+        return
+    with slot.container():
+        st.warning(
+            "O armazém de dados não respondeu. Os dados da B3 abaixo são a "
+            "cópia guardada em 15/11/2026 e podem estar desatualizados.")
+        detalhe_tecnico(f"B3 lida da cópia congelada do Supabase: {motivo}.",
+                        codigo="b3.fonte_reserva")

@@ -41,6 +41,9 @@ TOKEN = "t" * 40
     "select ';' as ponto_e_virgula_no_literal",
     "select 1 -- comentário; com ponto e vírgula",
     "select 1 /* ; */",
+    "(SELECT date FROM market.historical_prices LIMIT 1) UNION ALL "
+    "(SELECT date FROM market.historical_prices LIMIT 1)",
+    "( (with x as (select 1) select * from x) )",
 ])
 def test_sql_aceito(sql):
     assert asql.validar_sql(sql) == sql.strip().rstrip(";")
@@ -52,6 +55,8 @@ def test_sql_aceito(sql):
     ("insert into market.assets values (1)", "só SELECT"),
     ("delete from market.assets", "só SELECT"),
     ("-- select\ndrop table x", "só SELECT"),
+    ("(delete from market.assets)", "só SELECT"),
+    ("(select 1); delete from market.assets", "um comando"),
     ("select 1; drop table market.assets", "um comando"),
     ("select 1;/* x */ delete from x", "um comando"),
     ("select 'a'; select 2", "um comando"),
@@ -106,6 +111,20 @@ def test_montar_frame_carimbo_com_e_sem_fracao_de_segundo():
     f = asql.montar_frame(corpo)
     assert f["updated_at"].iloc[1] == pd.Timestamp("2026-10-04 17:26:23.875634", tz="UTC")
     assert f["criado"].iloc[1] == pd.Timestamp("2026-10-04 17:26:23.5")
+
+
+@pytest.mark.parametrize("ref", [None, dt.date(2026, 6, 30)])
+def test_sql_do_preco_do_dossie_passa_na_rota(monkeypatch, ref):
+    """Revisão do PR #768: o SELECT entre parênteses do dossiê era recusado
+    e o preço caía sempre na cópia congelada do Supabase."""
+    import core.dossie_b3 as dossie
+
+    vistos = []
+    monkeypatch.setattr(dossie, "_rows", lambda sql, **p: vistos.append(sql) or [])
+    dossie._precos("PETR4", ref)
+    assert vistos
+    for sql in vistos:
+        asql.validar_sql(sql)
 
 
 def test_montar_frame_vazio_mantem_colunas():

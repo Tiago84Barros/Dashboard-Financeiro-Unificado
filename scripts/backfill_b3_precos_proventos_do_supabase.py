@@ -117,13 +117,27 @@ def proventos_faltantes(local: pd.DataFrame, nuvem: pd.DataFrame) -> pd.DataFram
     O par pela data-ex e tipo, e não pela chave única (que inclui o valor),
     é o que separa lacuna de fóssil de revisão: se o armazém já tem o provento
     daquela data-ex, a versão da nuvem com outro valor é a antiga.
+
+    Provento sem data-ex casa pela data de pagamento. Sem isso, o ``merge`` do
+    pandas junta nulo com nulo: um provento só com pagamento na nuvem achava
+    "par" em qualquer outro sem data-ex do mesmo ticker e tipo no armazém, e
+    a lacuna era descartada como fóssil. (``event_date`` da B3 não serve de
+    reserva: é ``COALESCE(payment_date, ex_date)``, a ordem inversa.)
     """
     if nuvem.empty:
         return nuvem
-    k = ["ticker", "ex_date", "type"]
-    pares = local[k].drop_duplicates() if not local.empty else pd.DataFrame(columns=k)
-    m = nuvem.merge(pares, on=k, how="left", indicator=True)
-    return m[m["_merge"] == "left_only"].drop(columns="_merge")
+
+    def _com_data(df: pd.DataFrame) -> pd.DataFrame:
+        out = df.copy()
+        out["_data_par"] = out["ex_date"].where(out["ex_date"].notna(),
+                                                out["payment_date"])
+        return out
+
+    k = ["ticker", "_data_par", "type"]
+    pares = (_com_data(local)[k].drop_duplicates() if not local.empty
+             else pd.DataFrame(columns=k))
+    m = _com_data(nuvem).merge(pares, on=k, how="left", indicator=True)
+    return m[m["_merge"] == "left_only"].drop(columns=["_merge", "_data_par"])
 
 
 def _contar_fosseis(loc, d_sup: pd.DataFrame, d_falta: pd.DataFrame,
@@ -186,8 +200,8 @@ def main(argv: list[str] | None = None) -> int:
 
     sql_d = ("select " + ", ".join(_COLS_PROVENTO) +
              " from market.dividends where left(ticker, 1) = :l")
-    d_loc = _ler_por_letra(loc, "select ticker, ex_date, type from market.dividends"
-                                " where left(ticker, 1) = :l")
+    d_loc = _ler_por_letra(loc, "select ticker, ex_date, payment_date, type"
+                                " from market.dividends where left(ticker, 1) = :l")
     d_sup = _ler_por_letra(sup, sql_d)
     d_sup = d_sup[~d_sup["ticker"].isin(fii)]
     d_falta = proventos_faltantes(d_loc, d_sup)

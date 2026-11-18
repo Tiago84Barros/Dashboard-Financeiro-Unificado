@@ -42,7 +42,9 @@ PARAMS_MAX = 50
 LISTA_MAX = 5_000
 TIMEOUT_MS = 20_000
 
-_INICIO_OK = re.compile(r"^\s*(select|with)\b", re.IGNORECASE)
+# Parênteses na frente valem: `(SELECT … LIMIT 1) UNION ALL (SELECT …)` é a
+# forma do dossiê para o preço de hoje e o de um ano atrás.
+_INICIO_OK = re.compile(r"^[\s(]*(select|with)\b", re.IGNORECASE)
 _COMENTARIO = re.compile(r"--[^\n]*|/\*.*?\*/", re.DOTALL)
 _LITERAL = re.compile(r"'(?:[^']|'')*'")
 
