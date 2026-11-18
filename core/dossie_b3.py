@@ -284,16 +284,16 @@ def _atualidade(tk: str, hoje: date | None = None) -> dict:
     margem gravada com a janela que a produziu.
     """
     from core import b3_atualidade_trimestral as at
-    from core.database import get_engine
+    from core.fonte_b3 import ConexaoB3
 
+    # Mede na mesma fonte dos demonstrativos do dossiê (armazém, com a cópia
+    # congelada como reserva): medir no Supabase dava "trimestre defasado" a
+    # um trimestre que o armazém já tem.
     hoje = hoje or date.today()
-    eng = get_engine()
-    if eng is None:
-        return {}
-    with eng.connect() as conn:
-        desde = at.desde_ano(hoje)
-        universo = at.avaliar_universo(at.ler_contagens(conn, desde), hoje)
-        series, margens = at.ler_series_e_margens(conn, desde, ticker=tk)
+    conn = ConexaoB3()
+    desde = at.desde_ano(hoje)
+    universo = at.avaliar_universo(at.ler_contagens(conn, desde), hoje)
+    series, margens = at.ler_series_e_margens(conn, desde, ticker=tk)
     medida = at.medir_base_do_score(series, margens).get(tk) or {}
     serie = series.get(tk) or []
     ultimo = max((r[:2] for r in serie), key=at.serial) if serie else None

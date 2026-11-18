@@ -142,3 +142,37 @@ def aviso_reserva() -> str | None:
     if quando is None or _agora() - quando > JANELA_AVISO_S:
         return None
     return motivo
+
+
+class _Resultado:
+    def __init__(self, linhas: list[tuple]):
+        self._linhas = linhas
+
+    def fetchall(self) -> list[tuple]:
+        return self._linhas
+
+
+class ConexaoB3:
+    """Conexão de mentira que lê pela fonte da B3, para leitor que recebe ``conn``.
+
+    ``core.b3_atualidade_trimestral`` (e quem mais seguir o padrão "o leitor
+    recebe a conexão") chama ``conn.execute(text(sql), params).fetchall()``.
+    Sem este adaptador, a medição do trimestre ia ao ``get_engine()`` -- a
+    cópia congelada do Supabase -- enquanto os demonstrativos da mesma tela
+    vinham do armazém: um trimestre novo no armazém ganhava aviso de
+    "defasado" medido no Supabase.
+
+    Erro de leitura levanta ``RuntimeError``: quem chama já trata falha como
+    "não medido", e um quadro vazio aqui viraria "universo sem trimestre".
+    """
+
+    def execute(self, sql, params: dict | None = None) -> _Resultado:
+        from core.market_read import _q_b3
+
+        frame = _q_b3(str(sql), dict(params or {}))
+        erro = frame.attrs.get("load_error")
+        if erro:
+            raise RuntimeError(
+                f"leitura da B3 falhou ({frame.attrs.get('error_type') or erro})")
+        frame = frame.astype(object).where(frame.notna(), None)
+        return _Resultado([tuple(r) for r in frame.itertuples(index=False, name=None)])

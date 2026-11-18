@@ -271,6 +271,76 @@ def test_papel_so_le_mercado_e_setores():
                    for c in cmds if c.startswith("GRANT"))
 
 
+def test_papel_ganha_politica_de_leitura_onde_ha_rls():
+    """NOBYPASSRLS + GRANT sem política devolve zero linhas, sem erro.
+
+    Medido em 18/11/2026 no armazém: 24 tabelas do escopo com RLS ligado
+    (``market.b3_cotacao_atual``, ``market.fii_*``, ``market_us.score_panel_pub``)
+    davam 0 linha ao papel. A política é só de SELECT, só para o papel e só
+    no escopo dos GRANTs.
+    """
+    bloco = papel.comandos("segredo", "postgres")[-1]
+    assert bloco.startswith("DO $$") and "c.relrowsecurity" in bloco
+    assert "CREATE POLICY app4_leitura_select ON %I.%I FOR SELECT TO app4_leitura" in bloco
+    assert "USING (true)" in bloco
+    assert "n.nspname IN ('market', 'market_us')" in bloco
+    assert "(n.nspname = 'public' AND c.relname = 'setores')" in bloco
+    # idempotente: não recria a política que já existe
+    assert "p.polname = 'app4_leitura_select'" in bloco
+    for proibido in ("FOR ALL", "FOR INSERT", "FOR UPDATE", "FOR DELETE", "TO public"):
+        assert proibido not in bloco
+
+
+class _Conn:
+    def __init__(self, respostas):
+        self.respostas = respostas
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def execute(self, sql, *a):
+        resp = self.respostas(str(sql))
+
+        class _R:
+            def scalars(self):
+                return self
+
+            def all(self):
+                return resp
+
+            def scalar(self):
+                return resp
+
+        return _R()
+
+
+class _Eng:
+    def __init__(self, respostas):
+        self.respostas = respostas
+
+    def connect(self):
+        return _Conn(self.respostas)
+
+
+def test_tabelas_cegas_aponta_o_que_o_papel_nao_ve():
+    dono_ve = {"market.cheia": True, "market.vazia": False, "market.coberta": True}
+    papel_ve = {"market.cheia": False, "market.vazia": False, "market.coberta": True}
+
+    def _resp(tabela_de):
+        def _r(sql):
+            if "pg_class" in sql:
+                return list(dono_ve)
+            return next(v for t, v in tabela_de.items() if t in sql)
+        return _r
+
+    cegas = papel.tabelas_cegas(_Eng(_resp(dono_ve)), _Eng(_resp(papel_ve)))
+    # a vazia não conta: zero linha para os dois não é cegueira
+    assert cegas == ["market.cheia"]
+
+
 def test_gravar_linha_troca_sem_duplicar(tmp_path):
     env = tmp_path / ".env"
     env.write_text("A=1\nARMAZEM_SQL_DB_URL=velha\nB=2\n", encoding="utf-8")

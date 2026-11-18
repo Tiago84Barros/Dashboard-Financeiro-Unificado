@@ -11,7 +11,19 @@ mercado.
 * nada em ``public`` além disso (finanças pessoais, carteira), nem em
   ``memoria_mercado``, ``alertas_ativos`` ou ``auth``;
 * sessão somente leitura e ``statement_timeout`` gravados no próprio papel, e
-  no máximo 5 conexões.
+  no máximo 5 conexões;
+* política de leitura (``FOR SELECT TO app4_leitura USING (true)``) em cada
+  tabela desse escopo que tem RLS ligado. O papel é ``NOBYPASSRLS``: sem a
+  política, o GRANT passa e o SELECT devolve **zero linhas**, sem erro -- o
+  app leria "a tabela está vazia" e não cairia na reserva. Medido em
+  18/11/2026: 24 tabelas (``market.b3_cotacao_atual``, ``market.fii_*``,
+  ``market_us.score_panel_pub``...) e, num armazém restaurado de dump do
+  Supabase (``027_data_api_rls_hardening``), também ``market.assets`` e os
+  demonstrativos.
+
+Depois do ``--apply`` o script entra **como o papel** e confere que cada
+tabela que tem linha para o dono também tem para ele; a que não tem sai no
+relatório e o código de saída é 1.
 
 A senha é gerada aqui e nunca impressa: a URL vai direto para o arquivo de
 segredos indicado (``--gravar-em``, padrão ``.env`` da raiz) como
@@ -37,6 +49,16 @@ PAPEL = "app4_leitura"
 SCHEMAS = ("market", "market_us")
 TABELAS_AVULSAS = ("public.setores",)
 CHAVE_ENV = "ARMAZEM_SQL_DB_URL"
+POLITICA = f"{PAPEL}_select"
+
+
+def _escopo_sql(alias_ns: str = "n", alias_rel: str = "c") -> str:
+    """Predicado SQL das tabelas que o papel pode ler (schemas + avulsas)."""
+    schemas = ", ".join(f"'{s}'" for s in SCHEMAS)
+    avulsas = " OR ".join(
+        f"({alias_ns}.nspname = '{t.split('.')[0]}' AND {alias_rel}.relname = '{t.split('.')[1]}')"
+        for t in TABELAS_AVULSAS)
+    return f"({alias_ns}.nspname IN ({schemas}) OR {avulsas})"
 
 
 def comandos(senha: str, dono: str) -> list[str]:
@@ -61,7 +83,39 @@ def comandos(senha: str, dono: str) -> list[str]:
         ]
     cmds.append(f"GRANT USAGE ON SCHEMA public TO {PAPEL}")
     cmds += [f"GRANT SELECT ON {t} TO {PAPEL}" for t in TABELAS_AVULSAS]
+    # RLS: GRANT sem política devolve zero linhas, sem erro.
+    cmds.append(
+        "DO $$ DECLARE r record; BEGIN "
+        "FOR r IN SELECT n.nspname AS esq, c.relname AS tab FROM pg_class c "
+        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+        f"WHERE c.relkind IN ('r', 'p') AND c.relrowsecurity AND {_escopo_sql()} "
+        "AND NOT EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid "
+        f"AND p.polname = '{POLITICA}') LOOP "
+        f"EXECUTE format('CREATE POLICY {POLITICA} ON %I.%I FOR SELECT TO {PAPEL} "
+        "USING (true)', r.esq, r.tab); END LOOP; END $$")
     return cmds
+
+
+def tabelas_cegas(eng_dono, eng_papel) -> list[str]:
+    """Tabelas do escopo com linha para o dono e nenhuma para o papel."""
+    from sqlalchemy import text
+
+    with eng_dono.connect() as c:
+        tabs = c.execute(text(
+            "SELECT format('%I.%I', n.nspname, c.relname) FROM pg_class c "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            f"WHERE c.relkind IN ('r', 'p') AND c.relrowsecurity AND {_escopo_sql()} "
+            "ORDER BY 1")).scalars().all()
+    cegas = []
+    for t in tabs:
+        sql = text(f"SELECT EXISTS (SELECT 1 FROM {t})")
+        with eng_dono.connect() as c:
+            if not c.execute(sql).scalar():
+                continue
+        with eng_papel.connect() as c:
+            if not c.execute(sql).scalar():
+                cegas.append(t)
+    return cegas
 
 
 def url_do_papel(url_admin: str, senha: str) -> str:
@@ -102,8 +156,15 @@ def main(argv: list[str] | None = None) -> int:
     with eng.begin() as c:
         for cmd in cmds:
             c.execute(text(cmd))
-    gravar_linha(Path(args.gravar_em), CHAVE_ENV, url_do_papel(url_admin, senha))
+    url_papel = url_do_papel(url_admin, senha)
+    gravar_linha(Path(args.gravar_em), CHAVE_ENV, url_papel)
     print(f"papel {PAPEL} pronto; {CHAVE_ENV} gravada em {args.gravar_em}")
+    cegas = tabelas_cegas(eng, create_engine(url_papel))
+    if cegas:
+        print(f"ATENÇÃO: {len(cegas)} tabela(s) com linhas que {PAPEL} não enxerga: "
+              + ", ".join(cegas))
+        return 1
+    print(f"visibilidade conferida como {PAPEL}: nenhuma tabela com RLS fica cega")
     return 0
 
 

@@ -676,18 +676,17 @@ def selo_de_frescor(modulo: str, dados: dict | None = None) -> None:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _atualidade_b3_cacheada(hoje_iso: str) -> dict | None:
-    """Cache de uma hora, chaveado pelo dia: a medição lê cerca de 200 kB do
-    Supabase (ver `core.b3_atualidade_trimestral.medir_banco`), e o egress está
-    acima da cota desde setembro."""
+    """Cache de uma hora, chaveado pelo dia: a medição lê cerca de 200 kB
+    (ver `core.b3_atualidade_trimestral.medir_banco`).
+
+    Lê pela fonte da B3 (`core.fonte_b3.ConexaoB3`): a mesma dos
+    demonstrativos da tela. Medida no Supabase congelado, ela avisaria
+    "trimestre defasado" sobre dado que o armazém já tem."""
     from datetime import date
 
     from core.b3_atualidade_trimestral import medir_banco
-    from core.database import get_engine
-    eng = get_engine()
-    if eng is None:
-        return None
-    with eng.connect() as conn:
-        return medir_banco(conn, date.fromisoformat(hoje_iso))
+    from core.fonte_b3 import ConexaoB3
+    return medir_banco(ConexaoB3(), date.fromisoformat(hoje_iso))
 
 
 def aviso_atualidade_trimestral_b3() -> None:
