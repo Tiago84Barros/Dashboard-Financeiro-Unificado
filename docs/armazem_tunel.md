@@ -191,7 +191,13 @@ a senha) com:
 python scripts/criar_papel_leitura_armazem.py --apply --gravar-em ..\dfu-armazem-servico\.env
 ```
 
-e reinicie a tarefa `DFU - Armazem leitura`. Sem `ARMAZEM_SQL_DB_URL` no
+e reinicie a tarefa `DFU - Armazem leitura`. O script também cria a política
+`app4_leitura_select` (só SELECT, só para o papel) em cada tabela do escopo
+com RLS ligado: o papel é `NOBYPASSRLS`, e GRANT sem política devolve zero
+linhas sem erro (em 18/11/2026 eram 24 tabelas, entre elas
+`market.b3_cotacao_atual`). No fim ele entra como o papel e lista a tabela que
+tem linha para o dono e nenhuma para o papel; tabela que ganhar RLS depois
+pede rodar o script de novo. Sem `ARMAZEM_SQL_DB_URL` no
 serviço, a rota responde 503 e nunca cai no superusuário. Tetos: 400 mil
 linhas, 50 parâmetros, listas de até 5 mil itens. Medido em 18/11/2026 com o
 universo inteiro (440 tickers): as quatro leituras pesadas (múltiplos,
