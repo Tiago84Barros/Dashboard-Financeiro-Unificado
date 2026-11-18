@@ -96,7 +96,7 @@ def _ler_linhas(engine, tabela: str, cols: list[str], tickers: list[str]) -> pd.
 
 def _ler_por_letra(engine, sql: str) -> pd.DataFrame:
     print(f"lendo {sql[:60]}...", file=sys.stderr, flush=True)
-    partes = [_ler(engine, sql, {"l": l}) for l in string.ascii_uppercase]
+    partes = [_ler(engine, sql, {"l": letra}) for letra in string.ascii_uppercase]
     partes = [p for p in partes if not p.empty]
     return pd.concat(partes, ignore_index=True) if partes else pd.DataFrame()
 
