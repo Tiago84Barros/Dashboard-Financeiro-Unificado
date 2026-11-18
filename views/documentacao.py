@@ -379,8 +379,10 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
         ),
         "macro_cp": _node(
             "macro_cp", "Cenário macro", "Dados",
-            "Carrega Selic e demais variáveis macro para simular benchmark e ajustar o score.",
-            ("load_selic_macro()", "load_macro_history()", "Taxa Selic média de fallback"),
+            "Carrega Selic e demais variáveis macro para simular benchmark e ajustar o score. "
+            "O desempenho safra a safra usa a Selic realizada mês a mês; a meta do ano só "
+            "cobre mês sem dado, e esses meses aparecem nomeados.",
+            ("load_selic_macro()", "load_selic_mensal()", "load_macro_history()", "Taxa Selic média de fallback"),
             "A comparação contra Selic é essencial porque o investidor brasileiro sempre tem uma alternativa de renda fixa.",
         ),
         "setor_cp": _node(
@@ -468,10 +470,20 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
             "Remove duplicatas, consolida motivos e distribui empresas selecionadas por peso e setor. "
             "Quem entrou pelo piso de qualidade ou pela Inteligência dos Ativos vem etiquetado "
             "no card da líder; o afrouxamento do piso e a vaga que ficou sem substituto vão "
-            "para Configurações → Restrições. Quando a carteira não fecha nos limites de "
-            "concentração, a composição para revisão usa a mesma nota: uma empresa por "
-            "segmento, aprovados no backtest primeiro, e o card diz se o segmento foi aprovado.",
-            ("Lista de empresas líderes", "Score médio", "Alpha médio", "Distribuição setorial"),
+            "para Configurações → Restrições. Quando os líderes não fecham nos limites de "
+            "concentração, a carteira normal continua na tela com um aviso: os pesos "
+            "passam do limite, a camada macro não é aplicada e o botão de salvar fica "
+            "desligado; por isso a medição fora da amostra conta a safra com poucos "
+            "ativos para o limite como caixa a Selic. Só quando nenhum segmento "
+            "deixa líder entra a composição para revisão, com a mesma nota: uma empresa por "
+            "segmento, aprovados no backtest primeiro, e o card diz se o segmento foi aprovado. "
+            "Abaixo dela vêm os mesmos painéis da carteira normal, a começar pela distribuição "
+            "setorial, em que o dinheiro sem aplicar aparece como \"Não alocado\". A nota é "
+            "percentil dentro do segmento entre as compráveis de hoje: segmento com uma só "
+            "comprável não tem par, o card diz \"sem par comparável\" em vez de 0,0 e essa "
+            "nota fica fora do score médio.",
+            ("Lista de empresas líderes", "Score médio sem as notas sem par", "Alpha médio",
+             "Distribuição setorial"),
             "É a transição do motor por segmento para uma carteira única e acionável.",
         ),
         "salvar_cp": _node(
@@ -1294,7 +1306,10 @@ FLOW_SELECAO_FIIS = FlowSpec(
             "A aba Retrospectiva refaz a seleção safra a safra usando SÓ o que era "
             "conhecido naquela data e mede o que a regra teria escolhido. Fundo da "
             "carteira que sai de campo no período rende zero, nunca o que os "
-            "sobreviventes renderam.",
+            "sobreviventes renderam. O selo \"Aprovado\" atesta o protocolo, não o "
+            "desempenho: ao lado dele a tela diz de que lado do zero está o excesso "
+            "sobre o IFIX, e um intervalo inteiro abaixo de zero sai em vermelho "
+            "como \"perde do IFIX\".",
             (
                 "Safras reconstruídas com dado da época",
                 "Mínimo metodológico de períodos para valer",
@@ -1507,10 +1522,12 @@ FLOW_EMPRESAS_EUA = FlowSpec(
         "percentil_industria_us": _node(
             "percentil_industria_us", "Percentil na indústria", "Score",
             "A nota de cada métrica é o percentil dentro da indústria, não no universo "
-            "inteiro. Qualidade é relativa ao segmento.",
+            "inteiro. Qualidade é relativa ao segmento. Métrica que só uma empresa da "
+            "indústria tem fica no neutro (50): um valor só não tem ordem (0.9.1).",
             (
                 "Percentil dentro da indústria",
                 "Piso de quantidade de pares para o percentil valer",
+                "Valor sem par na indústria vale o neutro",
                 "Substituição dentro do mesmo segmento",
             ),
             "Comparar margem de software com margem de varejo alimentar produz um ranking "
@@ -1603,11 +1620,18 @@ FLOW_EMPRESAS_EUA = FlowSpec(
             "Transforma o ranking em carteira, com limites por setor e por ativo "
             "definidos por você. O botão 💾 Salvar como carteira padrão grava no "
             "banco; é essa carteira que o Dashboard Geral, o Portfólio Global e a "
-            "Avaliação de Portfólio usam.",
+            "Avaliação de Portfólio usam. Quando nenhuma indústria é aprovada ou os "
+            "tetos não fecham, a composição para revisão segue a mesma regra: os "
+            "líderes de cada indústria, só as aprovadas quando existem (as demais, "
+            "sem nenhuma aprovada, pela margem até a aprovação) e o mesmo alvo de "
+            "pesos; o que não cabe nos tetos fica como capital não alocado. Abaixo "
+            "dela vêm os mesmos gráficos de alocação por ativo e por setor da "
+            "carteira normal, com essa sobra como \"Não alocado\".",
             (
                 "Limites por setor e por ativo",
                 "Piso de liquidez",
                 "Diagnóstico de restrição inalcançável",
+                "Revisão: líderes por indústria e o alvo de pesos da carteira normal",
                 "save_us_portfolio_model() → us_portfolio_models, no clique "
                 "(on_click), antes do rerun da tela",
             ),

@@ -106,30 +106,193 @@ def fii_review(rows, policy, scenario):
     return result
 
 
-def us_review(eligible, params):
-    from core.us_quality_floor import evaluate
+_US_APROVADA, _US_OBSERVACAO, _US_AMOSTRA = 0, 1, 2
 
-    verdicts = evaluate(eligible)
+
+def _ordem_industrias_us(audit, params):
+    """Fila das indústrias na revisão dos EUA, pela regra de aprovação normal.
+
+    Camadas: aprovadas; depois as que têm a amostra mínima mas falham em algum
+    critério; por último as de amostra abaixo do mínimo, onde o score do
+    pipeline cai no percentil do universo e não no da indústria. Dentro da
+    camada, menos critérios não atendidos vem antes e, empatado, a maior
+    margem do score de entrada até o corte (o menor entre ``min_entry_score`` e
+    a vantagem sobre a mediana) -- a mesma régua com que a carteira normal
+    aprova. Empate final pelo nome, nunca pelo score de um líder."""
+    if audit is None or audit.empty or "industry_group" not in audit:
+        return []
+    fila = []
+    for row in audit.to_dict("records"):
+        status = str(row.get("status") or "")
+        count = _finite(row.get("company_count"))
+        avg = _finite(row.get("avg_entry_score"))
+        edge = _finite(row.get("score_edge"))
+        margens = []
+        falhas = 0
+        if avg is not None:
+            margens.append(avg - float(params.min_entry_score))
+            falhas += avg < float(params.min_entry_score)
+        if edge is not None:
+            margens.append(edge - float(params.min_score_edge))
+            falhas += edge < float(params.min_score_edge)
+        if params.require_resilience:
+            spread = _finite(row.get("resilience_spread_pp"))
+            falhas += spread is None or spread < float(params.min_resilience_spread_pp)
+        if params.require_historical_signal:
+            ic = _finite(row.get("rank_ic"))
+            periodos = _finite(row.get("history_periods")) or 0
+            falhas += (ic is None or ic < float(params.min_rank_ic)
+                       or periodos < int(params.min_history_periods))
+        if status == "Aprovada":
+            camada = _US_APROVADA
+        elif count is not None and count < int(params.min_companies_per_industry):
+            camada = _US_AMOSTRA
+        else:
+            camada = _US_OBSERVACAO
+        fila.append({"industry": str(row["industry_group"]), "camada": camada,
+                     "falhas": int(falhas),
+                     "margem": min(margens) if margens else None,
+                     "motivo": str(row.get("reason") or status or "")})
+    fila.sort(key=lambda item: (
+        item["camada"], item["falhas"],
+        -(item["margem"] if item["margem"] is not None else -math.inf),
+        item["industry"]))
+    return fila
+
+
+def _situacao_industria_us(item):
+    if item["camada"] == _US_APROVADA:
+        return "Indústria aprovada"
+    if item["camada"] == _US_AMOSTRA:
+        return "Indústria com amostra abaixo do mínimo"
+    margem = item["margem"]
+    texto = "Indústria em observação"
+    if margem is not None:
+        texto += f" · margem {margem:+.1f} pts"
+    return texto
+
+
+def us_review(eligible, params, audit=None, avaliador=None):
+    """Composição para revisão quando a carteira normal dos EUA sai vazia.
+
+    Segue a carteira normal, nunca uma conta própria:
+
+    * dentro de cada indústria, os ``leaders_per_industry`` melhores pela
+      MESMA função da carteira normal (``_lideres_por_industria``): score de
+      entrada e fundamentalista dentro da indústria, piso de qualidade e
+      portão da Inteligência dos Ativos com substituição pelo próximo da
+      mesma indústria;
+    * entre indústrias: havendo aprovadas (a revisão roda porque os tetos não
+      fecham), exatamente as candidatas da carteira normal; sem nenhuma, a
+      fila de ``_ordem_industrias_us``, pela distância até a aprovação. O
+      ``entry_score`` é percentil dentro da indústria e não decide sozinho a
+      vaga de uma indústria contra outra;
+    * os pesos têm o mesmo alvo da carteira normal (``_base_target``),
+      tratado como meta lexicográfica: depois de maximizar o capital,
+      minimiza-se o desvio até o alvo, e a fila só desempata.
+
+    Até 15/11/2026 a revisão juntava toda elegível de toda indústria, sem cota
+    por indústria, e maximizava o ``entry_score``: o otimizador encostava os
+    pesos no teto por ativo (cerca de 13 nomes a 8% contra 26 a 30 na
+    carteira normal) e misturava escalas de percentil de indústrias
+    diferentes."""
+    import pandas as pd
+
+    from core.us_portfolio_creation import (
+        _base_target,
+        _lideres_por_industria,
+        _ordenar_por_score,
+        build_industry_audit,
+    )
+
+    if eligible is None or eligible.empty:
+        return allocate_partial([], [], reasons=[
+            "Nenhuma empresa elegível para compor a revisão."])
+    if "fundamental_score" not in eligible:
+        eligible = eligible.assign(fundamental_score=np.nan)
+    if audit is None or audit.empty:
+        audit = build_industry_audit(eligible, params)
+    fila = _ordem_industrias_us(audit, params)
+    conhecidas = {item["industry"] for item in fila}
+    for industry in sorted(set(eligible["industry_group"].astype(str)) - conhecidas):
+        fila.append({"industry": industry, "camada": _US_AMOSTRA, "falhas": 0,
+                     "margem": None, "motivo": "fora da auditoria"})
+    por_industria = {item["industry"]: item for item in fila}
+    # A existência de indústria aprovada sai da auditoria, ANTES da seleção:
+    # decidir pelos blocos que sobreviveram ao piso deixaria uma indústria
+    # reprovada impedir a rede final de restaurar as aprovadas -- e a revisão
+    # sairia de indústrias que a carteira normal não usaria.
+    aprovadas = [item["industry"] for item in fila if item["camada"] == _US_APROVADA]
+    blocos, floor_log, intel_log = _lideres_por_industria(
+        eligible, aprovadas or [item["industry"] for item in fila], params, avaliador,
+        motivo="Liderança de score na indústria",
+        motivo_inteligencia="Entrou pela Inteligência dos Ativos na indústria")
+    top_n = max(1, int(params.top_n))
+    partes = []
+    if aprovadas and blocos:
+        # Exatamente a lista da carteira normal (select_industry_leaders): com
+        # indústria aprovada, a revisão só existe porque os tetos não fecham, e
+        # o que não cabe neles fica como capital não alocado -- não vira vaga
+        # para indústria que a carteira normal reprovou.
+        # A mesma ordem, com o mesmo desempate pelo ticker: os blocos chegam
+        # na ordem da auditoria, não na alfabética da carteira normal.
+        partes.append(_ordenar_por_score(
+            pd.concat(blocos, ignore_index=True)).head(top_n))
+    elif not aprovadas:
+        vagas = top_n
+        for bloco in blocos:
+            if vagas <= 0:
+                break
+            partes.append(bloco.head(vagas))
+            vagas -= len(partes[-1])
+    if not partes:
+        return allocate_partial([], [], reasons=[
+            "Nenhuma empresa passou no piso de qualidade e na Inteligência dos Ativos."])
+    candidates = pd.concat(partes, ignore_index=True)
+    alvo = _base_target(candidates, params.weighting)
     rows = []
-    if eligible is not None and not eligible.empty:
-        for source in eligible.to_dict("records"):
-            ticker = str(source.get("symbol") or "").upper()
-            quality = _finite(source.get("entry_score"))
-            verdict = verdicts.get(ticker)
-            if not ticker or quality is None or verdict is None or verdict.reprovado:
-                continue
-            rows.append({**source, "ticker": ticker, "quality": quality})
+    for i, source in enumerate(candidates.to_dict("records")):
+        item = por_industria[str(source.get("industry_group"))]
+        rows.append({**source, "ticker": str(source.get("symbol") or "").upper(),
+                     # Posição na fila, não score: scores de indústrias
+                     # diferentes não são comparáveis e aqui viram prioridade.
+                     "quality": float(len(candidates) - i),
+                     "aprovado": item["camada"] == _US_APROVADA,
+                     "situacao_grupo": _situacao_industria_us(item)})
     constraints = []
     for column, limit in (("industry_group", params.max_industry_weight),
                           ("sector_group", params.max_sector_weight)):
         for label in sorted({str(row.get(column) or "Não classificado") for row in rows}):
             constraints.append((np.array([
                 float(str(row.get(column) or "Não classificado") == label) for row in rows]), limit))
-    return allocate_partial(rows, [params.max_weight]*len(rows),
-        upper_constraints=constraints, max_assets=params.top_n,
-        reasons=["Composição por mérito individual entre empresas elegíveis; "
-                 "metas estatísticas por indústria permanecem pendentes.",
-                 "Filtros individuais configurados e tetos por ativo, indústria e setor preservados."])
+    targets = [(np.eye(len(rows))[i], float(t), float(t)) for i, t in enumerate(alvo)]
+    reasons = [
+        f"Candidatas: até {int(params.leaders_per_industry)} empresas por indústria, pela mesma "
+        "regra da carteira normal (score dentro da indústria, piso de qualidade e Inteligência "
+        "dos Ativos com substituição pelo próximo da mesma indústria).",
+        "Entre indústrias: havendo aprovadas, só elas, como na carteira normal; sem nenhuma, "
+        "as demais pelo menor número de critérios não atendidos e pela margem até o corte de "
+        "score, e por último as de amostra abaixo do mínimo. A aprovação destas permanece pendente.",
+        "Pesos: o mesmo alvo da carteira normal, sob os tetos por ativo, indústria e setor; "
+        "o que não cabe fica como capital não alocado.",
+    ]
+    indisponiveis = intel_log.get("indisponiveis") or []
+    if indisponiveis:
+        reasons.append("Inteligência dos Ativos indisponível (não vetou): "
+                       + ", ".join(sorted({str(item["tk"]) for item in indisponiveis})))
+    if floor_log.get("carteira_preservada"):
+        reasons.append("O piso de qualidade reprovaria todas as candidatas; a composição "
+                       "foi remontada sem o piso para não sair vazia.")
+    result = allocate_partial(rows, [params.max_weight]*len(rows),
+                              upper_constraints=constraints, target_bands=targets,
+                              max_assets=top_n, reasons=reasons)
+    n_aprov = sum(1 for row in result["items"] if row.get("aprovado"))
+    if result["items"]:
+        result["reasons"].append(
+            f"{n_aprov} de {len(result['items'])} posições vêm de indústrias aprovadas.")
+    result["quality_floor_log"] = floor_log
+    result["inteligencia_log"] = intel_log
+    return result
 
 
 def _chave_segmento(segment):
@@ -165,7 +328,11 @@ def _entrada_exclui(entry_guard, ticker):
 
 def b3_review(results, fundamentals, entry_guard, *, cap, sector_cap, cycle_cap, selic,
               vetoed=(), approved=(), barrado=None):
-    """Composição para revisão quando a carteira normal da B3 não comporta os limites.
+    """Composição para revisão quando a rota normal da B3 não deixa nenhum líder.
+
+    Até 16/11/2026 ela também entrava quando os líderes não fechavam nos
+    limites de concentração; agora a tela fica na rota normal nesse caso
+    (`views.portfolio_b3._normalizar_pesos_relaxados`).
 
     Candidatos: a melhor empresa elegível de CADA segmento, pelo mesmo
     ``score_proximo`` que escolhe os líderes na rota normal. O score é
@@ -231,6 +398,8 @@ def b3_review(results, fundamentals, entry_guard, *, cap, sector_cap, cycle_cap,
                 "subsetor": segment.get("subsetor"),
                 "segmento": segment.get("segmento"),
                 "score_segmento": score,
+                # Grupo de uma empresa só: a nota não compara ninguém.
+                "score_sem_par": bool(segment.get("score_sem_par")),
                 "lider_segmento": ticker == ranked[0][0],
                 "aprovado": _chave_segmento(segment) in aprovados,
                 "evidencia_segmento": evidencia_segmento(segment),

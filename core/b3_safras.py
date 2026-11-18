@@ -182,6 +182,25 @@ Retorno liquido (auditoria app4, item 19 / B3-08):
 - **Benchmarks ficam brutos.** O equal-weight nao gira (e o universo
   inteiro) e a Selic e o retorno de referencia; a tela diz isso ao lado.
 
+Janela de 12 meses e Selic realizada (achado D13, 17/11/2026):
+
+- **A safra media 11 meses.** Com o quadro de precos de fim de mes, a
+  ponta inicial era a primeira data DENTRO da vigencia, 30/04, e abril
+  ficava fora de toda safra. A rodada 2 alinhou a Selic a essa ponta (o
+  descasamento que ela fechou era real), mas fechou pelo lado errado:
+  encurtou a Selic em vez de alongar o preco. Agora `_janela_de_mercado`
+  ancora o inicio no ultimo pregao ate 01/04 (31/03, o preco de quem monta
+  a carteira na virada), dentro de `TOLERANCIA_DIAS`; preco e Selic cobrem
+  31/03 a 31/03. Os gemeos de `core.b3_oos_carteira`
+  (`retornos_por_ticker`, `retorno_benchmark`) usam a mesma funcao.
+- **A Selic do ano era a meta de dezembro.** `public.macro.selic` guarda a
+  meta do fim do ano, e a taxa composta na vigencia saia dela: a safra
+  2021 rendia 9,25% de Selic no trecho de 2021, com a media realizada em
+  4,5%. Com `selic_mensal` (`core.b3_db.load_selic_mensal`, media mensal
+  da meta em `public.info_economica_mensal`), cada mes compoe com a sua
+  taxa; o mes sem dado volta a meta do ano e e listado em
+  `selic_meses_pela_meta`.
+
 Modulo puro: sem streamlit, sem banco. Coberto por tests/test_b3_safras.py.
 """
 from __future__ import annotations
@@ -363,25 +382,35 @@ def carteiras_por_safra(resultados: list[dict], *,
 
 def _janela_de_mercado(df_precos: pd.DataFrame, inicio: pd.Timestamp,
                        fim: pd.Timestamp) -> tuple[pd.Timestamp, pd.Timestamp]:
-    """Primeira e ultima data da serie inteira (nao do papel) dentro da
-    janela -- as duas pontas da comparacao vem do mercado, nao do
-    calendario da safra.
+    """Pontas de mercado da serie inteira (nao do papel) para a janela --
+    as duas pontas da comparacao vem do mercado, nao do calendario da
+    safra.
 
     `dropna(how="all")` descarta linha onde NENHUM ticker tem cotacao
     antes de olhar o indice: senao um `df_precos` vindo de
     `reindex`/`asfreq` sobre o calendario cheio faria o corte parar no
     ultimo dia do calendario, nao no ultimo dia com dado de verdade.
 
-    `inicio_mercado = max(inicio, primeira data dentro da janela)` e
-    `corte = min(fim, ultima data dentro da janela)`: com dado completo os
-    dois colapsam em `inicio`/`fim`; numa safra parcial, ou com o feed
-    comecando depois do inicio civil, eles se afastam.
+    A ponta inicial e o ULTIMO pregao ate `inicio`, se ele estiver a no
+    maximo `TOLERANCIA_DIAS` antes (achado D13, 17/11/2026): a carteira e
+    montada na virada de 31/03 para 01/04, e o preco de compra e o
+    fechamento de 31/03. Ate a oos-carteira-2.4.0 a ponta era a primeira
+    data DENTRO da janela -- num quadro de fim de mes, 30/04 --, e a safra
+    media 11 meses (30/04 a 31/03) rotulados como 12, deixando abril de
+    fora de todo ano. Sem pregao nesse intervalo (feed que comeca depois
+    do inicio civil), vale a primeira data dentro da janela, como antes.
+
+    `corte = min(fim, ultima data dentro da janela)`: numa safra parcial
+    ele fica antes de `fim`.
     """
     validas = df_precos.dropna(how="all")
     dentro = validas.index[(validas.index >= inicio) & (validas.index <= fim)]
     if len(dentro) == 0:
         return inicio, fim
-    return max(inicio, dentro.min()), min(fim, dentro.max())
+    antes = validas.index[(validas.index <= inicio)
+                          & (validas.index >= inicio - pd.Timedelta(days=TOLERANCIA_DIAS))]
+    inicio_mercado = antes.max() if len(antes) else max(inicio, dentro.min())
+    return inicio_mercado, min(fim, dentro.max())
 
 
 def _preco_nas_pontas(serie: pd.Series, inicio_mercado: pd.Timestamp,
@@ -481,6 +510,54 @@ def selic_sem_futuro(selic_por_ano: dict[int, float], ate_ano: int) -> dict[int,
     return out
 
 
+def _dias_por_mes(inicio: pd.Timestamp, fim: pd.Timestamp) -> dict[tuple[int, int], int]:
+    """Reparte os dias corridos de `[inicio, fim)` pelo (ano, mes) de cada um."""
+    dias: dict[tuple[int, int], int] = {}
+    cursor = inicio.normalize()
+    fim = fim.normalize()
+    while cursor < fim:
+        proximo = min(fim, (cursor + pd.offsets.MonthBegin(1)).normalize())
+        chave = (cursor.year, cursor.month)
+        dias[chave] = dias.get(chave, 0) + (proximo - cursor).days
+        cursor = proximo
+    return dias
+
+
+def _retorno_selic_mensal(inicio: pd.Timestamp, fim: pd.Timestamp,
+                          selic_mensal: dict[tuple[int, int], float],
+                          selic_por_ano: dict[int, float],
+                          taxa_selic_aa: float) -> tuple[float, list[int], list[str]]:
+    """Como `_retorno_selic`, mas com a taxa REALIZADA de cada mes.
+
+    `selic_mensal` e {(ano, mes): taxa a.a. decimal}, a media da meta Selic
+    ao longo do mes (`public.info_economica_mensal."Selic_Media"`, ver
+    `core.b3_db.load_selic_mensal`). O CDI anda colado nela (~0,1 p.p.
+    abaixo). Mes sem dado cai na taxa do ano (`selic_por_ano`, a meta do
+    fim do ano) e vai para a terceira saida como "AAAA-MM"; ano sem dado
+    nenhum cai em `taxa_selic_aa` e vai para a segunda, como em
+    `_retorno_selic`.
+    """
+    if fim <= inicio:
+        return 0.0, [], []
+    acumulado = 1.0
+    anos_estimados: set[int] = set()
+    meses_pela_meta: list[str] = []
+    for (ano, mes), dias in sorted(_dias_por_mes(inicio, fim).items()):
+        valor = selic_mensal.get((ano, mes))
+        if valor is not None:
+            taxa_aa = float(valor)
+        else:
+            meses_pela_meta.append(f"{ano:04d}-{mes:02d}")
+            anual = selic_por_ano.get(ano)
+            if anual is not None:
+                taxa_aa = float(anual)
+            else:
+                taxa_aa = float(taxa_selic_aa or 0.0)
+                anos_estimados.add(ano)
+        acumulado *= (1.0 + taxa_aa) ** (dias / 365.0)
+    return acumulado - 1.0, sorted(anos_estimados), meses_pela_meta
+
+
 def _retorno_selic(inicio: pd.Timestamp, fim: pd.Timestamp,
                    selic_por_ano: dict[int, float],
                    taxa_selic_aa: float) -> tuple[float, list[int]]:
@@ -518,8 +595,16 @@ def _retorno_selic(inicio: pd.Timestamp, fim: pd.Timestamp,
 
 def retorno_da_safra(carteira: SafraCarteira, df_precos: pd.DataFrame, *,
                      selic_por_ano: dict[int, float],
-                     taxa_selic_aa: float) -> dict:
+                     taxa_selic_aa: float,
+                     selic_mensal: dict[tuple[int, int], float] | None = None) -> dict:
     """Retorno buy-and-hold da janela de vigencia, contra Selic e equal-weight.
+
+    Com `selic_mensal` (achado D13, 17/11/2026), a Selic composta e a
+    realizada mes a mes (`_retorno_selic_mensal`), e `selic_meses_pela_meta`
+    lista os meses que ficaram sem ela. Sem `selic_mensal`, a taxa de cada
+    ano e a de `selic_por_ano` -- a meta do FIM do ano em `public.macro`,
+    que em ano de ciclo erra a Selic da vigencia por pontos (2021: meta de
+    dezembro 9,25%, media do ano 4,5%).
 
     Ticker sem duas cotacoes validas e proximas das pontas da janela
     (ver `_preco_nas_pontas`) rende ZERO nos dois lados da comparacao:
@@ -618,14 +703,20 @@ def retorno_da_safra(carteira: SafraCarteira, df_precos: pd.DataFrame, *,
             "excesso_equal_weight": None,
             "retorno_equal_weight_bruto": None,
             "selic_anos_estimados": [],
+            "selic_meses_pela_meta": [],
             "retornos_por_ativo": None,
             "mensuravel": False,
             **cobertura,
         }
 
     retorno_ew = float(np.mean(retornos_ew))
-    retorno_selic, selic_anos_estimados = _retorno_selic(
-        inicio_mercado, corte, selic_por_ano or {}, taxa_selic_aa)
+    if selic_mensal:
+        retorno_selic, selic_anos_estimados, selic_meses_pela_meta = _retorno_selic_mensal(
+            inicio_mercado, corte, selic_mensal, selic_por_ano or {}, taxa_selic_aa)
+    else:
+        retorno_selic, selic_anos_estimados = _retorno_selic(
+            inicio_mercado, corte, selic_por_ano or {}, taxa_selic_aa)
+        selic_meses_pela_meta = []
     return {
         "retorno_estrategia": retorno_est,
         "retorno_equal_weight": retorno_ew,
@@ -636,6 +727,7 @@ def retorno_da_safra(carteira: SafraCarteira, df_precos: pd.DataFrame, *,
         "excesso_equal_weight": (retorno_est - retorno_ew
                                  if np.isfinite(retorno_ew) else float("nan")),
         "selic_anos_estimados": selic_anos_estimados,
+        "selic_meses_pela_meta": selic_meses_pela_meta,
         "retornos_por_ativo": retornos_por_ativo,
         "mensuravel": True,
         **cobertura,
@@ -666,7 +758,8 @@ def _pct(valor: float | None) -> float:
 def tabela_de_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
                      selic_por_ano: dict[int, float],
                      taxa_selic_aa: float,
-                     hoje: pd.Timestamp | None = None) -> pd.DataFrame:
+                     hoje: pd.Timestamp | None = None,
+                     selic_mensal: dict[tuple[int, int], float] | None = None) -> pd.DataFrame:
     """Uma linha por safra. `attrs['safras_completas']` lista as que podem
     entrar em media -- a safra vigente tem janela aberta e fica de fora.
 
@@ -688,10 +781,12 @@ def tabela_de_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
     linhas: list[dict] = []
     completas: list[int] = []
     selic_estimados_por_safra: dict[int, list[int]] = {}
+    meses_pela_meta_por_safra: dict[int, list[str]] = {}
     carteiras = carteiras_por_safra(resultados, hoje=hoje)
     todas_metricas = [retorno_da_safra(c, df_precos,
                                        selic_por_ano=selic_por_ano,
-                                       taxa_selic_aa=taxa_selic_aa)
+                                       taxa_selic_aa=taxa_selic_aa,
+                                       selic_mensal=selic_mensal)
                       for c in carteiras]
     # O liquido depende da safra ANTERIOR (o que se vende em abril), entao
     # as safras sao encadeadas em ordem antes de virar linha.
@@ -749,10 +844,15 @@ def tabela_de_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
         if carteira.completa and metricas["mensuravel"]:
             completas.append(carteira.safra)
         selic_estimados_por_safra[carteira.safra] = metricas["selic_anos_estimados"]
+        meses_pela_meta_por_safra[carteira.safra] = metricas["selic_meses_pela_meta"]
 
     tabela = pd.DataFrame(linhas, columns=COLUNAS_TABELA)
     tabela.attrs["safras_completas"] = completas
     tabela.attrs["selic_anos_estimados_por_safra"] = selic_estimados_por_safra
+    # D13: qual Selic a coluna "Selic (%)" mede. "realizada" so quando a
+    # serie mensal entrou; os meses que cairam na meta ficam listados.
+    tabela.attrs["selic_fonte"] = "realizada" if selic_mensal else "meta"
+    tabela.attrs["selic_meses_pela_meta_por_safra"] = meses_pela_meta_por_safra
     return tabela
 
 

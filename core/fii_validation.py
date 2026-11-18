@@ -74,12 +74,40 @@ def leitura_do_excesso(metrics: dict[str, Any] | None) -> dict[str, Any]:
         "periodos": int(ci.get("n") or 0),
         "piso": PISO_IC_EXCESSO,
         "significativo": bool(disponivel and inferior > PISO_IC_EXCESSO),
+        # Achado D12 (17/11/2026): "não significativo" cobria do mesmo jeito o
+        # run que ganha do IFIX sem significância e o que PERDE dele -- o run 66
+        # saía "Aprovado · excesso não significativo" com média negativa. As
+        # duas marcas abaixo separam o lado do zero. O portão não muda: ele
+        # atesta integridade do protocolo, não vantagem (ver PISO_IC_EXCESSO).
+        "negativo": bool(disponivel and media is not None and media < 0.0),
+        # IC inteiro abaixo de zero: a carteira perde do índice, e isso É
+        # distinguível de acaso. Régua fixa em zero, não no piso: o piso é a
+        # exigência para "ganha"; perder é perder.
+        "perde_significativo": bool(disponivel and superior < 0.0),
     }
 
 
 def _pp(valor: float) -> str:
     """Retorno mensal em fração para pontos percentuais com vírgula."""
     return f"{valor * 100:+.3f}".replace(".", ",").replace("-", "−")
+
+
+def veredito_do_excesso(leitura: dict[str, Any]) -> str | None:
+    """Rótulo curto do excesso, o MESMO em todas as telas e no motor.
+
+    ``None`` quando o IC não existe -- ausência não vira veredito. Ordem:
+    ganha com significância > perde com significância > média negativa sem
+    significância > média positiva (ou ausente) sem significância.
+    """
+    if not leitura.get("disponivel"):
+        return None
+    if leitura.get("significativo"):
+        return "significativo"
+    if leitura.get("perde_significativo"):
+        return "perde do IFIX, significativo"
+    if leitura.get("negativo"):
+        return "excesso negativo, não significativo"
+    return "excesso não significativo"
 
 
 def texto_do_excesso(leitura: dict[str, Any]) -> str:
@@ -89,10 +117,8 @@ def texto_do_excesso(leitura: dict[str, Any]) -> str:
     media = leitura.get("media")
     prefixo = (f"excesso médio de {_pp(media)} p.p./mês sobre o IFIX, "
                if media is not None else "excesso sobre o IFIX, ")
-    veredito = ("significativo" if leitura["significativo"]
-                else "excesso não significativo")
     return (f"{prefixo}IC 95% de {_pp(leitura['inferior'])} a "
-            f"{_pp(leitura['superior'])} p.p. — {veredito}")
+            f"{_pp(leitura['superior'])} p.p. — {veredito_do_excesso(leitura)}")
 
 
 @dataclass(frozen=True)

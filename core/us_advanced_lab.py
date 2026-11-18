@@ -57,7 +57,9 @@ def normalize_weights(weights: dict[str, float] | None = None) -> dict[str, floa
 def _percentile(values: pd.Series, higher: bool = True) -> pd.Series:
     numeric = pd.to_numeric(values, errors="coerce").replace([np.inf, -np.inf], np.nan)
     valid = numeric.dropna()
-    if valid.empty:
+    if len(valid) < 2:
+        # Um valor só não tem ordem: seria 100 (ou 0), a nota extrema tirada
+        # de uma observação. Gêmeo do achado D2 de 17/11/2026 na B3.
         return pd.Series(50.0, index=numeric.index)
     if len(valid) >= 4:
         numeric = numeric.clip(valid.quantile(.05), valid.quantile(.95))

@@ -175,6 +175,23 @@ A aprovação atesta integridade temporal, viabilidade (112/116 = 0,966) e
 respeito às restrições. Ela não diz que a carteira bate o IFIX; no histórico
 medido, ela não bate.
 
+**A tela diz isso desde 17/11/2026 (achado D12).** Antes, run aprovado com
+excesso negativo saía "Aprovado · excesso não significativo", o mesmo rótulo
+do run 90, que ganha do IFIX sem significância. O portão
+(`validate_methodology`) não mudou. Mudou a leitura, numa função só
+(`core.fii_validation.veredito_do_excesso`), que a tela e o motor
+(`core.validacao_motor._vantagem_fii`) usam:
+
+- IC inteiro acima do piso → "significativo" (verde);
+- IC inteiro abaixo de zero → "perde do IFIX, significativo" (vermelho, mesmo
+  com o selo "Aprovado");
+- média negativa e IC cruzando o zero → "excesso negativo, não significativo"
+  (âmbar);
+- média positiva e IC cruzando o zero → "excesso não significativo" (âmbar).
+
+O limiar da perda é o zero, não o piso: o piso mede vantagem mínima; a perda
+é qualquer intervalo que não alcança o empate.
+
 ## Segmento cadastral do mensal é reserva do setor por inquilino (parser CVM 1.8.0)
 
 A validação PIT de 08/11/2026 (run 146, parser 1.7.0) ficou em 110 de 116

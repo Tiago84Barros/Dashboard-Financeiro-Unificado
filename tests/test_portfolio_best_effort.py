@@ -408,3 +408,201 @@ def test_cards_fii_de_mesmo_peso_seguem_a_utilidade_e_nao_o_percentil():
              {"ticker": "TIJO11", "tipo": "tijolo", "weight": .1, "type_score": 40,
               "quality": .60}]
     assert [r["ticker"] for r in _ordenados(itens)] == ["TIJO11", "PAPL11"]
+
+
+# ── Rota alternativa dos EUA: líderes por indústria, alvo da carteira normal ─
+# Até 15/11/2026 `us_review` juntava toda elegível de toda indústria, sem cota
+# por indústria, e maximizava o `entry_score` -- percentil DENTRO da indústria.
+# O otimizador encostava os pesos no teto por ativo (cerca de 13 nomes a 8%
+# contra 26 na carteira normal). Estes testes amarram a revisão à mesma regra.
+
+_SETORES_US = ["Technology", "Healthcare", "Industrials", "Utilities", "Energy",
+               "Basic Materials", "Consumer Defensive", "Consumer Cyclical"]
+
+
+def _universo_us(setores=_SETORES_US, ruido=6.0):
+    from tests.test_us_portfolio_creation import _universe
+
+    universo = _universe(groups=16, names_per_group=6)
+    universo["sector"] = [setores[int(s[1:3]) % len(setores)] for s in universo["symbol"]]
+    rng = np.random.default_rng(7)
+    for coluna in ("score_quality", "score_growth", "score_solidity",
+                   "score_capital_efficiency", "score_valuation", "score_shareholder"):
+        universo[coluna] = universo[coluna] + rng.normal(0, ruido, len(universo))
+    return universo
+
+
+@pytest.mark.parametrize("weighting", ["equal", "score", "inverse_vol"])
+def test_us_review_reproduz_a_carteira_normal_quando_ha_industria_aprovada(weighting):
+    from core.us_portfolio_creation import build_portfolio_creation
+
+    params = USPortfolioCreationParams(apply_quality_floor=False, weighting=weighting)
+    normal = build_portfolio_creation(_universo_us(), params)
+    assert normal["review_portfolio"] is None and not normal["holdings"].empty
+    revisao = us_review(normal["eligible"], params, normal["industry_audit"])
+    pesos_normal = normal["holdings"].set_index("symbol")["weight"].to_dict()
+    pesos_revisao = {row["symbol"]: row["weight"] for row in revisao["items"]}
+    assert set(pesos_revisao) == set(pesos_normal)
+    assert pesos_revisao == pytest.approx(pesos_normal, abs=1e-6)
+    assert all(row["aprovado"] for row in revisao["items"])
+
+
+def test_us_review_com_teto_de_setor_inviavel_mantem_as_candidatas_e_deixa_caixa():
+    from core.us_portfolio_creation import build_portfolio_creation
+
+    params = USPortfolioCreationParams(apply_quality_floor=False)
+    # Três setores contra teto de 25%: a carteira normal sai vazia e cai na revisão.
+    result = build_portfolio_creation(_universo_us(setores=_SETORES_US[:3]), params)
+    revisao = result["review_portfolio"]
+    assert result["holdings"].empty and revisao is not None
+    assert ({row["symbol"] for row in revisao["items"]}
+            <= set(result["candidates"]["symbol"]))
+    assert all(row["aprovado"] for row in revisao["items"])
+    assert revisao["allocated_weight"] <= 3 * params.max_sector_weight + 1e-6
+    assert revisao["allocated_weight"] + revisao["unallocated_weight"] == pytest.approx(1)
+
+
+def test_us_review_sem_aprovada_respeita_cota_e_ordena_industrias_pela_margem():
+    from dataclasses import replace
+
+    from core.us_portfolio_creation import build_portfolio_creation
+
+    base = USPortfolioCreationParams(apply_quality_floor=False)
+    params = replace(base, min_entry_score=99)
+    result = build_portfolio_creation(_universo_us(), params)
+    revisao = result["review_portfolio"]
+    assert revisao is not None and revisao["items"]
+    itens = pd.DataFrame(revisao["items"])
+    assert itens.groupby("industry_group").size().max() <= params.leaders_per_industry
+    assert not itens["aprovado"].any()
+    # Nenhum ativo encosta no teto por ativo: o peso segue o alvo da carteira
+    # normal, não o maior score.
+    assert len(itens) > 1 / params.max_weight
+    assert itens["weight"].max() < params.max_weight - 1e-6
+    # A fila de indústrias segue a margem até o corte, não o score de um líder.
+    audit = result["industry_audit"].set_index("industry_group")
+    margem = np.minimum(audit["avg_entry_score"] - params.min_entry_score,
+                        audit["score_edge"] - params.min_score_edge)
+    ordem = itens.sort_values("quality", ascending=False)["industry_group"].drop_duplicates()
+    assert list(margem.loc[ordem]) == sorted(margem.loc[ordem], reverse=True)
+    # Com cota por indústria, a revisão fica perto da carteira normal.
+    normal = build_portfolio_creation(_universo_us(), base)["holdings"]
+    comum = set(normal["symbol"]) & set(itens["symbol"])
+    assert len(comum) >= .8 * len(normal)
+
+
+def test_card_dos_eua_mostra_a_situacao_da_industria_e_nao_backtest_de_segmento():
+    from design.portfolio_review import _backtest
+
+    row = {"ticker": "U001", "industry_group": "Industry 0", "aprovado": False,
+           "situacao_grupo": "Indústria em observação · margem -3.0 pts"}
+    assert _backtest(row) == "Indústria em observação · margem -3.0 pts"
+    assert "Segmento" not in _backtest({**row, "aprovado": True,
+                                        "situacao_grupo": "Indústria aprovada"})
+
+
+def test_us_review_piso_que_zera_as_aprovadas_nao_abre_vaga_para_reprovada(monkeypatch):
+    """Achado do Codex no PR #757: decidir "há aprovada" pelos blocos que
+    sobreviveram ao piso deixava uma reprovada impedir a rede final."""
+    import core.us_quality_floor as floor
+    from core.us_portfolio_creation import build_industry_audit, select_industry_leaders
+
+    params = USPortfolioCreationParams(apply_quality_floor=True)
+    from core.us_portfolio_creation import prepare_eligible_universe
+    eligible, _ = prepare_eligible_universe(_universo_us(), params)
+    audit = build_industry_audit(eligible, params)
+    aprovadas = set(audit.loc[audit["status"].eq("Aprovada"), "industry_group"].astype(str))
+    assert aprovadas and aprovadas != set(audit["industry_group"].astype(str))
+    # O piso reprova tudo nas aprovadas e aprova tudo nas demais.
+    monkeypatch.setattr(floor, "apply_with_substitution",
+                        lambda sel, ranked, frame, pesos, grupo, log, **_:
+                        [] if grupo in aprovadas else list(sel))
+    normal = select_industry_leaders(eligible, audit, params)
+    revisao = us_review(eligible, params, audit)
+    assert set(normal["industry_group"].astype(str)) <= aprovadas
+    assert {row["industry_group"] for row in revisao["items"]} <= aprovadas
+    assert {row["symbol"] for row in revisao["items"]} <= set(normal["symbol"])
+    assert revisao["quality_floor_log"].get("carteira_preservada")
+
+
+def _avaliador_que_veta(vetados, chamadas):
+    from core.inteligencia_ativos import avaliacao as av
+
+    critico = av.Alerta("dívida bruta de 4,00x o patrimônio", True)
+
+    def avaliar(ticker):
+        chamadas.append(str(ticker))
+        alertas = (critico,) if str(ticker) in vetados else ()
+        return av.Avaliacao(av.GERAL, (av.Dimensao(av.QUALIDADE, av.ADEQUADA),
+                                       av.Dimensao(av.VALUATION, av.JUSTO),
+                                       av.Dimensao(av.MERCADO, av.NEUTRO)), alertas)
+
+    return avaliar
+
+
+def test_rede_final_passa_os_restaurados_pelo_portao_da_inteligencia(monkeypatch):
+    """Achado do Codex no PR #757: com o piso reprovando tudo, a rede final
+    devolvia líderes pré-piso que nunca passaram pelo avaliador. As duas
+    rotas usam a mesma rede; nenhuma deixa entrar o nome que ele barra."""
+    import core.us_quality_floor as floor
+    from core.us_portfolio_creation import (
+        build_industry_audit,
+        prepare_eligible_universe,
+        select_industry_leaders,
+    )
+
+    params = USPortfolioCreationParams(apply_quality_floor=True)
+    eligible, _ = prepare_eligible_universe(_universo_us(), params)
+    audit = build_industry_audit(eligible, params)
+    aprovadas = sorted(set(audit.loc[audit["status"].eq("Aprovada"), "industry_group"]))
+    assert aprovadas
+    monkeypatch.setattr(floor, "apply_with_substitution",
+                        lambda sel, ranked, frame, pesos, grupo, log, **_: [])
+    lider = (eligible[eligible["industry_group"].eq(aprovadas[0])]
+             .sort_values("entry_score", ascending=False)["symbol"].iloc[0])
+    chamadas: list[str] = []
+    avaliador = _avaliador_que_veta({lider}, chamadas)
+
+    normal = select_industry_leaders(eligible, audit, params, avaliador)
+    assert len(chamadas) == len(set(chamadas)), "um veredito por ticker"
+    revisao = us_review(eligible, params, audit, avaliador)
+
+    assert normal.attrs["quality_floor_log"].get("carteira_preservada")
+    assert lider not in set(normal["symbol"])
+    assert lider not in {row["symbol"] for row in revisao["items"]}
+    # A vaga do vetado vai ao próximo da mesma indústria, como no laço.
+    assert normal["industry_group"].eq(aprovadas[0]).sum() == params.leaders_per_industry
+    assert [v["tk"] for v in normal.attrs["inteligencia_log"]["vetados"]] == [lider]
+    assert {row["symbol"] for row in revisao["items"]} <= set(normal["symbol"])
+
+
+def test_us_review_e_carteira_normal_desempatam_igual_na_fronteira_do_top_n():
+    """Achado do Codex no PR #757: com empate nos dois scores na fronteira
+    do top_n, a ordem dos blocos (alfabética na normal, margem da auditoria
+    na revisão) decidia quem entrava."""
+    from dataclasses import replace
+
+    from core.us_portfolio_creation import (
+        build_industry_audit,
+        prepare_eligible_universe,
+        select_industry_leaders,
+    )
+
+    params = USPortfolioCreationParams(apply_quality_floor=False)
+    eligible, _ = prepare_eligible_universe(_universo_us(), params)
+    audit = build_industry_audit(eligible, params)
+    aprovadas = set(audit.loc[audit["status"].eq("Aprovada"), "industry_group"])
+    vagas = len(aprovadas) * params.leaders_per_industry
+    assert vagas > 2
+    empatado = eligible.copy()
+    dentro = empatado["industry_group"].isin(aprovadas)
+    empatado.loc[dentro, ["entry_score", "fundamental_score"]] = [70.0, 60.0]
+    params = replace(params, top_n=vagas - 1)
+
+    normal = select_industry_leaders(empatado, audit, params)
+    revisao = us_review(empatado, params, audit)
+
+    assert len(normal) == vagas - 1
+    assert {row["symbol"] for row in revisao["items"]} == set(normal["symbol"])
+    # O desempate é o ticker, não a ordem em que as indústrias chegam.
+    assert normal["symbol"].str.upper().is_monotonic_increasing
