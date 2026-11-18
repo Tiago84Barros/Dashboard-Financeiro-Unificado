@@ -271,6 +271,10 @@ class _StreamlitDoMenu(ModuleType):
     def warning(self, *_a, **_k):
         pass
 
+    def empty(self):
+        # Vaga do aviso da fonte da B3 (``app.py::_ROTAS_QUE_LEEM_B3``).
+        return SimpleNamespace(container=nullcontext)
+
 
 def test_menu_lateral_obedece_a_escolha_da_conta(monkeypatch):
     monkeypatch.delenv("APP_TEST_MODE", raising=False)

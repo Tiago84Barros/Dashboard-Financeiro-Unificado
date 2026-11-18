@@ -341,6 +341,27 @@ def _sem_memoria_do_tunel():
     ar._limpar_memoria()
 
 
+# ── leitura da B3 sem armazém nem túnel de verdade ──────────────────────────
+# `core.fonte_b3` lê a B3 do armazém pelo papel `app4_leitura`
+# (`ARMAZEM_SQL_DB_URL`) ou pelo túnel. O `load_dotenv` traz os dois do `.env`
+# real, e o armazém roda em localhost, que a guarda de rede deixa passar: sem
+# esta fixture, um teste que finge o banco do app leria o armazém de verdade.
+# Aqui nenhum dos dois existe, e a leitura cai no leitor direto que o teste
+# finge (a reserva). Quem testa a escolha da fonte troca estes dois de volta.
+@pytest.fixture(autouse=True)
+def _b3_sem_armazem_real(monkeypatch):
+    try:
+        import core.fonte_b3 as fb3
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield
+        return
+    fb3._limpar_estado()
+    monkeypatch.setattr(fb3, "_url_papel", lambda: "")
+    monkeypatch.setattr(fb3, "_consultar_tunel", lambda sql, params: None)
+    yield
+    fb3._limpar_estado()
+
+
 # ── nenhum teste herda a leitura macro de outro ─────────────────────────────
 # `core.macro_data.portfolio_context` guarda por 5 min as observações lidas de
 # cada engine (LLM-A10). Um teste que regrava o mesmo banco e relê com o mesmo

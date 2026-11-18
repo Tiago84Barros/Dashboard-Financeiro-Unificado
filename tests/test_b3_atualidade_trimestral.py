@@ -214,10 +214,25 @@ def test_leitores_sql_contam_o_universo(engine_fake):
     assert medida["score"]["defasados"] == 1
 
 
+def _fonte_b3_no(engine, monkeypatch):
+    """A fonte da B3 lê o banco falso; o banco do app (Supabase) explode."""
+    import pandas as pd
+
+    def _q_b3(sql, params=None):
+        with engine.connect() as c:
+            return pd.read_sql_query(text(sql), c, params=params or {})
+
+    def _supabase():
+        raise AssertionError("a atualidade da B3 não pode medir o Supabase")
+
+    monkeypatch.setattr("core.market_read._q_b3", _q_b3)
+    monkeypatch.setattr("core.database.get_engine", _supabase)
+
+
 def test_dossie_leva_atualidade_e_aviso_do_score(engine_fake, monkeypatch):
     from core import dossie_b3
 
-    monkeypatch.setattr("core.database.get_engine", lambda: engine_fake)
+    _fonte_b3_no(engine_fake, monkeypatch)
     atual = dossie_b3._atualidade("PETR4", hoje=HOJE)
     assert atual["ultimo_trimestre"] == (2026, 2)
     assert atual["base_score"] == (2026, 1)
@@ -226,3 +241,26 @@ def test_dossie_leva_atualidade_e_aviso_do_score(engine_fake, monkeypatch):
 
     texto = dossie_b3.dossie_to_text({"ticker": "PETR4", "atualidade": atual})
     assert "ATUALIDADE: última demonstração 2026T2 | base do score/TTM 2026T1" in texto
+
+
+def test_aviso_da_tela_mede_pela_fonte_da_b3(engine_fake, monkeypatch):
+    """O aviso de trimestre defasado da tela mede o que a tela mostra."""
+    from design import componentes
+
+    _fonte_b3_no(engine_fake, monkeypatch)
+    medida = componentes._atualidade_b3_cacheada.__wrapped__(HOJE.isoformat())
+    assert medida["universo"]["vigente"] == (2026, 1)
+    assert medida["score"]["defasados"] == 1
+
+
+def test_conexao_b3_levanta_quando_a_leitura_falha(monkeypatch):
+    import pandas as pd
+    import pytest
+
+    from core.fonte_b3 import ConexaoB3
+
+    vazio = pd.DataFrame()
+    vazio.attrs["load_error"] = "query_failed"
+    monkeypatch.setattr("core.market_read._q_b3", lambda sql, params=None: vazio)
+    with pytest.raises(RuntimeError, match="leitura da B3 falhou"):
+        ConexaoB3().execute("SELECT 1", {}).fetchall()

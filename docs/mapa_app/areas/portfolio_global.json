@@ -1,7 +1,7 @@
 {
   "nome": "Portfólio Global",
   "resumo": "As três carteiras somadas num patrimônio só",
-  "explicacao": "Junta as carteiras-modelo de Empresas B3, Empresas Americanas e FIIs como se fossem um único patrimônio. Mostra concentração, risco, papel de cada ativo, sugestões de ajuste, um plano de aporte e um chat com a inteligência artificial. Não tem abas: é uma página longa, dividida em seções, que só aparece por completo depois de definir a alocação-alvo.",
+  "explicacao": "Junta as carteiras-modelo de Empresas B3, Empresas Americanas e FIIs como se fossem um único patrimônio. Mostra concentração, risco, papel de cada ativo, sugestões de ajuste, um plano de aporte e um chat com a inteligência artificial. Não tem abas: é uma página longa, dividida em seções, que só aparece por completo depois de definir a alocação-alvo. Os preços da bolsa brasileira usados aqui vêm do armazém local; se ele não responder, um aviso amarelo no topo diz que podem ser a cópia guardada em 15/11/2026.",
   "so_admin": false,
   "fonte": "views/portfolio_global.py:1920",
   "filhos": [

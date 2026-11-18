@@ -24,7 +24,9 @@ comportamento anterior e explica o motivo.
   dado). É dado público.
 - **Não expõe:** finanças, carteira, cartão e o espelho do Supabase. Nenhuma
   rota lê essas tabelas.
-- **Só GET.** A sessão do Postgres abre com `default_transaction_read_only=on`.
+- **Só leitura.** As rotas são GET, menos `POST /sql` (seção abaixo), que
+  aceita um único SELECT e roda com o papel `app4_leitura`. Toda sessão do
+  Postgres abre com `default_transaction_read_only=on`.
 - **Só `127.0.0.1`.** Quem expõe o serviço é o túnel, e só ele.
 - **Token de 32+ caracteres obrigatório**, comparado em tempo constante.
 - **Tetos por chamada:** até 500 notícias e até 30 dias; na rota por ativo
@@ -166,6 +168,48 @@ O app formata isso como a seção `VARREDURA DO ARMAZÉM LOCAL` dos prompts, com
 a frase da tela "ticker não encontrado" e como sufixo das lacunas que a LLM
 declara. Rota nova exige reiniciar a tarefa `DFU - Armazem leitura`; até lá o
 prompt diz "não feita (HTTP 404)" e não trata isso como ausência de dado.
+
+## A B3 lida do armazém (`POST /sql`)
+
+Decisão de 15/11/2026: o Supabase não recebe mais a B3, e o app lê a B3 do
+armazém. O ponto único é `core/fonte_b3.py::consultar`, chamado por
+`core.market_read._q_b3`. Ele escolhe, nesta ordem:
+
+1. banco do app já no armazém (URL em localhost): lê direto;
+2. `ARMAZEM_SQL_DB_URL` no ambiente: lê direto com o papel só-leitura;
+3. túnel configurado: manda o mesmo SELECT para `POST /sql`;
+4. nada disso, ou o degrau escolhido falhou: lê a cópia do Supabase congelada
+   em 15/11 e registra o motivo. A tela de Empresas B3 mostra um aviso amarelo
+   por até 12 h (o maior cache dos loaders) e o motivo vai para Configurações →
+   Restrições (`detalhe.b3.fonte_reserva`). Dashboard Geral, Seleção de FIIs e
+   Portfólio Global também leem a B3 por `core.market_read` (o Portfólio Global,
+   pelos preços mensais das posições brasileiras) e mostram o mesmo aviso no
+   topo, pelo roteador (`app.py::_ROTAS_QUE_LEEM_B3`).
+
+A barreira de segurança da rota é o papel `app4_leitura`, não o filtro do
+texto: ele só enxerga `market`, `market_us` e `public.setores`. Crie (ou troque
+a senha) com:
+
+```
+python scripts/criar_papel_leitura_armazem.py --apply --gravar-em ..\dfu-armazem-servico\.env
+```
+
+e reinicie a tarefa `DFU - Armazem leitura`. O script também cria a política
+`app4_leitura_select` (só SELECT, só para o papel) em cada tabela do escopo
+com RLS ligado: o papel é `NOBYPASSRLS`, e GRANT sem política devolve zero
+linhas sem erro (em 18/11/2026 eram 24 tabelas, entre elas
+`market.b3_cotacao_atual`). No fim ele entra como o papel e lista a tabela que
+tem linha para o dono e nenhuma para o papel; tabela que ganhar RLS depois
+pede rodar o script de novo. Sem `ARMAZEM_SQL_DB_URL` no
+serviço, a rota responde 503 e nunca cai no superusuário. Tetos: 400 mil
+linhas, 50 parâmetros, listas de até 5 mil itens. Medido em 18/11/2026 com o
+universo inteiro (440 tickers): as quatro leituras pesadas (múltiplos,
+histórico de múltiplos, demonstrações e preços mensais) levam de 1,5 a 2,1 s
+pelo túnel, contra 20 a 90 s no Supabase, e devolvem o mesmo quadro da leitura
+direta.
+
+Ficam fora do papel, e por isso no banco do app: `public.macro` e
+`public.docs_corporativos` (no dossiê, `_rows(..., _banco_do_app=True)`).
 
 ## Como saber se está funcionando
 

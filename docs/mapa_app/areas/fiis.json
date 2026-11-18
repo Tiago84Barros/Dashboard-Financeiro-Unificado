@@ -1,7 +1,7 @@
 {
   "nome": "Seleção de FIIs",
   "resumo": "Fundos imobiliários: explorar, estudar e montar carteira",
-  "explicacao": "Área dos fundos imobiliários (FIIs), fundos que investem em imóveis ou em títulos ligados a imóveis e repassam renda mensal. O cabeçalho mostra se o método já foi validado e quanto ele rendeu acima do IFIX (o índice dos FIIs). Quatro botões no topo funcionam como abas: ver os fundos, estudar um fundo, montar a carteira e ver o desempenho passado.",
+  "explicacao": "Área dos fundos imobiliários (FIIs), fundos que investem em imóveis ou em títulos ligados a imóveis e repassam renda mensal. O cabeçalho mostra se o método já foi validado e quanto ele rendeu acima do IFIX (o índice dos FIIs). Quatro botões no topo funcionam como abas: ver os fundos, estudar um fundo, montar a carteira e ver o desempenho passado. Os preços da bolsa brasileira usados aqui vêm do armazém local; se ele não responder, um aviso amarelo no topo diz que podem ser a cópia guardada em 15/11/2026.",
   "so_admin": false,
   "fonte": "views/fiis.py:283 (abas em :217 e :368)",
   "filhos": [

@@ -1,12 +1,12 @@
 {
   "nome": "Dashboard Financeiro Unificado",
   "explicacao": "Junta num lugar só suas contas do dia a dia, seus investimentos e a análise de empresas do Brasil e dos EUA. Abaixo estão as 8 telas do menu lateral e, por último, o que funciona por trás delas.",
-  "data_mapa": "17/11/2026",
+  "data_mapa": "18/11/2026",
   "filhos": [
     {
       "nome": "Dashboard Geral",
       "resumo": "Resumo do seu dinheiro e dos investimentos numa página",
-      "explicacao": "É a primeira tela do app: uma página única, de rolar, que junta o mês atual (quanto entrou, quanto saiu, quanto sobrou), o histórico, a carteira que você tem investida e as carteiras sugeridas pelo app. Ela se monta com as seções que você mantém no menu (Configurações → Geral → Seções do aplicativo): o bloco de uma seção desligada não aparece, e o que sobra continua na mesma ordem. Aqui você só consulta: nada é digitado nem salvo. Para lançar ou corrigir valores, use os outros itens do menu.",
+      "explicacao": "É a primeira tela do app: uma página única, de rolar, que junta o mês atual (quanto entrou, quanto saiu, quanto sobrou), o histórico, a carteira que você tem investida e as carteiras sugeridas pelo app. Ela se monta com as seções que você mantém no menu (Configurações → Geral → Seções do aplicativo): o bloco de uma seção desligada não aparece, e o que sobra continua na mesma ordem. Aqui você só consulta: nada é digitado nem salvo. Para lançar ou corrigir valores, use os outros itens do menu. Os preços da bolsa brasileira usados aqui vêm do armazém local; se ele não responder, um aviso amarelo no topo diz que podem ser a cópia guardada em 15/11/2026.",
       "so_admin": false,
       "filhos": [
         {
@@ -1598,7 +1598,7 @@
     {
       "nome": "Empresas B3",
       "resumo": "Estudar ações brasileiras e montar carteiras",
-      "explicacao": "É a área do app dedicada às ações de empresas brasileiras negociadas na bolsa (B3). No topo há cinco abas, em forma de botões: navegar pelas empresas, estudar uma empresa, montar uma carteira, avaliá-la e acompanhar a Carteira 20. Serve para ir da pesquisa de uma empresa até uma carteira montada e acompanhada.",
+      "explicacao": "É a área do app dedicada às ações de empresas brasileiras negociadas na bolsa (B3). No topo há cinco abas, em forma de botões: navegar pelas empresas, estudar uma empresa, montar uma carteira, avaliá-la e acompanhar a Carteira 20. Serve para ir da pesquisa de uma empresa até uma carteira montada e acompanhada. Os números da bolsa vêm do armazém local, o banco grande que fica no computador do dono do app e é atualizado todo dia. Se ele não responder, um aviso amarelo no topo diz que os dados mostrados são a cópia guardada em 15/11/2026.",
       "so_admin": false,
       "filhos": [
         {
@@ -2496,7 +2496,7 @@
     {
       "nome": "Seleção de FIIs",
       "resumo": "Fundos imobiliários: explorar, estudar e montar carteira",
-      "explicacao": "Área dos fundos imobiliários (FIIs), fundos que investem em imóveis ou em títulos ligados a imóveis e repassam renda mensal. O cabeçalho mostra se o método já foi validado e quanto ele rendeu acima do IFIX (o índice dos FIIs). Quatro botões no topo funcionam como abas: ver os fundos, estudar um fundo, montar a carteira e ver o desempenho passado.",
+      "explicacao": "Área dos fundos imobiliários (FIIs), fundos que investem em imóveis ou em títulos ligados a imóveis e repassam renda mensal. O cabeçalho mostra se o método já foi validado e quanto ele rendeu acima do IFIX (o índice dos FIIs). Quatro botões no topo funcionam como abas: ver os fundos, estudar um fundo, montar a carteira e ver o desempenho passado. Os preços da bolsa brasileira usados aqui vêm do armazém local; se ele não responder, um aviso amarelo no topo diz que podem ser a cópia guardada em 15/11/2026.",
       "so_admin": false,
       "filhos": [
         {
@@ -2717,7 +2717,7 @@
     {
       "nome": "Portfólio Global",
       "resumo": "As três carteiras somadas num patrimônio só",
-      "explicacao": "Junta as carteiras-modelo de Empresas B3, Empresas Americanas e FIIs como se fossem um único patrimônio. Mostra concentração, risco, papel de cada ativo, sugestões de ajuste, um plano de aporte e um chat com a inteligência artificial. Não tem abas: é uma página longa, dividida em seções, que só aparece por completo depois de definir a alocação-alvo.",
+      "explicacao": "Junta as carteiras-modelo de Empresas B3, Empresas Americanas e FIIs como se fossem um único patrimônio. Mostra concentração, risco, papel de cada ativo, sugestões de ajuste, um plano de aporte e um chat com a inteligência artificial. Não tem abas: é uma página longa, dividida em seções, que só aparece por completo depois de definir a alocação-alvo. Os preços da bolsa brasileira usados aqui vêm do armazém local; se ele não responder, um aviso amarelo no topo diz que podem ser a cópia guardada em 15/11/2026.",
       "so_admin": false,
       "filhos": [
         {

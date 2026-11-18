@@ -99,6 +99,15 @@ def _q(sql: str, params: dict | None = None, engine=None) -> pd.DataFrame:
         return frame
 
 
+def _q_b3(sql: str, params: dict | None = None) -> pd.DataFrame:
+    """Leitura da B3: armazém local, com a cópia congelada do Supabase como
+    reserva nomeada (``core.fonte_b3``). Os loaders de FII seguem em ``_q``
+    até a fatia deles."""
+    from core.fonte_b3 import consultar
+
+    return consultar(sql, params, ler_direto=_q)
+
+
 def _norm_ticker(s: pd.Series) -> pd.Series:
     return s.astype(str).str.replace(".SA", "", regex=False).str.strip().str.upper()
 
@@ -143,7 +152,7 @@ def load_setores() -> pd.DataFrame:
     Quem conta empresas (a aba de portfólio) tira o substituído com
     ``deduplicar_por_empresa``.
     """
-    df = _q("""
+    df = _q_b3("""
         SELECT a.ticker, a.company_id,
                COALESCE(c.name, s.nome_empresa, a.ticker) AS nome_empresa,
                COALESCE(NULLIF(s."SETOR", ''),    NULLIF(c.sector, ''))    AS "SETOR",
@@ -188,7 +197,7 @@ def _com_codigo_atual(df: pd.DataFrame) -> pd.DataFrame:
     O alias é tabela pequena (dezenas de linhas). Sem ela (base sem a
     migration), vale só ``PARES_CONHECIDOS``.
     """
-    aliases = _q("SELECT brapi_symbol, b3_ticker, motivo FROM market.ticker_alias")
+    aliases = _q_b3("SELECT brapi_symbol, b3_ticker, motivo FROM market.ticker_alias")
     mapa = mapa_de_trocas(df, aliases)
     df = unificar_classificacao(df, mapa)
     df["codigo_atual"] = df["ticker"].map(lambda t: mapa.get(t, t))
@@ -202,7 +211,7 @@ def _multiplos_long(ticker: str | None = None) -> pd.DataFrame:
     if ticker is not None:
         where_tk = "AND cm.ticker = :tk"
         params["tk"] = ticker.strip().upper().replace(".SA", "")
-    return _q(f"""
+    return _q_b3(f"""
         WITH ly AS (
             SELECT ticker, MAX(year) AS y
             FROM market.income_statements
@@ -249,7 +258,7 @@ def _annual_upto_long(ano_ref_max: int) -> pd.DataFrame:
     demonstração não tem exercício-base e sai do ranking (em vez de entrar
     com dados de hoje disfarçados de ano anterior).
     """
-    return _q("""
+    return _q_b3("""
         WITH stmt AS (
             SELECT ticker, MAX(year) AS ymax
             FROM market.income_statements
@@ -378,7 +387,7 @@ def _procedencia_dos_proventos(df: pd.DataFrame, divs: pd.DataFrame, tk: str) ->
 def load_demonstracoes(ticker: str) -> pd.DataFrame:
     """Demonstrações anuais (market.*) com colunas PT iguais ao legado."""
     tk = ticker.strip().upper().replace(".SA", "")
-    df = _demo_finalize(_q(_DEMO_SQL.format(where="i.ticker = :t"), {"t": tk}))
+    df = _demo_finalize(_q_b3(_DEMO_SQL.format(where="i.ticker = :t"), {"t": tk}))
     if df.empty:
         return df
     # A soma crua de market.dividends batia com a fonte em 65,6% dos
@@ -398,7 +407,7 @@ def load_demonstracoes_batch(tickers: tuple[str, ...]) -> dict[str, pd.DataFrame
     if not tickers:
         return {}
     tks = [t.strip().upper().replace(".SA", "") for t in tickers]
-    df = _demo_finalize(_q(_DEMO_SQL.format(where="i.ticker = ANY(:tks)"), {"tks": tks}))
+    df = _demo_finalize(_q_b3(_DEMO_SQL.format(where="i.ticker = ANY(:tks)"), {"tks": tks}))
     if df.empty:
         return {}
     # Dividendos por ano (paridade com load_demonstracoes single) — os
@@ -425,7 +434,7 @@ def _annual_long(where_sql: str, params: dict) -> pd.DataFrame:
     # parcial calculado com o preço de HOJE e viravam a última linha do
     # histórico usado pelo backtest. Limita cada ticker ao último ano COM
     # demonstração anual publicada.
-    has_vintages = _q("""
+    has_vintages = _q_b3("""
         SELECT to_regclass('market.calculated_metric_vintages') IS NOT NULL AS ok
     """)
     if not has_vintages.empty and bool(has_vintages.iloc[0]["ok"]):
@@ -441,7 +450,7 @@ def _annual_long(where_sql: str, params: dict) -> pd.DataFrame:
         # pelo prazo legal de publicação da CVM, barra a linha cuja publicação
         # ainda não venceu na data de decisão e declara na UI que a cobertura
         # point-in-time medida é zero.
-        return _q(f"""
+        return _q_b3(f"""
             WITH first_vintage AS (
                 SELECT DISTINCT ON (ticker, year, quarter, metric_name)
                        ticker, year, quarter, metric_name, metric_value,
@@ -471,7 +480,7 @@ def _annual_long(where_sql: str, params: dict) -> pd.DataFrame:
             JOIN stmt s ON s.ticker = cm.ticker
             WHERE cm.year <= s.ymax AND {where_sql}
         """, params)
-    return _q(f"""
+    return _q_b3(f"""
         WITH stmt AS (
             SELECT ticker, MAX(year) AS ymax
             FROM market.income_statements
@@ -1995,7 +2004,7 @@ def load_precos_mensais(tickers: tuple[str, ...],
         # do atual descarta a do antigo na mesma data mesmo sem preço.
         pedidos = set(tks)
         tks += sorted({c for par in trocas for c in par if pedidos & set(par)} - pedidos)
-        df = _q(f"""
+        df = _q_b3(f"""
             WITH fita AS (
                 SELECT {sql_dono('p.ticker')} AS dono, {sql_ticker('p.ticker')} AS tk,
                        p.date, p.adjusted_close, p.close
@@ -2023,7 +2032,7 @@ def load_precos_mensais(tickers: tuple[str, ...],
             SELECT ticker, date, c, b FROM unida WHERE c > 0 ORDER BY ticker, date
         """, {"t": tks, "trocas": trocas_json(trocas), "tol": TOLERANCIA_BASE})
     else:
-        df = _q("SELECT ticker, date, COALESCE(adjusted_close, close) AS c, "
+        df = _q_b3("SELECT ticker, date, COALESCE(adjusted_close, close) AS c, "
                 "close AS b FROM market.historical_prices WHERE ticker = ANY(:t) "
                 "AND COALESCE(adjusted_close, close) > 0 ORDER BY ticker, date",
                 {"t": tks})
@@ -2097,7 +2106,7 @@ def load_historico_anos(trocas: tuple[tuple[str, str], ...] = ()) -> dict[str, i
     ``trocas`` ((antigo, atual), ...) conta sob o código atual os exercícios
     das duas fitas: 8 anos do antigo e 3 do atual são 11 (core.b3_troca_codigo).
     """
-    df = _q(f"""
+    df = _q_b3(f"""
         SELECT {sql_dono()} AS ticker, COUNT(DISTINCT year)::int AS anos
         FROM market.income_statements
         WHERE period = 'annual' AND ticker IS NOT NULL AND year IS NOT NULL
@@ -2134,7 +2143,7 @@ def load_giro_diario(dias: int = 400,
     ``trocas`` ((antigo, atual), ...) tira a mediana da fita unida sob o código
     atual; na mesma data fica a barra do atual (core.b3_troca_codigo).
     """
-    df = _q(f"""
+    df = _q_b3(f"""
         WITH barras AS (
             SELECT DISTINCT ON (dono, date) dono, giro
             FROM (SELECT {sql_dono('p.ticker')} AS dono,
@@ -2171,7 +2180,7 @@ def load_classes_irmas() -> dict[str, tuple[str, ...]]:
     troca entre companhias diferentes — exatamente o que este módulo não pode
     fazer.
     """
-    df = _q("""
+    df = _q_b3("""
         SELECT a.company_id, a.ticker
         FROM market.assets a
         WHERE a.is_active AND a.company_id IS NOT NULL
@@ -2205,7 +2214,7 @@ def load_resiliencia_ciclo() -> dict[str, dict]:
     """
     from core.b3_cycle_evidence import ANOS_DE_CRISE
 
-    df = _q("""
+    df = _q_b3("""
         WITH m AS (
             SELECT ticker, year, ebit::numeric / NULLIF(revenue, 0) AS margem
             FROM market.income_statements

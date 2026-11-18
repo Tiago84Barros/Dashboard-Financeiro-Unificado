@@ -19,7 +19,9 @@ o IO fica em compute_confidence / confidence_summary.
 """
 from __future__ import annotations
 
+import datetime as _dt
 import logging
+from types import SimpleNamespace
 
 from sqlalchemy import text
 
@@ -253,28 +255,58 @@ def _current_year(conn) -> int:
         return 2026
 
 
+def _sinais_pela_fonte_b3(sql: str, params: dict) -> list | None:
+    """Linhas de ``_SQL_SIGNALS`` lidas pela fonte da B3, com ``None`` no
+    lugar de NaN (``dias_preco`` ausente é "sem preço", não um número).
+    ``None`` quando a leitura falhou: o chamador devolve ``[]``, como antes."""
+    from core.market_read import _q_b3
+
+    df = _q_b3(sql, params)
+    if df.attrs.get("load_error"):
+        logger.warning("compute_confidence: %s (%s)", df.attrs.get("load_error"),
+                       df.attrs.get("error_type"))
+        return None
+    df = df.astype(object).where(df.notna(), None)
+    linhas = []
+    for r in df.to_dict("records"):
+        # Coluna inteira com nulo chega como float (2024.0): devolve int, como
+        # a leitura por conn.execute, para "12 dias" não virar "12.0 dias".
+        for col in ("n_key_ttm", "ymax", "dias_preco", "n_flags"):
+            if r.get(col) is not None:
+                r[col] = int(r[col])
+        linhas.append(SimpleNamespace(**r))
+    return linhas
+
+
 def compute_confidence(engine=None, tickers: list[str] | None = None) -> list[dict]:
     """
     Score de confiança por ticker (ações ativas). Retorna lista de dicts
     {ticker, score, label, cobertura, frescor, integridade, ...sinais}, ordenada
     por score asc (piores primeiro). [] se o schema/engine não existir.
     """
-    eng = engine or _engine()
-    if eng is None:
-        return []
     tk_filter = ""
-    params: dict = {"keys": KEY_METRICS}
+    params: dict = {"keys": list(KEY_METRICS)}
     if tickers:
         tk_filter = "AND ticker = ANY(:tks)"
         params["tks"] = [t.upper().replace(".SA", "") for t in tickers]
-    try:
-        with eng.connect() as conn:
-            cy = _current_year(conn)
-            rows = conn.execute(
-                text(_SQL_SIGNALS.replace("{tk_filter}", tk_filter)), params).fetchall()
-    except Exception as exc:
-        logger.warning("compute_confidence: %s", exc)
-        return []
+    sql = _SQL_SIGNALS.replace("{tk_filter}", tk_filter)
+    if engine is None:
+        # Sem engine explícito, a B3 vem da fonte da B3 (core.fonte_b3): desde
+        # 15/11/2026 o Supabase guarda uma cópia congelada, e medir nela daria
+        # `dias_preco` crescendo todo dia -- o universo apto de Empresas B3 e
+        # o Grau de Confiança encolheriam sem a ingestão ter parado.
+        rows = _sinais_pela_fonte_b3(sql, params)
+        if rows is None:
+            return []
+        cy = _dt.date.today().year
+    else:
+        try:
+            with engine.connect() as conn:
+                cy = _current_year(conn)
+                rows = conn.execute(text(sql), params).fetchall()
+        except Exception as exc:
+            logger.warning("compute_confidence: %s", exc)
+            return []
     out: list[dict] = []
     for r in rows:
         sig = {"n_key_ttm": r.n_key_ttm, "ymax": r.ymax,

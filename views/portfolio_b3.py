@@ -21,6 +21,7 @@ import core.b3_selecao as _selecao
 import core.b3_troca_codigo as _troca
 import core.b3_universo_pit as _upit
 import core.data_reconciliacao as _recon
+import core.market_read as _mr
 from core.b3_evidence import sinal_significante, teste_t_unilateral
 from core.b3_methodology import (
     MODEL_SCHEMA_VERSION,
@@ -121,47 +122,39 @@ def _load_market_caps() -> dict[str, float]:
     Falhas são levantadas ao chamador para nunca serem confundidas com
     capitalização zero nem ficarem cacheadas como um mapa vazio.
     """
-    from sqlalchemy import text
-
-    from core.database import get_engine
-
-    eng = get_engine()
-    if eng is None:
-        raise MarketCapDataError("conexão com o banco indisponível")
-
+    # Armazém local, com a cópia congelada do Supabase como reserva nomeada
+    # (core.fonte_b3). Cada fonte numa consulta própria mantém o fallback
+    # utilizável se a tabela PIT estiver ausente ou com schema incompatível.
     queries = (
-        text("""
+        """
             SELECT DISTINCT ON (ticker) ticker, (metric_value)::numeric AS v
             FROM market.calculated_metric_vintages
             WHERE metric_name = 'marketCap' AND metric_value IS NOT NULL
             ORDER BY ticker, year DESC, available_at DESC, recorded_at DESC
-        """),
-        text("""
+        """,
+        """
             SELECT DISTINCT ON (ticker) ticker, (metric_value)::numeric AS v
             FROM market.calculated_metrics
             WHERE metric_name = 'marketCap' AND metric_value IS NOT NULL
             ORDER BY ticker, year DESC, updated_at DESC
-        """),
+        """,
     )
     values: dict[str, float] = {}
     errors: list[str] = []
     successful_queries = 0
     for query in queries:
-        try:
-            # Uma conexão por fonte mantém o fallback utilizável se a tabela PIT
-            # estiver ausente ou com schema incompatível.
-            with eng.connect() as conn:
-                rows = conn.execute(query).fetchall()
-            successful_queries += 1
-            for row in rows:
-                if row.v is None:
-                    continue
-                value = float(row.v)
-                if np.isfinite(value) and value > 0:
-                    # PIT tem precedência; o snapshot só completa ausências.
-                    values.setdefault(_ticker_key(row.ticker), value)
-        except Exception as exc:
-            errors.append(type(exc).__name__)
+        df = _mr._q_b3(query)
+        if df.attrs.get("load_error"):
+            errors.append(df.attrs.get("error_type") or df.attrs["load_error"])
+            continue
+        successful_queries += 1
+        for row in df.itertuples(index=False):
+            if row.v is None or pd.isna(row.v):
+                continue
+            value = float(row.v)
+            if np.isfinite(value) and value > 0:
+                # PIT tem precedência; o snapshot só completa ausências.
+                values.setdefault(_ticker_key(row.ticker), value)
 
     if successful_queries == 0:
         detail = ", ".join(errors) if errors else "fonte indisponível"
@@ -209,15 +202,9 @@ def _load_adtv(meses: int = 6,
     R$ 10 mi/dia, não o R$ 1 mi/dia do mês do atual sozinho. Na mesma data
     fica a barra do atual, como na migração (core.b3_troca_codigo).
     """
-    from sqlalchemy import text
-
-    from core.database import get_engine
-
-    eng = get_engine()
-    if eng is None:
-        raise LiquidezDataError("conexão com o banco indisponível")
-
-    query = text(f"""
+    # Armazém local, com a cópia congelada do Supabase como reserva nomeada
+    # (core.fonte_b3).
+    query = f"""
         WITH barras AS (
             SELECT DISTINCT ON (dono, date) dono, date, financeiro
             FROM (SELECT {_troca.sql_dono()} AS dono,
@@ -240,19 +227,16 @@ def _load_adtv(meses: int = 6,
                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY financeiro) AS mediana
         FROM mensal
         GROUP BY ticker
-    """)
-    try:
-        with eng.connect() as conn:
-            rows = conn.execute(query, {"m": int(meses),
-                                        "trocas": _troca.trocas_json(trocas)}).fetchall()
-    except Exception as exc:
+    """
+    df = _mr._q_b3(query, {"m": int(meses), "trocas": _troca.trocas_json(trocas)})
+    if df.attrs.get("load_error"):
         raise LiquidezDataError(
-            f"consulta de volume negociado falhou ({type(exc).__name__})"
-        ) from exc
+            "consulta de volume negociado falhou "
+            f"({df.attrs.get('error_type') or df.attrs['load_error']})")
 
     values: dict[str, float] = {}
-    for row in rows:
-        if row.mediana is None:
+    for row in df.itertuples(index=False):
+        if row.mediana is None or pd.isna(row.mediana):
             continue
         diario = float(row.mediana) / _PREGOES_MES
         if np.isfinite(diario) and diario > 0:
@@ -274,14 +258,9 @@ def _load_volume_mensal_historico(desde_ano: int,
     R$ 21 mi sob o atual são R$ 63 mi, não os R$ 21 mi que sobrariam dobrando
     os totais prontos. Na mesma data fica a barra do atual.
     """
-    from sqlalchemy import text
-
-    from core.database import get_engine
-
-    eng = get_engine()
-    if eng is None:
-        raise LiquidezDataError("conexão com o banco indisponível")
-    query = text(f"""
+    # Armazém local, com a cópia congelada do Supabase como reserva nomeada
+    # (core.fonte_b3).
+    query = f"""
         WITH barras AS (
             SELECT DISTINCT ON (dono, date) dono, date, preco, volume
             FROM (SELECT {_troca.sql_dono()} AS dono,
@@ -299,17 +278,16 @@ def _load_volume_mensal_historico(desde_ano: int,
                (ARRAY_AGG(preco ORDER BY date DESC))[1] AS fechamento
         FROM barras
         GROUP BY 1, 2
-    """)
-    try:
-        with eng.connect() as conn:
-            rows = conn.execute(query, {"ano": int(desde_ano) - 1,
-                                        "trocas": _troca.trocas_json(trocas)}).fetchall()
-    except Exception as exc:
+    """
+    bruto = _mr._q_b3(query, {"ano": int(desde_ano) - 1,
+                              "trocas": _troca.trocas_json(trocas)})
+    if bruto.attrs.get("load_error"):
         raise LiquidezDataError(
-            f"consulta do volume histórico falhou ({type(exc).__name__})"
-        ) from exc
+            "consulta do volume histórico falhou "
+            f"({bruto.attrs.get('error_type') or bruto.attrs['load_error']})")
     df = pd.DataFrame(
-        [(_ticker_key(r.ticker), r.mes, r.financeiro, r.fechamento) for r in rows],
+        [(_ticker_key(r.ticker), r.mes, r.financeiro, r.fechamento)
+         for r in bruto.itertuples(index=False)],
         columns=["ticker", "mes", "financeiro", "fechamento"],
     )
     # numeric do Postgres chega como Decimal; a estimativa de tamanho multiplica.

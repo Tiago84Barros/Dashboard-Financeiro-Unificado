@@ -1898,8 +1898,9 @@ FLOW_QUALIDADE_DADOS = FlowSpec(
             "Cada vitrine carrega uma cadência alvo e um limite de validade. O selo no "
             "topo da tela compara a data da publicação com esses dois prazos. Na B3 "
             "ele compara também a data do preço: uma publicação em dia pode trazer "
-            "uma cotação que parou de chegar. Desde 15/11/2026 a rotina não publica "
-            "a B3 no Supabase, e uma cópia congelada lá aparece vencida.",
+            "uma cotação que parou de chegar. Desde 15/11/2026 a B3 é lida do "
+            "armazém local, e o selo mede o armazém; a cópia do Supabase, "
+            "congelada naquela data, só aparece com aviso.",
             (
                 "Cadência alvo: de quanto em quanto tempo deveria atualizar",
                 "Limite de validade: a partir de quando está velho",
@@ -2556,11 +2557,33 @@ FLOW_EMPRESAS_B3_TELAS = FlowSpec(
     tela="Empresas B3",
     abas=("Empresas por Setor", "Análise de Empresa", "Carteira 20"),
     rows=(
-        ("Consulta", ("b3_setor", "b3_empresa", "b3_proventos", "b3_relatorio")),
+        ("Consulta", ("b3_fonte", "b3_setor", "b3_empresa", "b3_proventos", "b3_relatorio")),
         ("Registro", ("b3_c20_registro", "b3_c20_tela")),
     ),
     default="b3_setor",
     nodes={
+        "b3_fonte": _node(
+            "b3_fonte", "De onde a tela lê a B3", "Consulta",
+            "Desde 15/11/2026 a B3 não é mais publicada no Supabase: a ingestão grava só no "
+            "armazém local, e as subabas leem de lá. Se o armazém não responde, a tela lê a "
+            "cópia do Supabase congelada naquela data e diz isso num aviso amarelo no topo.",
+            (
+                "core.fonte_b3.consultar(): banco do app local → papel só-leitura "
+                "app4_leitura (ARMAZEM_SQL_DB_URL) → rota POST /sql do túnel → cópia congelada",
+                "O degrau que falha não tenta o seguinte: a reserva é uma só e tem motivo",
+                "O aviso vale por 12 h, o maior cache dos loaders da B3",
+                "O aviso é decidido depois que a subaba carrega: pega também a leitura "
+                "que caiu na reserva no meio dela",
+                "Motivo da reserva: Configurações → Restrições (detalhe.b3.fonte_reserva)",
+                "O mesmo aviso, pela função única design.componentes.aviso_fonte_reserva_b3, "
+                "sai no topo de Dashboard Geral, Seleção de FIIs e Portfólio Global "
+                "(app.py::_ROTAS_QUE_LEEM_B3), que também leem a B3 por core.market_read",
+                "Ficam no banco do app: public.macro e public.docs_corporativos, fora do papel",
+            ),
+            "O papel do túnel só enxerga market, market_us e public.setores: é ele, e não o "
+            "filtro do texto, que impede o app publicado de ler finanças pessoais no armazém. "
+            "Mostrar a cópia congelada sem aviso faria um dado parado parecer atual.",
+        ),
         "b3_setor": _node(
             "b3_setor", "Subaba 🏢 Empresas por Setor", "Consulta",
             "Grade das empresas da B3 por setor, só com ações: FIIs, ETFs, BDRs e direitos de "

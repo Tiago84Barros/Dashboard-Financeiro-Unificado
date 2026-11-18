@@ -49,6 +49,10 @@ class _FakeStreamlit(ModuleType):
     def error(self, *_args, **_kwargs):
         pass
 
+    def empty(self):
+        # Vaga do aviso da fonte da B3 (``app.py::_ROTAS_QUE_LEEM_B3``).
+        return SimpleNamespace(container=nullcontext)
+
 
 def _execute_app(monkeypatch, *, env_value: str | None, selected_menu: str | None):
     """Executa o router sem importar Streamlit nem qualquer view real."""

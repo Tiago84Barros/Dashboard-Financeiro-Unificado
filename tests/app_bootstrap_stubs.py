@@ -73,6 +73,7 @@ def stubs_de_bootstrap(**overrides) -> dict[str, SimpleNamespace]:
             mensagem_erro=lambda *_args: None,
             transicao_de_pagina=lambda *_args: None,
             marca_sidebar_html=lambda *_args: "",
+            aviso_fonte_reserva_b3=lambda _slot: None,
         ),
         # O filtro é a regra pura e roda de verdade (não importa streamlit no
         # topo); a leitura da escolha da conta iria ao ``st.session_state`` e

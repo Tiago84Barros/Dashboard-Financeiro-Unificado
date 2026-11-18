@@ -101,6 +101,13 @@ _ROTAS: dict[str, str] = {
     "⚙️ Configurações":       "configuracoes",
 }
 
+# Telas que leem a B3 por ``core.market_read`` e por isso podem cair na cópia
+# congelada do Supabase quando o armazém não responde (``core.fonte_b3``).
+# Empresas B3 reserva o próprio lugar, abaixo do cabeçalho dela; as demais
+# ganham o aviso aqui, no topo. Portfólio Global entra pelos preços mensais
+# das posições brasileiras (``core.global_portfolio.returns``).
+_ROTAS_QUE_LEEM_B3 = frozenset({"dashboard_geral", "fiis", "portfolio_global"})
+
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     # Tema, "Sair / trocar usuário" e "Conectado como X" saíram daqui em
@@ -211,6 +218,9 @@ if modulo_nome:
     _nome_do_modulo = f"views.{module_for_route(modulo_nome)}"
     _import_frio = _nome_do_modulo not in sys.modules
     _concluiu = False
+    # Sempre criado nessas rotas (vazio quando não há aviso): elemento que só
+    # existisse em alguns runs deslocaria os ``st.tabs`` da view.
+    _slot_fonte_b3 = st.empty() if modulo_nome in _ROTAS_QUE_LEEM_B3 else None
     try:
         _cronometro.entrar("import")
         modulo = importlib.import_module(_nome_do_modulo)
@@ -265,6 +275,13 @@ if modulo_nome:
             except Exception:  # noqa: BLE001 - diagnostico e extra, nunca requisito
                 logger.exception("falha ao montar o diagnostico da rota")
     finally:
+        if _slot_fonte_b3 is not None:
+            try:
+                from design.componentes import aviso_fonte_reserva_b3
+
+                aviso_fonte_reserva_b3(_slot_fonte_b3)
+            except Exception:  # noqa: BLE001 - aviso e extra, nunca requisito
+                logger.exception("falha ao montar o aviso da fonte da B3")
         # ``finally`` porque ``st.stop``/``st.rerun`` não são ``Exception`` e
         # atravessam o ``except``: a execução interrompida também vai ao log,
         # marcada como não concluída.

@@ -265,7 +265,7 @@ def renda_anual(tickers):
     fontes = [FONTE_ARQUIVO] if len(faltam) < len(tks) else []
     erro = None
     if faltam:
-        from core.market_read import _q
+        from core.market_read import _q_b3 as _q
 
         bruto = _q(sql_proventos_de_renda("d.ticker = ANY(:tks)"), {"tks": faltam})
         erro = bruto.attrs.get("load_error")

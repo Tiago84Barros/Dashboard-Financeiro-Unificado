@@ -38,6 +38,13 @@ Rotas (todas GET, todas exigem ``Authorization: Bearer <token>``):
                                        -- quantas linhas e que período o armazém
                                           tem de cada ativo, fonte por fonte
                                           (varredura antes de afirmar lacuna)
+
+Rota POST (mesmo token):
+    /sql   corpo JSON {"sql": "SELECT ...", "params": {...}}
+           -- o SELECT que ``core.market_read`` já tem, executado com o papel
+              restrito ``ARMAZEM_SQL_DB_URL`` (só ``market``, ``market_us`` e
+              ``public.setores``), em transação somente leitura, com tempo e
+              linhas no teto. Travas e motivo em ``core/armazem_sql.py``.
 """
 from __future__ import annotations
 
@@ -76,6 +83,12 @@ CAMPOS_POR_NOTA = ("titulo", "veiculo", "nota", "direcao", "publicado_em",
 #: janela da conjuntura é de 30 dias.
 TICKERS_MAX = 80
 JANELA_MAX_ATIVOS = 30
+
+#: Corpo do POST /sql: o SQL tem teto de 20 mil caracteres e as listas de
+#: tickers, de 5 mil itens.
+CORPO_MAX_BYTES = 512 * 1024
+#: Quanto do corpo recusado o servidor lê e joga fora antes de responder 413.
+DESCARTE_MAX_BYTES = 4 * CORPO_MAX_BYTES
 
 _ENGINES: dict[str, object] = {}
 _URL_EUA: list[str] = []
@@ -138,6 +151,16 @@ def _url_eua() -> str:
         url = _warehouse_url()
     _URL_EUA.append(url)
     return url
+
+
+def _url_sql() -> str:
+    """URL do papel restrito da rota /sql. Sem ela, a rota não roda.
+
+    Nunca cai para ``_url_eua`` (superusuário): a barreira da rota é o papel.
+    """
+    from core.config import _get_secret
+
+    return _get_secret("ARMAZEM_SQL_DB_URL")
 
 
 def _numero(params: dict, chave: str, padrao: float, teto: float) -> float:
@@ -297,6 +320,36 @@ def rota_ativo_inventario(params) -> tuple[int, dict]:
     return 200, {"inventario": ler_inventario(engines, classe, tickers)}
 
 
+def rota_sql(corpo) -> tuple[int, dict]:
+    from core.armazem_sql import ConsultaRecusada, executar, validar_params, validar_sql
+
+    if not isinstance(corpo, dict):
+        return 400, {"erro": "corpo deve ser um objeto JSON"}
+    try:
+        sql = validar_sql(corpo.get("sql"))
+        params = validar_params(corpo.get("params"))
+    except ConsultaRecusada as exc:
+        return 400, {"erro": str(exc)}
+    url = _url_sql()
+    if not url:
+        return 503, {"erro": "papel restrito do armazém não configurado nesta "
+                             "máquina (ARMAZEM_SQL_DB_URL)"}
+    try:
+        return 200, executar(engine_leitura(url), sql, params)
+    except ConsultaRecusada as exc:
+        return 413, {"erro": str(exc)}
+
+
+def _erro_de_consulta(exc) -> bool:
+    """Erro do pedido (tabela fora do papel, coluna errada, tempo estourado),
+    não do serviço: vira 400 e não pausa as outras rotas no cliente."""
+    from sqlalchemy.exc import DBAPIError
+
+    return isinstance(exc, DBAPIError) and not exc.connection_invalidated and (
+        type(getattr(exc, "orig", None)).__name__ not in ("OperationalError",)
+        or "statement timeout" in str(exc))
+
+
 def _engine_ou_nenhuma(resolver):
     """Engine do banco cuja URL ``resolver`` devolve; ``None`` quando não há
     URL ou quando resolvê-la falha (``_url_eua`` consulta o Docker, que pode
@@ -322,6 +375,11 @@ ROTAS = {
     "/fii/detalhe": rota_fii_detalhe,
     "/b3/detalhe": rota_b3_detalhe,
     "/ativo/inventario": rota_ativo_inventario,
+}
+
+#: Rotas que recebem corpo JSON por POST.
+ROTAS_POST = {
+    "/sql": rota_sql,
 }
 
 
@@ -362,10 +420,60 @@ def fabricar_handler(token: str):
                                               f"{str(exc).splitlines()[0][:200] if str(exc) else ''}"}
             self._responder(status, corpo)
 
-        def _recusar(self):
-            self._responder(405, {"erro": "somente GET"})
+        def _descartar_corpo(self, tamanho: int) -> None:
+            """Lê e joga fora o corpo (até um teto) antes de recusar o pedido.
 
-        do_POST = do_PUT = do_DELETE = do_PATCH = _recusar  # noqa: N815
+            Responder e fechar com bytes não lidos faz o Windows abortar a
+            conexão, e o cliente recebia "conexão anulada" em vez do 401/413.
+            """
+            self.close_connection = True
+            restante = min(tamanho, DESCARTE_MAX_BYTES)
+            while restante > 0:
+                lido = self.rfile.read(min(restante, 64 * 1024))
+                if not lido:
+                    break
+                restante -= len(lido)
+
+        def do_POST(self):  # noqa: N802 - nome da API do http.server
+            try:
+                tamanho = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                tamanho = -1
+            if not token_confere(self.headers.get("Authorization"), token):
+                self._descartar_corpo(tamanho)
+                self._responder(401, {"erro": "não autorizado"})
+                return
+            caminho = urlsplit(self.path).path.rstrip("/") or "/"
+            rota = ROTAS_POST.get(caminho)
+            if rota is None:
+                self._descartar_corpo(tamanho)
+                self._recusar()
+                return
+            if not 0 < tamanho <= CORPO_MAX_BYTES:
+                self._descartar_corpo(tamanho)
+                self._responder(413 if tamanho > 0 else 400,
+                                {"erro": "corpo ausente ou grande demais"})
+                return
+            try:
+                corpo = json.loads(self.rfile.read(tamanho).decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                self._responder(400, {"erro": "corpo não é JSON"})
+                return
+            try:
+                status, resposta = rota(corpo)
+            except Exception as exc:  # noqa: BLE001 - vira erro nomeado
+                # Sem o SQL nem os parâmetros no log: só o tipo do erro.
+                logger.warning("rota %s falhou: %s", caminho, type(exc).__name__)
+                primeira = str(getattr(exc, "orig", exc)).splitlines()
+                status = 400 if _erro_de_consulta(exc) else 503
+                resposta = {"erro": f"{type(exc).__name__}: "
+                                    f"{primeira[0][:200] if primeira else ''}"}
+            self._responder(status, resposta)
+
+        def _recusar(self):
+            self._responder(405, {"erro": "método não aceito nesta rota"})
+
+        do_PUT = do_DELETE = do_PATCH = _recusar  # noqa: N815
 
         def log_message(self, formato, *args):
             # O log padrão imprime a linha da requisição; o token vai no
