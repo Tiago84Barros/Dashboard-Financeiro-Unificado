@@ -240,6 +240,13 @@
           "fonte": "views/fiis.py:2650"
         },
         {
+          "nome": "Carteira publicável × rascunho não publicável",
+          "resumo": "Meses com e sem publicação, lado a lado",
+          "explicacao": "Só aparece quando houve mês em que a carteira foi montada e a publicação foi recusada. O teste histórico mede também esses meses, porque a tela mostrou a carteira como rascunho, e este bloco separa o desempenho deles do das carteiras publicáveis.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:2847"
+        },
+        {
           "nome": "Retrospectiva da seleção atual",
           "resumo": "A carteira de hoje no passado",
           "explicacao": "Cartões com o retorno total da carteira atual, do IFIX, a diferença entre os dois e o período, mais um gráfico partindo de 100. Só funciona depois de montar a carteira na aba Carteira-modelo.",

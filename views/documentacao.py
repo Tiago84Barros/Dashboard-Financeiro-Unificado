@@ -1306,7 +1306,10 @@ FLOW_SELECAO_FIIS = FlowSpec(
             "A aba Retrospectiva refaz a seleção safra a safra usando SÓ o que era "
             "conhecido naquela data e mede o que a regra teria escolhido. Fundo da "
             "carteira que sai de campo no período rende zero, nunca o que os "
-            "sobreviventes renderam. O selo \"Aprovado\" atesta o protocolo, não o "
+            "sobreviventes renderam. Mês em que a carteira foi montada e a publicação "
+            "recusada também entra na conta, porque a tela mostrou essa carteira como "
+            "rascunho, e o desempenho desses meses aparece em bloco separado. O selo "
+            "\"Aprovado\" atesta o protocolo, não o "
             "desempenho: ao lado dele a tela diz de que lado do zero está o excesso "
             "sobre o IFIX, e um intervalo inteiro abaixo de zero sai em vermelho "
             "como \"perde do IFIX\".",
