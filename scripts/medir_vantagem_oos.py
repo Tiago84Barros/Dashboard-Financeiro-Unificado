@@ -32,12 +32,17 @@ zero?"):
 Uso::
 
     python scripts/medir_vantagem_oos.py --motor us
+    python scripts/medir_vantagem_oos.py --motor us --em-memoria
     python scripts/medir_vantagem_oos.py --motor b3
     python scripts/medir_vantagem_oos.py --motor todos
 
 O armazém local precisa estar de pé (`docker ps --filter name=dfu_warehouse`).
 Sem ele o script falha dizendo isso -- nunca grava medição a partir da vitrine
 publicada, que não carrega o histórico.
+
+``--em-memoria`` (EUA) mede a versão corrente do score antes de as safras dela
+existirem no armazém: recalcula-as com o gerador que `score-history` usa, numa
+transação só-leitura, e monta o painel com o mesmo `build_annual_panel` da tela.
 """
 from __future__ import annotations
 
@@ -46,6 +51,10 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 ROOT = Path(__file__).resolve().parents[1]
@@ -99,12 +108,75 @@ def _apontar_para_armazem_local() -> str:
 
 # ── EUA ──────────────────────────────────────────────────────────────────────
 
-def medir_us() -> dict:
+# Datas-base das safras: as mesmas da rotina (`run_us_refresh_background.py`
+# roda `score-history --start-year 2006 --end-year 2025`).
+US_SAFRAS_ANOS = (2006, 2025)
+
+
+def painel_us_em_memoria(engine) -> pd.DataFrame:
+    """Painel PIT da versão CORRENTE do score, montado sem escrever no armazém.
+
+    Subir `US_FUNDAMENTAL_SCORE_VERSION` esvazia o painel lido de
+    `market_us.score_vintages` até alguém regenerar as safras -- uma escrita no
+    armazém. Aqui as safras saem do mesmo gerador que a regeneração usa
+    (`safras_pit`), numa transação só-leitura, e o painel é montado pelo mesmo
+    `build_annual_panel` que a tela usa: o número é o que a tela dará depois da
+    regeneração, sem precisar dela para ser medido.
+    """
+    import pandas as pd
+    from sqlalchemy import text
+
+    from core.us_data import HORIZONTE_PAINEL_MESES
+    from core.us_read import _ler_desfechos
+    from data_pipeline.us.scoring_history import (
+        annual_asof_dates,
+        build_annual_panel,
+        safras_pit,
+    )
+
+    datas = annual_asof_dates(*US_SAFRAS_ANOS)
+    with engine.connect() as conn:
+        if conn.dialect.name == "postgresql":
+            conn.execute(text("SET TRANSACTION READ ONLY"))
+        safras = [
+            scored[["symbol", "score"]].assign(as_of_date=pd.Timestamp(as_of))
+            for as_of, scored in safras_pit(conn, datas)
+        ]
+        if not safras:
+            return pd.DataFrame()
+        vintages = pd.concat(safras, ignore_index=True)
+        monthly = pd.read_sql(text(
+            "SELECT symbol, month_end, adjusted_close "
+            "FROM market_us.prices_monthly WHERE adjusted_close IS NOT NULL"), conn)
+        saidas = _ler_desfechos(conn)
+        conn.rollback()
+    painel = build_annual_panel(vintages, monthly,
+                                horizon_months=HORIZONTE_PAINEL_MESES,
+                                saidas=saidas)
+    painel.attrs["n_safras"] = len(vintages)
+    return painel
+
+
+def medir_us(*, em_memoria: bool = False) -> dict:
     import core.us_data as us
     from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
     from core.vantagem_oos import FORMATO_PERCENTUAL, nova_medicao
 
-    resultado = us.backtest(top_n=US_TOP_N, weighting=US_WEIGHTING)
+    if em_memoria:
+        import core.us_backtest as _bt
+        from core.database import get_engine
+        painel = painel_us_em_memoria(get_engine())
+        if painel.empty:
+            raise SystemExit("backtest EUA nao rodou: nenhuma safra casou com preco")
+        resultado = _bt.walk_forward(
+            painel, top_n=US_TOP_N, weighting=US_WEIGHTING, periods_per_year=1,
+            benchmark_horizon_months=us.HORIZONTE_PAINEL_MESES,
+            cambio_usdbrl=us.usdbrl_mensal())
+        fonte = ("armazem local, safras recalculadas em memoria (so leitura) "
+                 "+ prices_monthly")
+    else:
+        resultado = us.backtest(top_n=US_TOP_N, weighting=US_WEIGHTING)
+        fonte = "armazem local, market_us.score_vintages + prices_monthly"
     if not resultado.get("ok"):
         raise SystemExit(f"backtest EUA nao rodou: {resultado.get('reason')}")
 
@@ -119,8 +191,11 @@ def medir_us() -> dict:
         ic_high=ci.get("ci_high"),
         n_periodos=int(resultado.get("n_periods") or 0),
         configuracao=f"walk-forward anual, top_n={US_TOP_N}, pesos={US_WEIGHTING}",
-        fonte="armazem local, market_us.score_vintages + prices_monthly",
-        janela=(str(resultado.get("start_date")), str(resultado.get("end_date"))),
+        fonte=fonte,
+        # Data, nao Timestamp: o caminho em memoria devolve Timestamp e o
+        # registro antigo gravava "AAAA-MM-DD".
+        janela=(str(resultado.get("start_date"))[:10],
+                str(resultado.get("end_date"))[:10]),
         extras={
             "rank_ic_medio": (resultado.get("rank_ic") or {}).get("mean"),
             "rank_ic_t": (resultado.get("rank_ic") or {}).get("t_stat"),
@@ -268,6 +343,9 @@ def main() -> int:
     ap.add_argument("--motor", choices=("b3", "us", "todos"), default="todos")
     ap.add_argument("--dry-run", action="store_true",
                     help="mede e imprime sem gravar")
+    ap.add_argument("--em-memoria", action="store_true",
+                    help="EUA: recalcula as safras da versao corrente em memoria, "
+                         "sem ler nem escrever market_us.score_vintages")
     args = ap.parse_args()
 
     url = _apontar_para_armazem_local()
@@ -278,7 +356,8 @@ def main() -> int:
     alvos = ("b3", "us") if args.motor == "todos" else (args.motor,)
     for motor in alvos:
         print(f"\n== medindo {motor} ==")
-        medicao = medir_b3() if motor == "b3" else medir_us()
+        medicao = (medir_b3() if motor == "b3"
+                   else medir_us(em_memoria=args.em_memoria))
         print(json.dumps(medicao, indent=2, ensure_ascii=False))
         if not args.dry_run:
             gravar_medicao(medicao)

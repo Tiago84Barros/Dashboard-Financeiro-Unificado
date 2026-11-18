@@ -83,7 +83,8 @@ cards, filtros, tabelas, gráficos, comparações, dossiês e carteiras.
 O score continua em escala 0–100 e preserva a lógica de múltiplas dimensões. A
 versão americana usa seis trilhas: Qualidade, Crescimento, Solidez, Eficiência de
 Capital, Valuation e Retorno ao Acionista. Cada métrica é winsorizada e ranqueada
-por percentil dentro da indústria; grupos pequenos usam fallback para o universo.
+por percentil dentro da indústria; a métrica com menos de quatro valores na
+indústria, ou a empresa sem indústria, é ranqueada no universo (v0.9.2).
 Ausência recebe valor neutro, não zero. Os pesos são renormalizados e podem ser
 adaptados por setor — por exemplo, Real Estate e Financial Services.
 

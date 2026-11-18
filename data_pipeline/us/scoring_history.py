@@ -194,6 +194,80 @@ def _asof_value(points: list[tuple[date, float]], as_of: date) -> float | None:
     return None if idx < 0 else points[idx][1]
 
 
+def safras_pit(conn, as_of_dates: Iterable[date], *,
+               limit_companies: int | None = None):
+    """Gera ``(as_of, scored)``: a cross-section PIT pontuada em cada data-base.
+
+    Só LÊ. ``compute_score_history`` grava o que sai daqui; a medição de
+    vantagem OOS (``scripts/medir_vantagem_oos.py --motor us --em-memoria``)
+    usa o mesmo gerador para medir uma versão nova sem escrever no armazém --
+    uma conta só para as duas coisas, nunca uma cópia que diverge.
+    """
+    as_of_dates = list(as_of_dates)
+    sql = (
+        "SELECT c.id, MIN(a.symbol) AS symbol, MAX(c.sector) AS sector, "
+        "MAX(c.industry) AS industry, MIN(a.first_trade_date) AS first_trade_date, "
+        "MAX(a.delisted_date) AS delisted_date FROM market_us.companies c "
+        "JOIN market_us.assets a ON a.company_id=c.id "
+        "AND a.analysis_status='eligible' "
+        "WHERE EXISTS (SELECT 1 FROM market_us.income_statements i "
+        "  WHERE i.company_id=c.id AND i.period='annual') "
+        "GROUP BY c.id ORDER BY c.id")
+    params = {}
+    if limit_companies:
+        sql += " LIMIT :lim"
+        params["lim"] = int(limit_companies)
+    comp = pd.read_sql(text(sql), conn, params=params)
+    if comp.empty:
+        return
+    ids = [int(x) for x in comp["id"]]
+    inc = _bulk(conn, "income_statements", _INCOME, ids)
+    bal = _bulk(conn, "balance_sheets", _BALANCE, ids)
+    cfw = _bulk(conn, "cash_flow_statements", _CASHFLOW, ids)
+    mcaps = pd.read_sql(text(
+        "SELECT symbol, date, market_cap FROM market_us.market_cap_history "
+        "WHERE market_cap>0 ORDER BY symbol,date"), conn)
+    inc_g = {k: v.to_dict("records") for k, v in inc.groupby("company_id")}
+    bal_g = {k: v.to_dict("records") for k, v in bal.groupby("company_id")}
+    cfw_g = {k: v.to_dict("records") for k, v in cfw.groupby("company_id")}
+    mcap_g: dict[str, list[tuple[date, float]]] = {}
+    if not mcaps.empty:
+        for sym, group in mcaps.groupby("symbol"):
+            mcap_g[str(sym)] = [
+                ((d.date() if hasattr(d, "date") else d), float(v))
+                for d, v in zip(pd.to_datetime(group["date"]), group["market_cap"])
+            ]
+
+    for as_of in as_of_dates:
+        rows = []
+        for _, c in comp.iterrows():
+            cid = int(c["id"])
+            first_trade = c.get("first_trade_date")
+            delisted = c.get("delisted_date")
+            # `ja_negociava` responde True para NULL de proposito: duvida
+            # nao exclui. O portao so passou a valer em 0.7.2 -- ate ali a
+            # coluna estava NULL nas 7.654 linhas e ~10% de cada safra era
+            # empresa que ainda nao havia estreado na data.
+            if not ja_negociava(
+                    pd.to_datetime(first_trade).date()
+                    if pd.notna(first_trade) else None, as_of):
+                continue
+            if pd.notna(delisted) and pd.to_datetime(delisted).date() < as_of:
+                continue
+            inc_vis = visible_rows(inc_g.get(cid, []), as_of, derivar_income)
+            bal_vis = visible_rows(bal_g.get(cid, []), as_of, derivar_balance)
+            cfw_vis = visible_rows(cfw_g.get(cid, []), as_of, derivar_cashflow)
+            m = compute_company_metrics(
+                inc_vis, bal_vis, cfw_vis,
+                market_cap=_asof_value(mcap_g.get(str(c["symbol"]), []), as_of))
+            if m.get("_years", 0) < 2:
+                continue
+            rows.append({"company_id": cid, "symbol": c["symbol"],
+                         "sector": c["sector"], "industry": c["industry"], **m})
+        if rows:
+            yield as_of, score_cross_section(pd.DataFrame(rows))
+
+
 def compute_score_history(engine, as_of_dates: Iterable[date], *,
                           score_version: str, limit_companies: int | None = None) -> dict:
     """Para cada as_of, calcula o score PIT e grava em market_us.score_vintages."""
@@ -202,69 +276,11 @@ def compute_score_history(engine, as_of_dates: Iterable[date], *,
     as_of_dates = list(as_of_dates)
     written = 0
     with engine.begin() as conn:
-        sql = (
-            "SELECT c.id, MIN(a.symbol) AS symbol, MAX(c.sector) AS sector, "
-            "MAX(c.industry) AS industry, MIN(a.first_trade_date) AS first_trade_date, "
-            "MAX(a.delisted_date) AS delisted_date FROM market_us.companies c "
-            "JOIN market_us.assets a ON a.company_id=c.id "
-            "AND a.analysis_status='eligible' "
-            "WHERE EXISTS (SELECT 1 FROM market_us.income_statements i "
-            "  WHERE i.company_id=c.id AND i.period='annual') "
-            "GROUP BY c.id ORDER BY c.id")
-        params = {}
-        if limit_companies:
-            sql += " LIMIT :lim"
-            params["lim"] = int(limit_companies)
-        comp = pd.read_sql(text(sql), conn, params=params)
-        if comp.empty:
+        safras = list(safras_pit(conn, as_of_dates,
+                                 limit_companies=limit_companies))
+        if not safras:
             return {"ok": True, "written": 0, "reason": "sem empresas"}
-        ids = [int(x) for x in comp["id"]]
-        inc = _bulk(conn, "income_statements", _INCOME, ids)
-        bal = _bulk(conn, "balance_sheets", _BALANCE, ids)
-        cfw = _bulk(conn, "cash_flow_statements", _CASHFLOW, ids)
-        mcaps = pd.read_sql(text(
-            "SELECT symbol, date, market_cap FROM market_us.market_cap_history "
-            "WHERE market_cap>0 ORDER BY symbol,date"), conn)
-        inc_g = {k: v.to_dict("records") for k, v in inc.groupby("company_id")}
-        bal_g = {k: v.to_dict("records") for k, v in bal.groupby("company_id")}
-        cfw_g = {k: v.to_dict("records") for k, v in cfw.groupby("company_id")}
-        mcap_g: dict[str, list[tuple[date, float]]] = {}
-        if not mcaps.empty:
-            for sym, group in mcaps.groupby("symbol"):
-                mcap_g[str(sym)] = [
-                    ((d.date() if hasattr(d, "date") else d), float(v))
-                    for d, v in zip(pd.to_datetime(group["date"]), group["market_cap"])
-                ]
-
-        for as_of in as_of_dates:
-            rows = []
-            for _, c in comp.iterrows():
-                cid = int(c["id"])
-                first_trade = c.get("first_trade_date")
-                delisted = c.get("delisted_date")
-                # `ja_negociava` responde True para NULL de proposito: duvida
-                # nao exclui. O portao so passou a valer em 0.7.2 -- ate ali a
-                # coluna estava NULL nas 7.654 linhas e ~10% de cada safra era
-                # empresa que ainda nao havia estreado na data.
-                if not ja_negociava(
-                        pd.to_datetime(first_trade).date()
-                        if pd.notna(first_trade) else None, as_of):
-                    continue
-                if pd.notna(delisted) and pd.to_datetime(delisted).date() < as_of:
-                    continue
-                inc_vis = visible_rows(inc_g.get(cid, []), as_of, derivar_income)
-                bal_vis = visible_rows(bal_g.get(cid, []), as_of, derivar_balance)
-                cfw_vis = visible_rows(cfw_g.get(cid, []), as_of, derivar_cashflow)
-                m = compute_company_metrics(
-                    inc_vis, bal_vis, cfw_vis,
-                    market_cap=_asof_value(mcap_g.get(str(c["symbol"]), []), as_of))
-                if m.get("_years", 0) < 2:
-                    continue
-                rows.append({"company_id": cid, "symbol": c["symbol"],
-                             "sector": c["sector"], "industry": c["industry"], **m})
-            if not rows:
-                continue
-            scored = score_cross_section(pd.DataFrame(rows))
+        for as_of, scored in safras:
             payload = []
             for _, r in scored.iterrows():
                 payload.append({"cid": int(r["company_id"]), "sym": r["symbol"],

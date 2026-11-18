@@ -139,7 +139,25 @@ US_SCHEMA_VERSION = 1
 # de caixa, e `core.us_estilos._percentil`, momento e P&D) recebem a mesma
 # regra; eles rankeiam no universo inteiro, onde valor isolado so aparece com
 # o universo quase vazio.
-US_FUNDAMENTAL_SCORE_VERSION = "0.9.1"
+# 0.9.2 (18/11/2026) -- completa a 0.9.1 no lado do grupo. A 0.9.1 tirou a
+# nota extrema do valor ISOLADO (um so valor no grupo -> neutro), mas o corte
+# "grupo pequeno usa o universo" seguia contando EMPRESAS da industria, nao
+# VALORES VALIDOS da metrica. Numa industria de cinco empresas em que so duas
+# ou tres publicam ROIC, o percentil ainda saia de dois ou tres pontos: o pior
+# ROIC do universo podia ser o melhor do grupo. Medido no armazem: 2.710 de
+# 73.558 pares empresa x metrica, em 686 das 4.349 empresas, eram ranqueados
+# em industria com menos de quatro valores. As tres empresas sem industria
+# saiam 50 em todas as metricas (o groupby descarta a chave nula). Agora a
+# metrica com menos de `min_group` valores na industria, ou sem industria, vai
+# ao universo -- numa funcao so (`percentil_winsorizado`), que o laboratorio
+# de Analise Avancada tambem usa (la o numero nao muda: ele ja ranqueia no
+# universo). Sobre a foto atual, contra a 0.9.1: 673 notas mudam (3 sem
+# industria), |delta| mediano 1,3 ponto, 14 caem mais de 10 e nenhuma sobe
+# tanto; Spearman 0,991; 15 do top-20 ficam; o grau (decision/research/
+# screen) nao muda em nenhuma empresa.
+# Vantagem OOS (walk-forward anual 2010-2025, top-20 por score, mesma regua):
+# ver docs/empresas_americanas.md, secao v0.9.2.
+US_FUNDAMENTAL_SCORE_VERSION = "0.9.2"
 
 # Score de assimetria da aba "Empresas Fora da Curva".
 US_ASYMMETRY_SCORE_VERSION = "0.1.0"

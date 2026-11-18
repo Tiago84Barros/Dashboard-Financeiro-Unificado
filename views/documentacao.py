@@ -1522,12 +1522,13 @@ FLOW_EMPRESAS_EUA = FlowSpec(
         "percentil_industria_us": _node(
             "percentil_industria_us", "Percentil na indústria", "Score",
             "A nota de cada métrica é o percentil dentro da indústria, não no universo "
-            "inteiro. Qualidade é relativa ao segmento. Métrica que só uma empresa da "
-            "indústria tem fica no neutro (50): um valor só não tem ordem (0.9.1).",
+            "inteiro. Qualidade é relativa ao segmento. Quando a indústria tem menos "
+            "de quatro empresas com aquela métrica, ou a empresa não tem indústria, "
+            "a métrica é ranqueada no universo: valor sem par não vira o melhor do grupo (0.9.2).",
             (
                 "Percentil dentro da indústria",
-                "Piso de quantidade de pares para o percentil valer",
-                "Valor sem par na indústria vale o neutro",
+                "Piso de quatro valores da métrica na indústria; abaixo dele, universo",
+                "Menos de dois valores não ordenam: percentil neutro",
                 "Substituição dentro do mesmo segmento",
             ),
             "Comparar margem de software com margem de varejo alimentar produz um ranking "

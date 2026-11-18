@@ -20,7 +20,7 @@ from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
 
 
 def test_versao_sobe_porque_a_nota_muda():
-    assert US_FUNDAMENTAL_SCORE_VERSION == "0.9.1"
+    assert US_FUNDAMENTAL_SCORE_VERSION == "0.9.2"
 
 
 @pytest.mark.parametrize("valores", [
@@ -82,14 +82,17 @@ def test_valor_isolado_vale_menos_que_o_extremo_de_antes(monkeypatch):
     com_df["interest_coverage"] = np.nan
     com_df.loc[0, "interest_coverage"] = 50.0
     novo = sc.score_cross_section(com_df, min_group=4).set_index("symbol")
-    original = sc._winsorized_percentile
+    original = sc.percentil_winsorizado
 
-    def antigo(s, lower=0.05, upper=0.95):
+    def antigo(s, lower=0.05, upper=0.95, *, maior_melhor=True):
         if s.dropna().shape[0] == 1:
-            return s.rank(pct=True).fillna(sc.NEUTRAL)
-        return original(s, lower, upper)
+            pct = s.rank(pct=True)
+            return (pct if maior_melhor else 1.0 - pct).fillna(sc.NEUTRAL)
+        return original(s, lower, upper, maior_melhor=maior_melhor)
 
-    monkeypatch.setattr(sc, "_winsorized_percentile", antigo)
+    # Desde a 0.9.2 o score chama `percentil_winsorizado` direto; o nome
+    # antigo é só um apelido.
+    monkeypatch.setattr(sc, "percentil_winsorizado", antigo)
     velho = sc.score_cross_section(com_df, min_group=4).set_index("symbol")
     assert float(novo.loc["S0", "score"]) < float(velho.loc["S0", "score"])
 
