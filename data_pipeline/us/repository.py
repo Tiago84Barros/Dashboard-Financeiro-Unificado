@@ -211,6 +211,31 @@ def upsert_splits(conn, symbol: str, rows: list[dict]) -> int:
     return _exec_many(conn, "splits", payload, conflict=["symbol", "split_date"])
 
 
+
+def ajustados_guardados(conn, symbol: str, desde) -> dict:
+    """{data: adjusted_close} já guardado de ``symbol`` a partir de ``desde``.
+
+    É o lado do armazém na comparação que detecta o retroajuste do Yahoo
+    (``ingest.passado_retroajustado``)."""
+    linhas = conn.execute(text(
+        f"SELECT date, adjusted_close FROM {SCHEMA}.prices_daily "
+        f"WHERE symbol = :s AND date >= :d AND adjusted_close IS NOT NULL"),
+        {"s": symbol, "d": desde}).fetchall()
+    return {r[0]: r[1] for r in linhas}
+
+
+def splits_vigiados(conn, symbols, *, desde) -> dict:
+    """{símbolo: split guardado mais antigo desde ``desde``}, fator ≠ 1."""
+    alvo = sorted({str(x).strip().upper() for x in symbols or [] if x})
+    if not alvo:
+        return {}
+    linhas = conn.execute(text(
+        f"SELECT symbol, min(split_date) FROM {SCHEMA}.splits "
+        f"WHERE symbol = ANY(:syms) AND split_date >= :d "
+        f"AND numerator > 0 AND denominator > 0 AND numerator <> denominator "
+        f"GROUP BY symbol"), {"syms": alvo, "d": desde}).fetchall()
+    return {str(r[0]).upper(): r[1] for r in linhas if r[1] is not None}
+
 # ── Estado de ingestão / erros / qualidade ────────────────────────────────────
 def start_run(conn, run_key: str, domain: str, params: dict | None = None) -> int:
     sql = build_upsert("ingestion_runs",

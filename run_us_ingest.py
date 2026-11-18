@@ -508,15 +508,26 @@ def main() -> int:
         # Rotina diaria que leva 4 h nao termina — e foi assim que a vitrine
         # ficou parada em 20/08. `--completo` refaz tudo quando se quer reparar
         # a serie, e nao para o uso diario.
-        desde = {}
+        #
+        # Split guardado nos ultimos meses alarga a janela ate antes dele: o
+        # Yahoo retroajusta dias depois do split, e a barra comparada tem de
+        # estar na janela quando isso acontece (ingest.passado_retroajustado).
+        desde, vigiados = {}, {}
         if not args.completo:
+            from datetime import date, timedelta
+
+            from data_pipeline.us import repository as us_repo
             with engine.connect() as conn:
                 desde = ultima_data_por_simbolo(conn, symbols)
+                vigiados = us_repo.splits_vigiados(
+                    conn, symbols, desde=date.today() - timedelta(
+                        days=ingest.DIAS_DE_SPLIT_VIGIADO))
         resultado = ingest.ingest_prices_only(provider, engine, symbols,
-                                              desde=desde or None)
+                                              desde=desde or None,
+                                              splits_vigiados=vigiados)
         return out({"ok": True, "symbols": len(symbols),
                     "modo": "completo" if args.completo else "incremental",
-                    **resultado})
+                    "splits_vigiados": len(vigiados), **resultado})
 
     if args.command == "validate":
         from data_pipeline.us import quality
