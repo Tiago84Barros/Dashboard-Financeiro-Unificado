@@ -247,21 +247,72 @@ def _fig_historico(historico: list, fluxo_inv: dict | None = None) -> go.Figure:
     return fig
 
 
+_COR_OUTROS = "#6B7280"
+
+
+def _agrupar_categorias_pequenas(
+    cats: list, min_pct: float = 3.0, max_itens: int = 7,
+) -> list:
+    """Mantém as maiores categorias e junta as pequenas em um único "Outros".
+
+    Fica de fora do "Outros": quem tem ao menos ``min_pct`` % do total, até
+    ``max_itens`` categorias. A categoria "Outros" que já existe nos dados
+    entra na soma. Devolve ordem decrescente, com "Outros" por último.
+    """
+    total = sum(c["gasto"] for c in cats)
+    if total <= 0:
+        return list(cats)
+    ordenadas = sorted(
+        (c for c in cats if str(c["nome"]).strip().lower() != "outros"),
+        key=lambda c: c["gasto"], reverse=True,
+    )
+    grandes = [c for c in ordenadas[:max_itens]
+               if c["gasto"] / total * 100 >= min_pct]
+    nomes_grandes = {c["nome"] for c in grandes}
+    resto = [c for c in cats if c["nome"] not in nomes_grandes]
+    resultado = [dict(c) for c in grandes]
+    soma_resto = sum(c["gasto"] for c in resto)
+    if resto and soma_resto > 0:
+        # Só uma categoria pequena e nenhuma "Outros" antes: mantém o nome dela.
+        if len(resto) == 1:
+            resultado.append(dict(resto[0]))
+        else:
+            resultado.append({"nome": "Outros", "gasto": soma_resto,
+                              "orcamento": 0.0, "pct_usado": 0.0,
+                              "tipo_badge": ""})
+    return resultado
+
+
+def _cores_categorias(cats: list) -> list:
+    """Uma cor por categoria; o grupo "Outros" sempre em cinza."""
+    cores = []
+    i = 0
+    for c in cats:
+        if c["nome"] == "Outros":
+            cores.append(_COR_OUTROS)
+        else:
+            cores.append(_CORES_CAT[i % len(_CORES_CAT)])
+            i += 1
+    return cores
+
+
 def _fig_pizza_cats(cats: list) -> go.Figure:
     nomes  = [c["nome"]  for c in cats]
     gastos = [c["gasto"] for c in cats]
-    cores  = _CORES_CAT[:len(cats)]
+    cores  = _cores_categorias(cats)
     fig = go.Figure(go.Pie(
-        labels=nomes, values=gastos, hole=0.50,
+        labels=nomes, values=gastos, hole=0.55, sort=False,
         marker={"colors": cores, "line": {"color": "#0E1117", "width": 2}},
-        textinfo="percent", textfont={"size": 11},
+        textinfo="percent", textposition="inside", insidetextorientation="horizontal",
+        textfont={"size": 12, "color": "#FFFFFF"},
         hovertemplate="<b>%{label}</b><br>R$ %{value:,.2f}<br>%{percent}<extra></extra>",
     ))
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)", font_color=_COR_NEUTRO,
         showlegend=True,
-        legend={"font": {"size": 11}, "bgcolor": "rgba(0,0,0,0)"},
-        margin={"t": 10, "b": 10, "l": 0, "r": 0}, height=300,
+        legend={"orientation": "h", "y": -0.05, "x": 0.5, "xanchor": "center",
+                "yanchor": "top", "font": {"size": 11}, "bgcolor": "rgba(0,0,0,0)"},
+        margin={"t": 10, "b": 60, "l": 0, "r": 0}, height=360,
     )
     return fig
 
@@ -930,15 +981,21 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
 
 def _fig_barras_categoria_anual(cats: list) -> go.Figure:
     """Barras horizontais de gastos anuais por categoria (ordem decrescente)."""
-    cats_ord = sorted(cats, key=lambda c: c["gasto"], reverse=True)
+    # Ordem recebida (já agrupada: maiores primeiro, "Outros" por último),
+    # com as mesmas cores da pizza.
+    cats_ord = list(cats)
     nomes  = [c["nome"]  for c in cats_ord]
     gastos = [c["gasto"] for c in cats_ord]
     total  = sum(gastos) or 1
     pcts   = [round(g / total * 100, 1) for g in gastos]
-    cores  = _CORES_CAT[:len(cats_ord)]
+    cores  = _cores_categorias(cats_ord)
+    textos = [f"R$ {g:,.0f}".replace(",", ".") + f"  ({p:.0f}%)"
+              for g, p in zip(gastos, pcts)]
     fig = go.Figure(go.Bar(
         x=gastos, y=nomes, orientation="h",
-        marker_color=cores, opacity=0.88,
+        marker_color=cores, opacity=0.9,
+        text=textos, textposition="outside", cliponaxis=False,
+        textfont={"size": 11},
         hovertemplate=(
             "<b>%{y}</b><br>R$ %{x:,.2f}"
             "<br>%{customdata:.1f}% do total<extra></extra>"
@@ -948,10 +1005,10 @@ def _fig_barras_categoria_anual(cats: list) -> go.Figure:
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font_color=_COR_NEUTRO,
-        margin={"t": 10, "b": 10, "l": 0, "r": 10}, height=max(240, len(cats_ord) * 28),
-        xaxis={"showgrid": True, "gridcolor": "#1E2533",
-               "tickformat": ",.0f", "tickprefix": "R$ "},
+        margin={"t": 10, "b": 10, "l": 0, "r": 110}, height=360,
+        xaxis={"showgrid": False, "showticklabels": False, "zeroline": False},
         yaxis={"showgrid": False, "autorange": "reversed"},
+        bargap=0.35,
     )
     return fig
 
@@ -1034,15 +1091,15 @@ def _tab_analises(
     )
     cats_anuais = get_gastos_categoria_anual(_ano_dist)
     if cats_anuais:
-        col_pizza, col_barras = st.columns(2, gap="medium")
+        # Nos gráficos, categorias pequenas viram um único "Outros".
+        # A tabela abaixo continua com todas, em detalhe.
+        _cats_graf = _agrupar_categorias_pequenas(cats_anuais)
+        col_pizza, col_barras = st.columns([4, 5], gap="medium")
         with col_pizza:
-            _pizza_cats = [{"nome": c["nome"], "gasto": c["gasto"],
-                            "orcamento": 0.0, "pct_usado": 0.0, "tipo_badge": ""}
-                           for c in cats_anuais]
-            st.plotly_chart(_fig_pizza_cats(_pizza_cats), width="stretch",
+            st.plotly_chart(_fig_pizza_cats(_cats_graf), width="stretch",
                             config={"displayModeBar": False})
         with col_barras:
-            st.plotly_chart(_fig_barras_categoria_anual(cats_anuais),
+            st.plotly_chart(_fig_barras_categoria_anual(_cats_graf),
                             width="stretch", config={"displayModeBar": False})
 
         import pandas as pd
