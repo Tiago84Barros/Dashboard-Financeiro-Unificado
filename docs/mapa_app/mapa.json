@@ -1980,6 +1980,12 @@
               ]
             },
             {
+              "nome": "Carteira ampla: nota + fatores (alternativa medida)",
+              "resumo": "Tira os 30% piores e divide igual no resto",
+              "explicacao": "Outra carteira, mais ampla, feita com a mesma nota. Junta a nota com três dados de mercado (momento, baixa volatilidade e ROE), tira os 30% de pior resultado e divide o dinheiro em partes iguais entre os que ficam. É refeita uma vez por ano, em abril. Três cartões mostram quanto ela rendeu a mais que dividir igual entre todas as empresas nos anos passados, ao lado da nota sozinha e da carteira concentrada. A lista de hoje aparece depois de rodar a aba; entre janeiro e março ela é uma prévia.",
+              "so_admin": false
+            },
+            {
               "nome": "Como chegamos a estas empresas — metodologia e referências",
               "resumo": "Os métodos usados e os estudos de base",
               "explicacao": "Diz quantas análises foram encadeadas para chegar à carteira e, num quadro que abre ao clicar, explica cada uma com o estudo acadêmico que a fundamenta.",
