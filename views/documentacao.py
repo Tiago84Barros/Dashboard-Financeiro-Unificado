@@ -385,7 +385,8 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
             "visões: ano a ano (barras, cada safra sozinha) e acumulado (linha do R$ 1 "
             "encadeado pelas safras medidas). Abaixo dele, cards com o R$ 1 final da "
             "carteira, dos pesos iguais e da Selic, com a taxa ao ano, mostram o "
-            "resultado do período; a prova segue o teste ano a ano.",
+            "resultado do período; a prova segue o teste ano a ano. Safra cujo preço "
+            "não cobre o ano inteiro é nomeada, e a taxa ao ano conta só o tempo coberto.",
             ("load_selic_macro()", "load_selic_mensal()", "load_macro_history()", "Taxa Selic média de fallback"),
             "A comparação contra Selic é essencial porque o investidor brasileiro sempre tem uma alternativa de renda fixa.",
         ),

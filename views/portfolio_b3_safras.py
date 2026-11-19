@@ -31,6 +31,7 @@ from core.b3_safras import (
     fmt_ao_ano,
     fmt_reais,
     legenda_acumulado,
+    rotulos_do_caminho,
     tabela_de_safras,
 )
 from core.glossario import leitura_rank_ic
@@ -308,14 +309,16 @@ def dados_da_curva_acumulada(acum: dict, *, liquida: bool) -> pd.DataFrame:
 
     Sai de ``acumulado_das_safras``, a mesma conta dos cartões: o último
     ponto de cada série é o ``valor_final`` do cartão. Safra pulada (sem
-    retorno em alguma série) não ganha ponto; a legenda já a nomeia.
+    retorno em alguma série) não ganha ponto; a legenda já a nomeia. Safra
+    cujo preço não cobre o ano todo (``curtas``) leva no rótulo o mês
+    observado, não o civil.
     """
     colunas = ["Data", "Série", "Valor de R$ 1"]
     safras = acum.get("safras") or []
     if not safras:
         return pd.DataFrame(columns=colunas)
     nome_estrategia = "Estratégia " + ("líquida" if liquida else "bruta")
-    datas = [f"abr/{safras[0]}"] + [f"mar/{s + 1}" for s in safras]
+    datas = rotulos_do_caminho(acum)
     linhas = []
     for chave, rotulo in _SERIES_ACUMULADO:
         serie = acum["series"].get(chave)
@@ -360,12 +363,16 @@ def _render_acumulado(acum: dict, *, liquida: bool) -> None:
     st.caption(legenda_acumulado(acum, base=base))
 
 
-def _render_grafico_safras(completas: pd.DataFrame) -> None:
+def _render_grafico_safras(completas: pd.DataFrame, *,
+                           janelas_curtas: dict[int, tuple] | None = None) -> None:
     """Um gráfico só, com a escolha entre cada safra sozinha (barras) e o
     R$ 1 encadeado ao longo dos anos (linha). Os cartões do acumulado
-    ficam abaixo nas duas visões."""
+    ficam abaixo nas duas visões.
+
+    ``janelas_curtas`` vem de ``tabela.attrs["janelas_curtas_por_safra"]``:
+    nessas safras a taxa ao ano conta o tempo que o preço cobre."""
     series, liquida = series_do_acumulado(completas)
-    acum = acumulado_das_safras(series)
+    acum = acumulado_das_safras(series, janelas_curtas=janelas_curtas)
     opcoes = [_VISAO_ANUAL] + ([_VISAO_ACUMULADA] if acum["n"] else [])
     visao = st.segmented_control(
         "Ver o desempenho", opcoes, default=_VISAO_ANUAL,
@@ -470,7 +477,8 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
                     codigo="portfolio_b3.safras_premissas_liquido")
 
     if not completas.empty:
-        _render_grafico_safras(completas)
+        _render_grafico_safras(
+            completas, janelas_curtas=tabela.attrs.get("janelas_curtas_por_safra"))
 
     render_expectativa(resultados, tabela)
 
