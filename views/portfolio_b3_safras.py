@@ -5,8 +5,8 @@ Renderizacao apenas: toda a aritmetica de safra mora em core/b3_safras.py.
 views/portfolio_b3.py ja tem 4.400+ linhas e nao recebe logica nova.
 
 `_resumo_safras`, `_legenda_resumo`, `_tabela_para_exibicao`,
-`_column_config_retorno`, `_grafico_barras`, `series_do_acumulado` e
-`_expectativa` sao as pecas
+`_column_config_retorno`, `_grafico_barras`, `series_do_acumulado`,
+`dados_da_curva_acumulada` e `_expectativa` sao as pecas
 de logica deste modulo, e sao deliberadamente
 puras (sem streamlit, sem banco) para poder ser testadas direto — nesta
 base, teste via Streamlit AppTest vaza atribuicao de modulo e falha só
@@ -290,10 +290,59 @@ def series_do_acumulado(completas: pd.DataFrame) -> tuple[dict, bool]:
     return series, liquida
 
 
-def _render_acumulado(completas: pd.DataFrame) -> None:
+_VISAO_ANUAL = "Ano a ano"
+_VISAO_ACUMULADA = "Acumulado (R$ 1)"
+
+# Rótulo e cor de cada série no gráfico acumulado: as mesmas cores das
+# barras, para a estratégia não trocar de cor quando a visão muda.
+_SERIES_ACUMULADO = (
+    ("estrategia", "Estratégia"),
+    ("equal_weight", "Equal-weight"),
+    ("selic", "Selic"),
+)
+
+
+def dados_da_curva_acumulada(acum: dict, *, liquida: bool) -> pd.DataFrame:
+    """Pontos do gráfico acumulado: R$ 1 em abril da primeira safra e o
+    valor ao fim de cada safra usada (março do ano seguinte).
+
+    Sai de ``acumulado_das_safras``, a mesma conta dos cartões: o último
+    ponto de cada série é o ``valor_final`` do cartão. Safra pulada (sem
+    retorno em alguma série) não ganha ponto; a legenda já a nomeia.
+    """
+    colunas = ["Data", "Série", "Valor de R$ 1"]
+    safras = acum.get("safras") or []
+    if not safras:
+        return pd.DataFrame(columns=colunas)
+    nome_estrategia = "Estratégia " + ("líquida" if liquida else "bruta")
+    datas = [f"abr/{safras[0]}"] + [f"mar/{s + 1}" for s in safras]
+    linhas = []
+    for chave, rotulo in _SERIES_ACUMULADO:
+        serie = acum["series"].get(chave)
+        if not serie:
+            continue
+        nome = nome_estrategia if chave == "estrategia" else rotulo
+        for data, valor in zip(datas, [1.0] + list(serie["caminho"])):
+            linhas.append({"Data": data, "Série": nome, "Valor de R$ 1": valor})
+    return pd.DataFrame(linhas, columns=colunas)
+
+
+def _grafico_acumulado(acum: dict, *, liquida: bool):
+    """Linha do R$ 1 encadeado safra a safra, nas cores das barras."""
+    pontos = dados_da_curva_acumulada(acum, liquida=liquida)
+    cores = {"Estratégia líquida": _COR_POS, "Estratégia bruta": _COR_INF,
+             "Equal-weight": _COR_NEU, "Selic": _COR_ALT}
+    fig = px.line(pontos, x="Data", y="Valor de R$ 1", color="Série",
+                  markers=True, color_discrete_map=cores)
+    fig.update_traces(hovertemplate="%{x}: R$ %{y:.2f}<extra>%{fullData.name}</extra>")
+    fig.update_layout(**_plot_layout(360))
+    fig.update_yaxes(tickprefix="R$ ", tickformat=".2f")
+    fig.update_xaxes(type="category")
+    return fig
+
+
+def _render_acumulado(acum: dict, *, liquida: bool) -> None:
     """Cartões do R$ 1 encadeado: resultado do período, ao lado do ano a ano."""
-    series, liquida = series_do_acumulado(completas)
-    acum = acumulado_das_safras(series)
     if not acum["n"]:
         return
     rotulos = (("estrategia", "R$ 1 na estratégia (" + ("líquido" if liquida else "bruto") + ")"),
@@ -309,6 +358,38 @@ def _render_acumulado(completas: pd.DataFrame) -> None:
     base = ("a estratégia já líquida de custo de giro e IR; pesos iguais e Selic "
             "brutos" if liquida else "todas as séries brutas")
     st.caption(legenda_acumulado(acum, base=base))
+
+
+def _render_grafico_safras(completas: pd.DataFrame) -> None:
+    """Um gráfico só, com a escolha entre cada safra sozinha (barras) e o
+    R$ 1 encadeado ao longo dos anos (linha). Os cartões do acumulado
+    ficam abaixo nas duas visões."""
+    series, liquida = series_do_acumulado(completas)
+    acum = acumulado_das_safras(series)
+    opcoes = [_VISAO_ANUAL] + ([_VISAO_ACUMULADA] if acum["n"] else [])
+    visao = st.segmented_control(
+        "Ver o desempenho", opcoes, default=_VISAO_ANUAL,
+        key="pb3_safras_visao", label_visibility="collapsed",
+    ) or _VISAO_ANUAL
+    if visao == _VISAO_ACUMULADA:
+        st.plotly_chart(_grafico_acumulado(acum, liquida=liquida), width="stretch",
+                        config={"displayModeBar": False},
+                        key="pb3_safras_acumulado")
+        st.caption(
+            "A linha encadeia as safras: o valor de cada ponto é o do ponto "
+            "anterior vezes o retorno da safra. Ela não mostra quantas safras "
+            "ficaram atrás do benchmark; para isso, veja o ano a ano."
+        )
+    else:
+        st.plotly_chart(_grafico_barras(completas), width="stretch",
+                        config={"displayModeBar": False},
+                        key="pb3_safras_barras")
+        st.caption(
+            "As barras mostram cada safra sozinha. Na visão acumulada, as "
+            "safras viram um número único, que esconde quantas ficaram atrás "
+            "do benchmark."
+        )
+    _render_acumulado(acum, liquida=liquida)
 
 
 def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
@@ -389,15 +470,7 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
                     codigo="portfolio_b3.safras_premissas_liquido")
 
     if not completas.empty:
-        st.plotly_chart(_grafico_barras(completas), width="stretch",
-                        config={"displayModeBar": False},
-                        key="pb3_safras_barras")
-        st.caption(
-            "As barras mostram cada safra sozinha: o acumulado abaixo é um "
-            "número único, que esconde quantas safras individuais ficaram "
-            "atrás do benchmark."
-        )
-        _render_acumulado(completas)
+        _render_grafico_safras(completas)
 
     render_expectativa(resultados, tabela)
 

@@ -894,6 +894,10 @@ def acumulado_das_safras(retornos: dict[str, dict[int, float | None]]) -> dict:
     produto pula um ano e a cadeia não é contínua) e ``fora`` as das pontas.
     A tela tem de dizer as duas.
 
+    ``caminho`` é o valor de R$ 1 ao fim de cada safra usada, na ordem de
+    ``safras`` -- o último é ``valor_final``. É o que o gráfico acumulado
+    desenha, para que a curva e o cartão saiam da mesma conta.
+
     ``anual`` é a taxa composta, ``valor_final ** (1/n) - 1``: cada safra
     dura doze meses. Com um retorno de -100% ou pior no caminho, a taxa não
     existe e sai ``None``.
@@ -924,8 +928,9 @@ def acumulado_das_safras(retornos: dict[str, dict[int, float | None]]) -> dict:
     n = len(safras)
     out = {}
     for nome, r in validas.items():
-        valor = float(np.prod([1.0 + r[s] for s in safras]))
-        out[nome] = {"valor_final": valor,
+        caminho = [float(c) for c in np.cumprod([1.0 + r[s] for s in safras])]
+        valor = caminho[-1]
+        out[nome] = {"valor_final": valor, "caminho": caminho,
                      "anual": (valor ** (1.0 / n) - 1.0) if valor > 0 else None}
     return {"safras": safras, "n": n, "pulados": pulados, "fora": fora,
             "series": out}

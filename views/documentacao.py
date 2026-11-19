@@ -381,9 +381,11 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
             "macro_cp", "Cenário macro", "Dados",
             "Carrega Selic e demais variáveis macro para simular benchmark e ajustar o score. "
             "O desempenho safra a safra usa a Selic realizada mês a mês; a meta do ano só "
-            "cobre mês sem dado, e esses meses aparecem nomeados. Abaixo das barras, "
-            "R$ 1 encadeado pelas safras medidas (carteira, pesos iguais e Selic, com a "
-            "taxa ao ano) mostra o resultado do período; a prova segue o teste ano a ano.",
+            "cobre mês sem dado, e esses meses aparecem nomeados. O gráfico tem duas "
+            "visões: ano a ano (barras, cada safra sozinha) e acumulado (linha do R$ 1 "
+            "encadeado pelas safras medidas). Abaixo dele, cards com o R$ 1 final da "
+            "carteira, dos pesos iguais e da Selic, com a taxa ao ano, mostram o "
+            "resultado do período; a prova segue o teste ano a ano.",
             ("load_selic_macro()", "load_selic_mensal()", "load_macro_history()", "Taxa Selic média de fallback"),
             "A comparação contra Selic é essencial porque o investidor brasileiro sempre tem uma alternativa de renda fixa.",
         ),

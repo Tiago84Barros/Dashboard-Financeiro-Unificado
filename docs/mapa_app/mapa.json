@@ -1966,7 +1966,7 @@
                 {
                   "nome": "Desempenho safra a safra",
                   "resumo": "Resultado de cada carteira anual passada",
-                  "explicacao": "Cartões, tabela e gráfico de barras com o resultado da carteira de cada ano contra a Selic e contra as ações em partes iguais, já descontando custos e imposto. Abaixo do gráfico, três cartões mostram quanto R$ 1 teria virado reaplicado a cada abril em todas essas safras, na carteira, nas ações em partes iguais e na Selic, com a taxa ao ano. É o resultado do período, não a prova: a prova é o teste ano a ano.",
+                  "explicacao": "Cartões, tabela e gráfico com o resultado da carteira de cada ano contra a Selic e contra as ações em partes iguais, já descontando custos e imposto. O gráfico tem duas visões, à escolha: \"Ano a ano\", com uma barra por safra, e \"Acumulado (R$ 1)\", com a linha de quanto R$ 1 vale ao fim de cada safra. Abaixo do gráfico, três cartões mostram quanto R$ 1 teria virado reaplicado a cada abril em todas essas safras, na carteira, nas ações em partes iguais e na Selic, com a taxa ao ano. É o resultado do período, não a prova: a prova é o teste ano a ano.",
                   "so_admin": false,
                   "filhos": [
                     {

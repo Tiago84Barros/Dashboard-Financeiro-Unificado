@@ -1345,6 +1345,7 @@ def test_acumulado_usa_so_safras_com_todas_as_series():
     assert acum["safras"] == [2017, 2019] and acum["n"] == 2
     assert acum["pulados"] == [2018] and acum["fora"] == [2020]
     a = acum["series"]["a"]
+    assert a["caminho"] == pytest.approx([1.10, 1.10 * 0.90])
     assert a["valor_final"] == pytest.approx(1.10 * 0.90)
     assert a["anual"] == pytest.approx((1.10 * 0.90) ** 0.5 - 1)
     assert acum["series"]["b"]["valor_final"] == pytest.approx(1.05)
