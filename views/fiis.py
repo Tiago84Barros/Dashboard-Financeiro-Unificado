@@ -63,6 +63,7 @@ from core.fii_renda_recorrente import dy_recorrente
 from core.fii_selection_explanations import build_selection_reports
 from core.fii_taxonomy import ORDEM_CATEGORIAS_FII, categoria_fii
 from core.fii_validation import (
+    PISO_EXCESSO_MEDIO,
     leitura_do_excesso,
     texto_do_excesso,
     validation_supports_strategy,
@@ -318,8 +319,8 @@ def render(show_header: bool = True) -> None:
                     if validation_applicable
                     else "Motor atual pendente",
                 ),
-                # FII-02: o selo acima atesta integridade do protocolo, não
-                # vantagem. O IC do excesso fica ao lado dele no cabeçalho.
+                # FII-02: o selo acima atesta o protocolo e a média positiva,
+                # não a significância. O IC do excesso fica ao lado no cabeçalho.
                 ("Excesso vs IFIX", _metadado_do_excesso(validation)),
             ],
         )
@@ -930,10 +931,19 @@ def _card_do_protocolo_pit(validation_status: str, validation_metrics: dict) -> 
     periodos = int(pit.get("periods") or 0)
     cedidos = int(pit.get("concession_periods") or 0)
     fracao = float(pit.get("concession_period_fraction") or 0.0)
-    # A-162: o gate não afere vantagem sobre o IFIX; o rótulo diz o que o
-    # certificado realmente atesta.
-    sub = (f"integridade temporal, metodologia {METHODOLOGY_VERSION}; "
-           "não afere vantagem sobre o IFIX")
+    # A-162: o rótulo diz o que o certificado realmente atesta. Desde
+    # 19/11/2026 (protocolo 3.6.0) o portão exige excesso médio > 0 sobre o
+    # IFIX (`PISO_EXCESSO_MEDIO`); significância continua fora dele. Um
+    # "passed" que perde do índice só pode vir de protocolo anterior, e o card
+    # diz isso em vez de repetir a promessa nova sobre um certificado velho.
+    excesso = leitura_do_excesso(validation_metrics)
+    ganha = excesso["media"] is not None and excesso["media"] > PISO_EXCESSO_MEDIO
+    if aprovado and not ganha:
+        sub = (f"integridade temporal, metodologia {METHODOLOGY_VERSION}; "
+               "certificado anterior ao portão que exige ganhar do IFIX")
+    else:
+        sub = (f"integridade temporal e excesso médio positivo sobre o IFIX, "
+               f"metodologia {METHODOLOGY_VERSION}; significância não exigida")
     valor = "Aprovado" if aprovado else "Pendente"
     accent = sub_color = "#00C896" if aprovado else "#FC5C7D"
     if cedidos > 0:
@@ -946,9 +956,8 @@ def _card_do_protocolo_pit(validation_status: str, validation_metrics: dict) -> 
         accent = sub_color = "#F6C90E"
     # FII-02: o IC do excesso sai junto do selo. No run 90 ele vai de −0,127
     # a +0,380 p.p./mês — "Aprovado" sem isso ao lado é lido como "bate o
-    # índice". O piso (`PISO_IC_EXCESSO`) é aviso, não bloqueio: o portão
-    # continua o mesmo, e a vitrine continua publicando.
-    excesso = leitura_do_excesso(validation_metrics)
+    # índice com folga". O piso do IC (`PISO_IC_EXCESSO`) é aviso, não
+    # bloqueio; o portão exige só a média positiva.
     sub += " · " + texto_do_excesso(excesso)
     if aprovado and excesso["disponivel"] and not excesso["significativo"]:
         # D12: o rótulo diz de que lado do zero o excesso está. Perder do
@@ -2443,10 +2452,10 @@ def _carteira_integrada(preferences: dict):
         accent="#00C896" if investable_gate.median_confidence >= .75 else "#FC5C7D",
     ), unsafe_allow_html=True)
     # A-162: "Validação PIT: Aprovada" em verde ao lado da nota era lido como
-    # "a estratégia bate o índice". O gate de `core/fii_validation.py` não testa
-    # isso -- ele exige que o intervalo bootstrap do excesso EXISTA, nunca que
-    # ele exclua o zero. O rótulo diz o que o certificado atesta, e agora
-    # declara junto quantas safras só tiveram carteira com proteção cedida.
+    # "a estratégia bate o índice". Desde 19/11/2026 o gate de
+    # `core/fii_validation.py` exige excesso médio > 0, mas não que o
+    # intervalo bootstrap exclua o zero. O rótulo diz o que o certificado
+    # atesta e declara quantas safras só tiveram carteira com proteção cedida.
     gate_cards[2].markdown(
         _card_do_protocolo_pit(validation_status, validation.get("metrics") or {}),
         unsafe_allow_html=True)

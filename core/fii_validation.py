@@ -30,17 +30,28 @@ def validation_supports_strategy(validation: dict[str, Any], strategy_id: str) -
 
 
 # Piso do limite inferior do IC 95% do excesso mensal sobre o IFIX. É AVISO,
-# não portão: `validate_methodology` continua sem exigir excesso positivo.
+# não portão: `validate_methodology` exige que a carteira ganhe do IFIX na
+# média (`PISO_EXCESSO_MEDIO`, abaixo), não que o ganho seja significativo.
 #
 # Medido no run 90 (v6.10.0, 70 períodos): excesso médio de +0,136 p.p./mês
 # com IC [−0,127; +0,380]. Os runs 88 e 89 dão o mesmo retrato (limite
-# inferior −0,112 e −0,141). Com o piso como bloqueio, os três reprovam e a
-# vitrine de FIIs, recém-destravada no PR #486, para de publicar. Endurecer o
-# portão é decisão humana; até lá o selo "Aprovado" sai acompanhado do IC e
-# da marca "excesso não significativo", para não ser lido como "bate o
-# índice". Os três leitores (card da carteira, aba de validação e
-# `core.validacao_motor`) leem esta constante: guarda duplicada diverge.
+# inferior −0,112 e −0,141). Com este piso como bloqueio, nenhum run da
+# história do app teria passado. Até que o usuário peça mais, o selo
+# "Aprovado" sai acompanhado do IC e da marca "excesso não significativo",
+# para não ser lido como "bate o índice com folga". Os três leitores (card da
+# carteira, aba de validação e `core.validacao_motor`) leem esta constante:
+# guarda duplicada diverge.
 PISO_IC_EXCESSO = 0.0
+
+# Piso do excesso MÉDIO mensal líquido sobre o IFIX, e este sim é portão.
+# Decisão do usuário de 19/11/2026: a validação só sai "passed" se a carteira
+# ganhou do IFIX na média do walk-forward. Antes o portão atestava só o
+# protocolo (integridade temporal, viabilidade, restrições), e o run 153
+# (v6.8, 116 períodos) saiu "passed" com excesso de −0,189 p.p./mês, e a
+# vitrine o publicou com o selo de aprovada. Estritamente maior: empatar com o
+# índice não é ganhar dele. A média é a da manchete (publicável + caixa a
+# Selic), a mesma que o card mostra -- o mês em caixa foi decisão da regra.
+PISO_EXCESSO_MEDIO = 0.0
 
 
 def leitura_do_excesso(metrics: dict[str, Any] | None) -> dict[str, Any]:
@@ -77,8 +88,9 @@ def leitura_do_excesso(metrics: dict[str, Any] | None) -> dict[str, Any]:
         # Achado D12 (17/11/2026): "não significativo" cobria do mesmo jeito o
         # run que ganha do IFIX sem significância e o que PERDE dele -- o run 66
         # saía "Aprovado · excesso não significativo" com média negativa. As
-        # duas marcas abaixo separam o lado do zero. O portão não muda: ele
-        # atesta integridade do protocolo, não vantagem (ver PISO_IC_EXCESSO).
+        # duas marcas abaixo separam o lado do zero. Desde 19/11/2026 o portão
+        # também bloqueia média <= 0 (ver PISO_EXCESSO_MEDIO), então um run
+        # "passed" não chega mais aqui negativo; a marca fica para runs antigos.
         "negativo": bool(disponivel and media is not None and media < 0.0),
         # IC inteiro abaixo de zero: a carteira perde do índice, e isso É
         # distinguível de acaso. Régua fixa em zero, não no piso: o piso é a
@@ -1030,6 +1042,28 @@ def evaluate_regime_performance(observations: Iterable[dict], macro_regimes: pd.
     return output
 
 
+def bloqueio_por_excesso(backtest: dict[str, Any]) -> list[str]:
+    """O bloqueador do portão quando a carteira não ganhou do IFIX na média.
+
+    Lista vazia quando o excesso médio líquido passa de ``PISO_EXCESSO_MEDIO``.
+    Sem média medida também bloqueia: ausência de número não é ganho. A
+    leitura é a mesma do card e do motor (`leitura_do_excesso`), para o
+    portão e a tela não discordarem sobre o número.
+    """
+    if (backtest or {}).get("status") != "calculated":
+        # Backtest que não calculou já bloqueia pelo próprio motivo; somar
+        # "excesso indisponível" só repetiria a causa com outro nome.
+        return []
+    media = leitura_do_excesso(backtest)["media"]
+    if media is None:
+        return ["excesso médio sobre o IFIX indisponível: sem ele não há como "
+                "afirmar que a carteira ganha do índice"]
+    if media <= PISO_EXCESSO_MEDIO:
+        return [f"carteira não ganha do IFIX: excesso médio líquido de "
+                f"{_pp(media)} p.p./mês no walk-forward"]
+    return []
+
+
 def validate_methodology(backtest: dict[str, Any], regime_results: dict[str, Any], *,
                          thresholds: ValidationThresholds | None = None) -> dict[str, Any]:
     thresholds = thresholds or ValidationThresholds()
@@ -1083,5 +1117,6 @@ def validate_methodology(backtest: dict[str, Any], regime_results: dict[str, Any
     ci = backtest.get("excess_bootstrap") or {}
     if pd.isna(ci.get("lower", np.nan)):
         blockers.append("intervalo bootstrap indisponível")
+    blockers.extend(bloqueio_por_excesso(backtest))
     return {"status": "passed" if not blockers else "blocked", "blockers": blockers,
             "thresholds": thresholds.__dict__, "backtest": backtest, "regimes": regime_results}

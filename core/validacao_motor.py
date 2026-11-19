@@ -227,15 +227,16 @@ def _porque_sem_saidas_fii(engine=None) -> str:
 def _vantagem_fii(metrics: dict) -> Portao:
     """O excesso sobre o IFIX e distinguivel de zero?
 
-    `validate_methodology` exige que o intervalo bootstrap EXISTA -- nunca que
-    ele exclua o zero. Um certificado pode entao sair "passed" com o excesso
-    medio dentro de um intervalo que atravessa o zero, e a tela mostra
-    "Validacao PIT: Aprovada" em verde ao lado da nota. O usuario le isso como
-    "bate o indice"; o portao nunca testou isso.
+    `validate_methodology` exige que o intervalo bootstrap EXISTA e, desde
+    19/11/2026 (protocolo 3.6.0), que o excesso MEDIO seja positivo -- nunca
+    que o intervalo exclua o zero. Um certificado pode entao sair "passed"
+    ganhando do indice na media com um intervalo que atravessa o zero, e o
+    usuario le "Aprovada" como "bate o indice com folga".
 
-    Aqui a pergunta e feita explicitamente. O certificado continua valendo pelo
-    que ele de fato atesta -- integridade do protocolo point-in-time --, e a
-    vantagem economica vira um portao separado, com o intervalo no detalhe.
+    Aqui a pergunta de significancia e feita explicitamente, como portao
+    separado, com o intervalo no detalhe. Certificados 3.5.0 ou anteriores
+    podem ter saido "passed" com media negativa; os ramos abaixo continuam
+    dizendo isso a eles.
     """
     # O piso e o mesmo do card da carteira e da aba de validacao
     # (`core.fii_validation.PISO_IC_EXCESSO`): guarda duplicada diverge.

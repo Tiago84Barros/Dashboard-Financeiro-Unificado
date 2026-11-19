@@ -93,8 +93,34 @@ piso, não a da carteira cheia.
 - elegibilidade: `6.10.0`;
 - estratégia: `fii_integrated_robust_optimizer.v6.8`;
 - fórmula: `br-fii-integrated-income-resilience-6.10.0`;
-- protocolo de validação: `fii-pit-robust-optimizer-3.5.0` (os números da
-  validação acima foram medidos sob a `3.4.0`).
+- protocolo de validação: `fii-pit-robust-optimizer-3.6.0` (os números da
+  validação acima foram medidos sob a `3.4.0`; ver "Protocolo 3.6.0" abaixo).
+
+## Protocolo 3.6.0 — aprovar exige ganhar do IFIX (19/11/2026)
+
+Decisão do usuário de 19/11/2026. Até a `3.5.0`, `validate_methodology`
+atestava só o protocolo -- integridade temporal, viabilidade, restrições,
+cobertura e a existência do intervalo bootstrap. O run 153 (v6.8, 116
+períodos) saiu `passed` com excesso médio de −0,189 p.p./mês, a curva
+publicável em −0,277 p.p. com IC [−0,556; −0,020], e a vitrine publicou a
+carteira-modelo com o selo de aprovada.
+
+Desde a `3.6.0` o portão também bloqueia quando o excesso **médio** mensal
+líquido sobre o IFIX não passa de zero (`PISO_EXCESSO_MEDIO = 0.0`,
+estritamente maior: empatar não é ganhar). Sem média medida também bloqueia.
+A média é a da manchete do walk-forward (`mean_excess`, publicável + caixa a
+Selic), lida por `leitura_do_excesso` -- a mesma função do card e do motor.
+
+O que **não** entrou no portão: a significância. O piso do limite inferior do
+IC (`PISO_IC_EXCESSO`) segue aviso. Com ele como bloqueio, nenhum run da
+história do app teria passado, inclusive o run 90 (+0,136, IC [−0,127;
++0,380]). A tela segue marcando "não significativo" quando o IC cruza o zero.
+
+Consequência: com a estratégia atual, um walk-forward novo sai `blocked`, e a
+tela de FIIs mostra Lista de Diligência em vez de Carteira-Modelo.
+Certificados `3.5.0` ou anteriores gravados como `passed` não são
+reavaliados; o card os identifica como anteriores ao portão quando a média é
+negativa.
 
 ## Protocolo 3.5.0 — fundo que sai de campo rende zero (A-118)
 
@@ -171,14 +197,15 @@ períodos; o run 147, com o `1.8.0`, deu os mesmos números) mede pior:
 - information ratio de −0,58 e drawdown máximo de −20,7%;
 - cessão de proteção em 58,9% dos períodos.
 
-A aprovação atesta integridade temporal, viabilidade (112/116 = 0,966) e
-respeito às restrições. Ela não diz que a carteira bate o IFIX; no histórico
-medido, ela não bate.
+A aprovação atestava integridade temporal, viabilidade (112/116 = 0,966) e
+respeito às restrições. Ela não dizia que a carteira bate o IFIX; no histórico
+medido, ela não bate. Sob o protocolo `3.6.0` este run sairia `blocked`.
 
 **A tela diz isso desde 17/11/2026 (achado D12).** Antes, run aprovado com
 excesso negativo saía "Aprovado · excesso não significativo", o mesmo rótulo
 do run 90, que ganha do IFIX sem significância. O portão
-(`validate_methodology`) não mudou. Mudou a leitura, numa função só
+(`validate_methodology`) não mudou naquela data (mudou em 19/11/2026, ver
+"Protocolo 3.6.0"). Mudou a leitura, numa função só
 (`core.fii_validation.veredito_do_excesso`), que a tela e o motor
 (`core.validacao_motor._vantagem_fii`) usam:
 
