@@ -93,6 +93,7 @@ from views.empresas_b3 import (
     _yf_multiplos_dividendos,
     _yf_trailing12m_divs,
 )
+import views.portfolio_b3_nota_fatores as _nota_fatores
 from views.portfolio_b3_safras import render_safras
 
 logger = logging.getLogger(__name__)
@@ -3694,6 +3695,20 @@ def render(show_header: bool = True) -> None:
             df_set["ticker"].isin(set(df_set_vivas["ticker"]))
         ].copy()
         st.session_state["pb3_precos_all"] = df_precos_all
+        # Carteira ampla "nota + fatores" (alternativa medida): o histórico de
+        # fundamentos não fica na sessão, então ela se forma aqui, no Rodar.
+        # Falha nela não derruba a carteira principal: a seção diz que falta.
+        try:
+            from core.b3_portfolio_presets import PRESETS as _PRESETS_NF
+            from core.b3_portfolio_presets import identificar_perfil as _perfil_nf
+            _perfil_rodada = _perfil_nf({
+                _ch: st.session_state.get(_ch)
+                for _pr in _PRESETS_NF.values() for _ch in _pr.valores})
+            st.session_state[_nota_fatores.CHAVE_ESTADO] = _nota_fatores.formar_hoje(
+                resultados, df_precos_all, hist_batch, perfil=_perfil_rodada)
+        except Exception as exc:  # noqa: BLE001 -- seção opcional, nomeada na tela
+            logger.warning("carteira nota + fatores indisponivel (%s)", exc)
+            st.session_state.pop(_nota_fatores.CHAVE_ESTADO, None)
         st.session_state["pb3_quality_summary"] = quality_summary
         st.session_state["pb3_quality_audit"]   = audit_recon
         st.session_state["pb3_hist_audit"]      = hist_audit
@@ -3777,7 +3792,7 @@ def render(show_header: bool = True) -> None:
         for _k in (
             "pb3_resultados", "pb3_df_set", "pb3_precos_all",
             "pb3_quality_summary", "pb3_quality_audit", "pb3_hist_audit",
-            "pb3_entry_guard", "pb3_entry_guard_df",
+            "pb3_entry_guard", "pb3_entry_guard_df", "pb3_nota_fatores",
         ):
             st.session_state.pop(_k, None)
         st.info(
@@ -5176,6 +5191,10 @@ def _render_analises_da_carteira(
         taxa_selic_aa=taxa_selic_aa,
         selic_mensal=selic_mensal,
     )
+
+    # ── Carteira ampla "nota + fatores" (alternativa medida) ─────────────────
+    _estado_nf = st.session_state.get(_nota_fatores.CHAVE_ESTADO) or {}
+    _nota_fatores.render_nota_fatores(perfil_ativo=_estado_nf.get("perfil"))
 
     # ── Metodologia e referências científicas ────────────────────────────────
     _render_metodologia_portfolio()

@@ -27,6 +27,7 @@ import logging
 import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+from pathlib import Path
 
 from core.fii_integridade import (
     SQL_PROVENTO_IMPLAUSIVEL,
@@ -122,6 +123,35 @@ NOTA_DETALHE_DO_CHAT = (
 #: Dias corridos da resposta da brapi a partir dos quais ainda vale 100%: a
 #: coleta e diaria e o fim de semana nao renova.
 PROVENTOS_FRESCO_DIAS = 3
+
+
+def nota_medicao_nota_fatores() -> str:
+    """Nota da carteira ampla "nota + fatores" da Criacao de Portfolio B3.
+
+    A lista de hoje sai dos mesmos precos, notas e ROE que esta secao ja mede;
+    o que e proprio dela e a medicao fora da amostra gravada em
+    data/oos_nota_fatores_b3.json. A nota diz de quando e de que versao ela
+    e, e se a tela a mostra como vencida -- a mesma regra da tela."""
+    try:
+        import core.b3_nota_fatores as nf
+        import core.b3_oos_carteira as oos
+        from core.b3_methodology import SCORE_VERSION
+        from core.b3_portfolio_presets import VERSION as PRESETS_VERSION
+        caminho = Path(__file__).resolve().parents[1] / "data" / "oos_nota_fatores_b3.json"
+        dados = oos.carregar(caminho)
+        if not dados:
+            return ("carteira ampla nota + fatores: sem medicao gravada "
+                    "(data/oos_nota_fatores_b3.json)")
+        motivos = oos.vencida(dados, SCORE_VERSION, PRESETS_VERSION,
+                              versao_medicao=nf.VERSAO)
+        base = (f"carteira ampla nota + fatores: medicao {dados.get('versao_medicao')} "
+                f"de {str(dados.get('medido_em') or '')[:10]}, "
+                f"{len(dados.get('safras') or [])} safras, perfil "
+                f"{dados.get('perfil')} (data/oos_nota_fatores_b3.json); a lista de "
+                "hoje usa os mesmos precos, notas e ROE medidos acima")
+        return base + ("; VENCIDA: " + "; ".join(motivos) if motivos else "")
+    except Exception as exc:  # noqa: BLE001
+        return f"carteira ampla nota + fatores: medicao nao lida ({type(exc).__name__})"
 
 
 def _declarar_nao_medidos(comps: list["Componente"], motivo: str,
@@ -515,6 +545,7 @@ def confianca_b3(engine=None) -> ConfiancaSecao:
     notas.append(NOTA_COTACAO_ACAO)
     notas.append(nota_selic_mensal(engine))
     notas.append(NOTA_DETALHE_DO_CHAT)
+    notas.append(nota_medicao_nota_fatores())
     return ConfiancaSecao("Empresas B3", tuple(comps), u, tuple(notas))
 
 

@@ -361,7 +361,7 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
         ("Segmentação", ("setor_cp", "subsetor_cp", "segmento_cp")),
         ("Motor", ("variacao_cp", "score_cp", "lideres_cp")),
         ("Simulação", ("backtest_cp", "comparacao_cp", "aprovacao_cp")),
-        ("Portfólio", ("pesos_cp", "salvar_cp")),
+        ("Portfólio", ("pesos_cp", "salvar_cp", "ampla_cp")),
     ),
     default="setores_cp",
     nodes={
@@ -493,6 +493,26 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
             "Persiste a carteira sugerida como portfólio B3 ativo do usuário.",
             ("b3_portfolio_models", "b3_portfolio_model_items", "Parâmetros e métricas JSON"),
             "Esse registro vira a base da Avaliação de Portfólio e aparece no Dashboard Geral.",
+        ),
+        "ampla_cp": _node(
+            "ampla_cp", "Carteira ampla: nota + fatores", "Portfólio",
+            "Alternativa medida, abaixo da carteira concentrada. Em vez de escolher o "
+            "líder de cada segmento, junta todo nome com nota de hoje, tira os 30% de "
+            "pior sinal e divide igualmente entre o resto. O sinal é a média do "
+            "percentil da nota com o percentil de três fatores: momento 12-1, baixa "
+            "volatilidade em 36 meses e o último ROE publicado antes de abril. Nome sem "
+            "fator fica no meio (50). A carteira é refeita uma vez por ano, em abril; "
+            "de janeiro a março a lista sai como prévia. Os três cards mostram a "
+            "medição fora da amostra gravada (excesso líquido sobre pesos iguais, com "
+            "intervalo de 95%), a mesma régua só com a nota e a carteira concentrada; "
+            "a tela avisa quando a medição é de outra versão ou de outro perfil.",
+            ("core/b3_nota_fatores.py: a regra, a mesma da medição",
+             "data/oos_nota_fatores_b3.json (scripts/medir_nota_fatores_b3.py)",
+             "Sem guarda de entrada, piso de qualidade, portão de LLM nem tetos de setor",
+             "Nove safras: efeito pequeno, um ano ruim apaga a vantagem"),
+            "Tirar os piores foi a variante ampla que mais rendeu na B3, fora do zero. "
+            "Ela fica ao lado da concentrada, não no lugar: são perguntas diferentes, e "
+            "a tela mostra as duas na mesma régua.",
         ),
     },
 )
