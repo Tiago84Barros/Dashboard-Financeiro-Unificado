@@ -283,6 +283,36 @@ def _overrides(no, chave_pai: str | None = None, em_fonte: bool = False):
     return mudancas or None
 
 
+def _texto_dentro_da_marca(dados: dict) -> bool:
+    """O texto do traço fica todo dentro da fatia/barra (e não sobre a página)?"""
+    pos = dados.get("textposition")
+    if isinstance(pos, str):
+        return pos == "inside"
+    if isinstance(pos, (list, tuple)) and pos:
+        return all(p == "inside" for p in pos)
+    return False
+
+
+def _preservar_texto_interno(dados: dict, ajuste: dict | None) -> dict | None:
+    """Não escurece texto que se lê sobre a cor do dado.
+
+    O tema claro troca o branco do texto por tinta escura porque o fundo da
+    página vira branco. Texto dentro da fatia ou da barra se lê sobre a cor do
+    próprio dado, que o tema claro mantém: escurecê-lo deixava o percentual da
+    pizza de categorias quase invisível (18/11/2026), sobretudo na fatia cinza.
+    """
+    if not ajuste:
+        return ajuste
+    ajuste.pop("insidetextfont", None)  # por definição, sempre dentro da marca
+    if _texto_dentro_da_marca(dados):
+        fonte = ajuste.get("textfont")
+        if isinstance(fonte, dict):
+            fonte.pop("color", None)
+            if not fonte:
+                ajuste.pop("textfont")
+    return ajuste or None
+
+
 def clarear_figura(fig):
     """Adapta a moldura da figura ao tema claro, no lugar (idempotente)."""
     try:
@@ -312,7 +342,7 @@ def clarear_figura(fig):
         pass
 
     for traco, dados in zip(fig.data, bruto.get("data") or []):
-        ajuste = _overrides(dados)
+        ajuste = _preservar_texto_interno(dados, _overrides(dados))
         if not ajuste:
             continue
         ajuste.pop("type", None)
