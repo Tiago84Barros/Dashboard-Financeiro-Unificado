@@ -452,8 +452,27 @@ def escala_correlacao() -> list[list]:
     return [list(p) for p in (_ESCALA_CORR_CLARA if no_claro() else _ESCALA_CORR_ESCURA)]
 
 
+def _vigente():
+    """Este módulo como está no ``sys.modules`` agora, e não como era na instalação.
+
+    O embrulho é instalado uma vez por processo (a marca fica em ``st``, que
+    sobrevive), mas ``core.modulos_frescos`` descarta e reimporta os módulos do
+    projeto a cada deploy. Se o embrulho chamasse as funções do módulo em que
+    nasceu, toda correção do tema claro só valeria depois de um Reboot: foi o
+    que aconteceu com o % da pizza de categorias (PR #774, 19/11/2026), que
+    seguiu escuro na produção com o código novo já na main.
+    """
+    import importlib
+
+    return importlib.import_module(__name__)
+
+
 def instalar_adaptadores() -> None:
-    """Embrulha os elementos que desenham em canvas. Roda uma vez por processo."""
+    """Embrulha os elementos que desenham em canvas. Roda uma vez por processo.
+
+    Os embrulhos buscam a lógica em :func:`_vigente` a cada chamada, para que
+    um deploy que mude este módulo passe a valer sem Reboot.
+    """
     if getattr(st, _INSTALADO, False):
         return
 
@@ -463,9 +482,10 @@ def instalar_adaptadores() -> None:
     plotly_original = DeltaGenerator.plotly_chart
 
     def plotly_chart(self, figure_or_data, *args, **kwargs):
-        if no_claro():
+        modulo = _vigente()
+        if modulo.no_claro():
             if hasattr(figure_or_data, "update_layout"):
-                clarear_figura(figure_or_data)
+                modulo.clarear_figura(figure_or_data)
             # Sem isto o Streamlit reaplica o template escuro por cima.
             kwargs.setdefault("theme", None)
         return plotly_original(self, figure_or_data, *args, **kwargs)
@@ -473,7 +493,7 @@ def instalar_adaptadores() -> None:
     dataframe_original = DeltaGenerator.dataframe
 
     def dataframe(self, data=None, *args, **kwargs):
-        if no_claro() and not args:
+        if _vigente().no_claro() and not args:
             from design.tabela_clara import renderizar
             try:
                 if renderizar(self, data, kwargs):
@@ -487,13 +507,14 @@ def instalar_adaptadores() -> None:
     vega_original = VegaChartsMixin._vega_lite_chart
 
     def _vega_lite_chart(self, data=None, spec=None, *args, **kwargs):
-        if no_claro():
+        modulo = _vigente()
+        if modulo.no_claro():
             kwargs["theme"] = None
             if isinstance(spec, dict):
-                spec = clarear_spec_vega(spec)
+                spec = modulo.clarear_spec_vega(spec)
             elif spec is None and isinstance(data, dict):
                 # `st.vega_lite_chart({...})` passa o spec como primeiro argumento.
-                data = clarear_spec_vega(data)
+                data = modulo.clarear_spec_vega(data)
         return vega_original(self, data, spec, *args, **kwargs)
 
     DeltaGenerator.plotly_chart = plotly_chart

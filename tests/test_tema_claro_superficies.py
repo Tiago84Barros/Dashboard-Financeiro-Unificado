@@ -435,6 +435,52 @@ def test_moldura_clara_respeita_a_modebar_escolhida_pela_tela():
     assert fig.to_plotly_json()["layout"]["modebar"]["color"] == "#123456"
 
 
+def test_embrulho_instalado_usa_o_modulo_recarregado_pelo_deploy(monkeypatch):
+    """O embrulho nasce uma vez por processo; a lógica tem de vir do módulo vigente.
+
+    ``core.modulos_frescos`` troca ``design.tema_canvas`` no ``sys.modules`` a
+    cada deploy, mas a marca de instalação fica em ``st`` e o embrulho velho
+    seguia chamando o ``clarear_figura`` antigo: o PR #774 só valeu depois de
+    um Reboot (19/11/2026).
+    """
+    import sys
+    import types
+
+    import plotly.graph_objects as go
+    import streamlit as st
+    from streamlit.delta_generator import DeltaGenerator
+    from streamlit.elements.vega_charts import VegaChartsMixin
+
+    from design.tema_canvas import _INSTALADO, instalar_adaptadores
+
+    chamadas: list[str] = []
+    antes = (DeltaGenerator.plotly_chart, DeltaGenerator.dataframe,
+             VegaChartsMixin._vega_lite_chart, st.plotly_chart, st.dataframe)
+    marca = getattr(st, _INSTALADO, False)
+    # Os originais viram espiões: o embrulho os chama no fim, sem renderizar nada.
+    DeltaGenerator.plotly_chart = lambda self, fig, *a, **k: chamadas.append("plotly")
+    VegaChartsMixin._vega_lite_chart = lambda self, data=None, spec=None, *a, **k: (
+        chamadas.append(f"vega:{spec.get('novo')}"))
+    setattr(st, _INSTALADO, False)
+    try:
+        instalar_adaptadores()
+
+        novo = types.ModuleType("design.tema_canvas")
+        novo.no_claro = lambda: True
+        novo.clarear_figura = lambda fig: chamadas.append("clarear_figura do novo")
+        novo.clarear_spec_vega = lambda spec: {**spec, "novo": True}
+        monkeypatch.setitem(sys.modules, "design.tema_canvas", novo)
+
+        DeltaGenerator.plotly_chart(None, go.Figure())
+        VegaChartsMixin._vega_lite_chart(None, None, {"mark": "bar"})
+    finally:
+        setattr(st, _INSTALADO, marca)
+        (DeltaGenerator.plotly_chart, DeltaGenerator.dataframe,
+         VegaChartsMixin._vega_lite_chart, st.plotly_chart, st.dataframe) = antes
+
+    assert chamadas == ["clarear_figura do novo", "plotly", "vega:True"]
+
+
 def test_texto_dentro_da_fatia_continua_branco_no_claro():
     """O % dentro da fatia se lê sobre a cor do dado, não sobre a página branca.
 
