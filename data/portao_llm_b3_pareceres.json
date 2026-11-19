@@ -179,7 +179,16 @@
    "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
    "codigo": "EMPRESA-00FD44",
    "hash_prompt": "6774dd5df69a607e",
-   "tentativa": 1
+   "tentativa": 1,
+   "sonda": {
+    "empresa": false,
+    "ano": false,
+    "ano_perto": false,
+    "palpite": null,
+    "ano_palpite": null,
+    "confianca": 0,
+    "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free"
+   }
   },
   "ARZZ3|2018|0": {
    "classificacao": "aprovar",
@@ -986,6 +995,16 @@
    "hash_prompt": "a84285c25c769fd3",
    "tentativa": 1
   },
+  "BRPR3|2021|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa no último ano e barata por patrimônio, mas lucro volátil e sem documentos CVM.",
+   "confianca": 55,
+   "score_qualitativo": 50,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-E7F2F7",
+   "hash_prompt": "0d0136b1d7e74ca9",
+   "tentativa": 1
+  },
   "BRPR3|2023|0": {
    "classificacao": "aprovar_com_ressalvas",
    "motivo": "Lucro fortemente negativo no último ano e pagamento de dividendo apesar do prejuízo, mas posição de caixa elevada e potencial benefício de Selic alta mantêm incerteza moderada.",
@@ -1309,6 +1328,16 @@
    "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
    "codigo": "EMPRESA-9C9AB6",
    "hash_prompt": "2483093d91ac36d4",
+   "tentativa": 1
+  },
+  "CIEL3|2018|0": {
+   "classificacao": "aprovar",
+   "motivo": "Empresa lucrativa com oito anos de série, caixa relevante e dívida baixa. Margem e ROE caíram, mas o balanço segue intacto, o que aponta para vale de ciclo.",
+   "confianca": 65,
+   "score_qualitativo": 65,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-3F69C9",
+   "hash_prompt": "32b98c6d9b7494e4",
    "tentativa": 1
   },
   "CIEL3|2019|0": {
@@ -3183,6 +3212,16 @@
     "confianca": 70,
     "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
    }
+  },
+  "LCAM3|2018|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com salto de receita e lucro em A-1, mas dívida alta e múltiplos caros, sem documentos CVM.",
+   "confianca": 60,
+   "score_qualitativo": 55,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-8EE367",
+   "hash_prompt": "39a6153c3a7bfe18",
+   "tentativa": 1
   },
   "LCAM3|2021|0": {
    "classificacao": "aprovar_com_ressalvas",
@@ -7291,7 +7330,16 @@
    "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
    "codigo": "EMPRESA-A248B2",
    "hash_prompt": "37e9ff4b8a371f48",
-   "tentativa": 1
+   "tentativa": 1,
+   "sonda": {
+    "empresa": false,
+    "ano": true,
+    "ano_perto": true,
+    "palpite": null,
+    "ano_palpite": 2019,
+    "confianca": 55,
+    "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free"
+   }
   },
   "VSPT4|2021|0": {
    "classificacao": "aprovar_com_ressalvas",
@@ -7679,12 +7727,7 @@
   }
  },
  "falhas_da_ultima_rodada": {
-  "BRPR3|2021|0": "LookupError: sem série anual até o exercício N-1",
-  "CIEL3|2018|0": "LookupError: sem série anual até o exercício N-1",
-  "LCAM3|2018|0": "LookupError: sem série anual até o exercício N-1",
-  "sonda|APTI4|2025": "TimeoutError: provedor não respondeu em 600 s",
-  "sonda|PEAB3|2022": "TimeoutError: provedor não respondeu em 600 s",
-  "sonda|RAPT4|2017": "TimeoutError: provedor não respondeu em 600 s",
-  "sonda|VSPT4|2019": "TimeoutError: provedor não respondeu em 600 s"
+  "sonda|PEAB3|2022": "ValueError: resposta vazia do provedor",
+  "sonda|RAPT4|2017": "TimeoutError: provedor não respondeu em 600 s"
  }
 }

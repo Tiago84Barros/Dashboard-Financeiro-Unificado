@@ -1,8 +1,8 @@
 {
-  "versao_medicao": "oos-carteira-2.5.0",
+  "versao_medicao": "oos-carteira-2.6.0",
   "versao_metodologia": "2.33.0",
   "versao_presets": "b3-presets-1.0.0",
-  "medido_em": "2026-11-17T14:22:01",
+  "medido_em": "2026-11-19T04:01:28",
   "safras": [
     2017,
     2018,
@@ -46,42 +46,42 @@
   "portao_llm": {
     "dentro_da_medicao": false,
     "por_que": "O parecer de LLM e o portão da Inteligência dos Ativos leem o dossiê de HOJE (notícias, fatos relevantes, veredito e balanços até a data da chamada). Aplicá-los a uma safra passada seria vetar com o que só se soube depois -- o número sairia melhor do que qualquer investidor teria conseguido. O de LLM ainda é opcional (desligado por padrão) e não determinístico, e tem medição direta à parte (medicao_direta); o da Inteligência fica sempre ligado, então a carteira entregue passa por ele e a medição só o cobre pela banda.",
-    "como_medido": "Banda de ATÉ UM veto por safra, no nível da carteira. Em cada safra a medição testa todas as opções -- não vetar e vetar cada nome selecionado, inclusive a maior participação que entra sem peso (ele sai de todo segmento em que foi escolhido e o próximo do ranking da safra no segmento herda a vaga, com o peso próprio ou, sem ele, o do vetado; sem próximo no ranking, o segmento sai e seu orçamento vai para os demais) --, remonta com cap e tetos e fica com o veto que MAIS derruba o retorno BRUTO da safra ('veta o melhor', adversário) e com o que MAIS o sobe ('veta o pior', favorável). No bruto são limites estritos para qualquer portão que vete no máximo um nome por safra, e o sem-portão fica sempre entre eles. No líquido não são: o veto muda o giro, e os números líquidos dessas variantes são os dos cenários escolhidos pelo bruto. Portão que vete mais de um nome por safra pode sair da banda. O substituto pula quem o Score de Entrada da SAFRA exclui e o excluído sai no fim, como na tela (desde a 2.3.0; antes a guarda lia o retrato de hoje e ficava fora). Até a medição 1.0.0 o veto era um por SEGMENTO; como quase todo segmento escolhe só o líder, 'o melhor' e 'o pior' eram o mesmo papel, as duas variantes empatavam e mediam, na prática, 'trocar todos os líderes pelo segundo do ranking'.",
+    "como_medido": "Banda de ATÉ UM veto por safra, no nível da carteira. Em cada safra a medição testa todas as opções -- não vetar e vetar cada nome selecionado, inclusive a maior participação que entra sem peso (ele sai de todo segmento em que foi escolhido e o próximo do ranking da safra no segmento herda a vaga, com o peso próprio ou, sem ele, o do vetado; sem próximo no ranking, o segmento sai e seu orçamento vai para os demais) --, remonta com cap e tetos e fica com o veto que MAIS derruba o retorno BRUTO da safra ('veta o melhor', adversário) e com o que MAIS o sobe ('veta o pior', favorável). O bruto comparado é o que a média conta: opção que deixa a safra inviável ou sem segmento rende a Selic do caixa, não os pesos que sobraram (D1). No bruto são limites estritos para qualquer portão que vete no máximo um nome por safra, e o sem-portão fica sempre entre eles. No líquido não são: o veto muda o giro, e os números líquidos dessas variantes são os dos cenários escolhidos pelo bruto. Portão que vete mais de um nome por safra pode sair da banda. O substituto pula quem o Score de Entrada da SAFRA exclui e o excluído sai no fim, como na tela (desde a 2.3.0; antes a guarda lia o retrato de hoje e ficava fora). Até a medição 1.0.0 o veto era um por SEGMENTO; como quase todo segmento escolhe só o líder, 'o melhor' e 'o pior' eram o mesmo papel, as duas variantes empatavam e mediam, na prática, 'trocar todos os líderes pelo segundo do ranking'.",
     "medicao_direta": "Variante 'portão de LLM medido' (só nas rodadas com --portao-llm): o LLM de produção, com o prompt de produção, lê o dossiê REMONTADO na data da decisão (balanços até N-1, trimestres até o 4T de N-1, preço e dividendos até 31/03/N) e o veredito decide quem sai, com a mesma regra da tela (até 2 candidatos por veto, falha nunca veta). Para o modelo não usar o que sabe do futuro, o dossiê sai anonimizado: código e nome trocados, só o setor amplo, anos relativos, valores em R$ e por ação multiplicados por fatores ocultos e o macro em faixas. Uma sonda pergunta ao próprio modelo qual empresa e qual ano ele acha que é; a taxa de acerto sai junto do número, porque anonimizar não garante nada para empresa grande e conhecida. O dossiê da época vê MENOS que o de produção: sem documentos CVM, notícias, métricas do provedor e detalhe do armazém (o acervo não cobre as safras). Os balanços são os de hoje, inclusive reapresentações posteriores. Empresa que saiu da bolsa não está no market.*: o dossiê dela sai da DFP da CVM (primeira versão entregue até o corte, a mesma fonte com que o score a reconstrói), sem trimestres e com proventos estimados pelo caixa pago; preço, faixa e valor de mercado que atravessam evento de capital não detectado ficam em branco em vez de errados."
   },
   "portao_llm_medido": {
-    "pareceres": 571,
+    "pareceres": 574,
     "classificacoes": {
-      "aprovar": 270,
-      "aprovar_com_ressalvas": 299,
+      "aprovar_com_ressalvas": 301,
+      "aprovar": 271,
       "vetar": 2
     },
     "taxa_veto": 0.0035,
-    "falhas": 3,
-    "falhas_sem_dossie": 3,
+    "falhas": 0,
+    "falhas_sem_dossie": 0,
     "falhas_modelo_nao_avaliou": 0,
-    "tentativas_perdidas_nesta_rodada": 9,
+    "tentativas_perdidas_nesta_rodada": 0,
     "pareceres_na_segunda_tentativa": 76,
     "exemplos_falha": [
-      "LookupError: sem série anual até o exercício N-1",
-      "TimeoutError: provedor não respondeu em 600 s"
+      "TimeoutError: provedor não respondeu em 600 s",
+      "ValueError: resposta vazia do provedor"
     ],
     "modelos": {
+      "openrouter/nvidia/nemotron-3.5-super-vl:free": 82,
       "openrouter/nvidia/nemotron-3-super-120b-a12b:free": 540,
-      "gemini/gemini-3.6-flash": 10,
-      "openrouter/nvidia/nemotron-3.5-super-vl:free": 79
+      "gemini/gemini-3.6-flash": 10
     },
     "repeticoes": 58,
     "concordancia_classificacao": 0.569,
     "concordancia_veto": 0.9828,
-    "sondas": 154,
-    "sonda_acerta_empresa": 0.1364,
-    "sonda_acerta_ano": 0.4935,
-    "sonda_ano_mais_menos_1": 0.6234,
+    "sondas": 156,
+    "sonda_acerta_empresa": 0.1346,
+    "sonda_acerta_ano": 0.4936,
+    "sonda_ano_mais_menos_1": 0.6218,
     "vetos_com_empresa_identificada": 0,
     "taxa_veto_sonda_identificou": 0.0,
     "taxa_veto_sonda_nao_identificou": 0.0,
-    "chamadas_nesta_rodada": 94,
+    "chamadas_nesta_rodada": 7,
     "versao_dossie": "dossie-pit-1.2.0",
     "cache": "data\\portao_llm_b3_pareceres.json"
   },
@@ -196,7 +196,7 @@
             "media_sem_melhor_safra": -0.007099497153519652
           },
           "giro_medio": 0.7268429615049832,
-          "custo_medio": 0.001627790751975532,
+          "custo_medio": 0.0016277907519755322,
           "safras_inviaveis_no_cap": [
             2015,
             2016,
@@ -214,6 +214,27 @@
           "safras_em_caixa": [
             2017
           ],
+          "sensibilidade_pesos_da_tela": {
+            "vs_equal_weight": {
+              "media": 0.03601056858907394,
+              "ic95": [
+                -0.03385846305630871,
+                0.11393945224555377
+              ],
+              "n_safras": 9,
+              "safras_negativas": [
+                2017,
+                2018,
+                2023
+              ],
+              "ic_cruza_zero": true,
+              "melhor_safra": 2020,
+              "media_sem_melhor_safra": 0.012264040603853187
+            },
+            "safras_com_pesos_relaxados": [
+              2017
+            ]
+          },
           "safras": [
             {
               "safra": 2015,
@@ -405,7 +426,7 @@
               "bruto": 0.22252474087334118,
               "liquido": 0.21986673597399076,
               "liquido_com_ir": 0.14525132051420186,
-              "custo": 0.002174193135307637,
+              "custo": 0.0021741931353076375,
               "giro": 0.9517023940835415,
               "ew": 0.03917631051626264,
               "selic": 0.06511674335449458,
@@ -437,7 +458,7 @@
               "bruto": -0.12267268201794553,
               "liquido": -0.12435185617039735,
               "liquido_com_ir": -0.1367882360002638,
-              "custo": 0.0019139654243459539,
+              "custo": 0.0019139654243459543,
               "giro": 0.732652516313637,
               "ew": -0.1487468884801675,
               "selic": 0.13372922394345244,
@@ -469,7 +490,7 @@
               "bruto": 0.20422338164917675,
               "liquido": 0.20231206341320873,
               "liquido_com_ir": 0.20231206341320873,
-              "custo": 0.0015871791439147403,
+              "custo": 0.001587179143914741,
               "giro": 0.6608438865305668,
               "ew": 0.2520307404273625,
               "selic": 0.12743660840082338,
@@ -502,7 +523,7 @@
               "bruto": 0.0625547339670379,
               "liquido": 0.060560406697354185,
               "liquido_com_ir": 0.057408447424941,
-              "custo": 0.0018769172127612887,
+              "custo": 0.0018769172127612885,
               "giro": 0.7333333333330099,
               "ew": -0.07589156652218879,
               "selic": 0.11346724575245015,
@@ -538,7 +559,7 @@
               "bruto": 0.3447287442191861,
               "liquido": 0.3423631158886118,
               "liquido_com_ir": 0.32226384916169026,
-              "custo": 0.0017591862602357195,
+              "custo": 0.00175918626023572,
               "giro": 0.795325264273009,
               "ew": 0.3410817301465795,
               "selic": 0.14691886481931848,
@@ -650,7 +671,7 @@
             "media_sem_melhor_safra": -0.08965258304395214
           },
           "giro_medio": 0.76075169640874,
-          "custo_medio": 0.001744798050011411,
+          "custo_medio": 0.0017447980500114113,
           "safras_inviaveis_no_cap": [
             2015,
             2016,
@@ -668,6 +689,31 @@
           "safras_em_caixa": [
             2017
           ],
+          "sensibilidade_pesos_da_tela": {
+            "vs_equal_weight": {
+              "media": -0.043895144232928625,
+              "ic95": [
+                -0.09388446011986866,
+                0.013995795993548825
+              ],
+              "n_safras": 9,
+              "safras_negativas": [
+                2017,
+                2018,
+                2019,
+                2020,
+                2022,
+                2023,
+                2025
+              ],
+              "ic_cruza_zero": true,
+              "melhor_safra": 2021,
+              "media_sem_melhor_safra": -0.06461997208439908
+            },
+            "safras_com_pesos_relaxados": [
+              2017
+            ]
+          },
           "safras": [
             {
               "safra": 2015,
@@ -721,7 +767,7 @@
               "excluidos_guarda": [],
               "inviavel_no_cap": true,
               "exige_revisao": true,
-              "veto": "POMO4 → RSUL3",
+              "veto": null,
               "selic_meses_pela_meta": [],
               "maiores": "caixa a Selic (sem carteira-modelo salvável)",
               "caixa": true,
@@ -793,7 +839,7 @@
               "bruto": -0.12498541022809394,
               "liquido": -0.12685098782793813,
               "liquido_com_ir": -0.132303518802935,
-              "custo": 0.002132053135628839,
+              "custo": 0.0021320531356288385,
               "giro": 0.781556321735278,
               "ew": -0.07373992027676458,
               "selic": 0.055025714912818824,
@@ -859,7 +905,7 @@
               "bruto": 0.1638126689203771,
               "liquido": 0.16107978909509768,
               "liquido_com_ir": 0.13176053196942195,
-              "custo": 0.002348212816599213,
+              "custo": 0.0023482128165992137,
               "giro": 0.9500000000004775,
               "ew": 0.03917631051626264,
               "selic": 0.06511674335449458,
@@ -956,7 +1002,7 @@
               "bruto": -0.0053719085780665875,
               "liquido": -0.007375003532691715,
               "liquido_com_ir": -0.007375003532691493,
-              "custo": 0.0020139135139056676,
+              "custo": 0.002013913513905667,
               "giro": 0.791666666669621,
               "ew": -0.07589156652218879,
               "selic": 0.11346724575245015,
@@ -992,7 +1038,7 @@
               "bruto": 0.29802829038651835,
               "liquido": 0.295681674516415,
               "liquido_com_ir": 0.29495607761746756,
-              "custo": 0.0018078310676915353,
+              "custo": 0.0018078310676915357,
               "giro": 0.8570297388487246,
               "ew": 0.3410817301465795,
               "selic": 0.14691886481931848,
@@ -1083,7 +1129,7 @@
             "media_sem_melhor_safra": 0.04145783260933594
           },
           "giro_medio": 0.7028690921836576,
-          "custo_medio": 0.0015618735087930037,
+          "custo_medio": 0.0015618735087930035,
           "safras_inviaveis_no_cap": [
             2015,
             2016,
@@ -1101,6 +1147,26 @@
           "safras_em_caixa": [
             2017
           ],
+          "sensibilidade_pesos_da_tela": {
+            "vs_equal_weight": {
+              "media": 0.0925902180398956,
+              "ic95": [
+                0.011122429735082809,
+                0.18750676575223824
+              ],
+              "n_safras": 9,
+              "safras_negativas": [
+                2017,
+                2018
+              ],
+              "ic_cruza_zero": false,
+              "melhor_safra": 2020,
+              "media_sem_melhor_safra": 0.05565581560477096
+            },
+            "safras_com_pesos_relaxados": [
+              2017
+            ]
+          },
           "safras": [
             {
               "safra": 2015,
@@ -1154,7 +1220,7 @@
               "excluidos_guarda": [],
               "inviavel_no_cap": true,
               "exige_revisao": true,
-              "veto": "WIZC3 → PSSA3",
+              "veto": null,
               "selic_meses_pela_meta": [],
               "maiores": "caixa a Selic (sem carteira-modelo salvável)",
               "caixa": true,
@@ -1257,7 +1323,7 @@
               "bruto": 0.9330421448336578,
               "liquido": 0.9289178726856613,
               "liquido_com_ir": 0.9275479851834774,
-              "custo": 0.0021335655609057637,
+              "custo": 0.0021335655609057633,
               "giro": 0.9150563131280656,
               "ew": 0.5408524351647683,
               "selic": 0.023531994775928933,
@@ -1292,7 +1358,7 @@
               "bruto": 0.24416915725120367,
               "liquido": 0.2415265505489037,
               "liquido_com_ir": 0.15239545527872878,
-              "custo": 0.0021239930976416584,
+              "custo": 0.002123993097641659,
               "giro": 0.9057620167137354,
               "ew": 0.03917631051626264,
               "selic": 0.06511674335449458,
@@ -1324,7 +1390,7 @@
               "bruto": -0.0721712659556351,
               "liquido": -0.07382157098050557,
               "liquido_com_ir": -0.08849299100101138,
-              "custo": 0.001778674193110041,
+              "custo": 0.0017786741931100406,
               "giro": 0.681800498114186,
               "ew": -0.1487468884801675,
               "selic": 0.13372922394345244,
@@ -1356,7 +1422,7 @@
               "bruto": 0.30126852608291954,
               "liquido": 0.2992527191681109,
               "liquido_com_ir": 0.29925271916811114,
-              "custo": 0.0015491090996233774,
+              "custo": 0.0015491090996233776,
               "giro": 0.6750443297564195,
               "ew": 0.2520307404273625,
               "selic": 0.12743660840082338,
@@ -1425,7 +1491,7 @@
               "bruto": 0.37969240539965854,
               "liquido": 0.37732623491207695,
               "liquido_com_ir": 0.3486587546634039,
-              "custo": 0.0017149985593319244,
+              "custo": 0.0017149985593319242,
               "giro": 0.7832476403247605,
               "ew": 0.3410817301465795,
               "selic": 0.14691886481931848,
@@ -1523,7 +1589,7 @@
             "media_sem_melhor_safra": -0.007099497153519652
           },
           "giro_medio": 0.7268429615049832,
-          "custo_medio": 0.001627790751975532,
+          "custo_medio": 0.0016277907519755322,
           "safras_inviaveis_no_cap": [
             2015,
             2016,
@@ -1541,6 +1607,27 @@
           "safras_em_caixa": [
             2017
           ],
+          "sensibilidade_pesos_da_tela": {
+            "vs_equal_weight": {
+              "media": 0.03601056858907394,
+              "ic95": [
+                -0.03385846305630871,
+                0.11393945224555377
+              ],
+              "n_safras": 9,
+              "safras_negativas": [
+                2017,
+                2018,
+                2023
+              ],
+              "ic_cruza_zero": true,
+              "melhor_safra": 2020,
+              "media_sem_melhor_safra": 0.012264040603853187
+            },
+            "safras_com_pesos_relaxados": [
+              2017
+            ]
+          },
           "safras": [
             {
               "safra": 2015,
@@ -1732,7 +1819,7 @@
               "bruto": 0.22252474087334118,
               "liquido": 0.21986673597399076,
               "liquido_com_ir": 0.14525132051420186,
-              "custo": 0.002174193135307637,
+              "custo": 0.0021741931353076375,
               "giro": 0.9517023940835415,
               "ew": 0.03917631051626264,
               "selic": 0.06511674335449458,
@@ -1764,7 +1851,7 @@
               "bruto": -0.12267268201794553,
               "liquido": -0.12435185617039735,
               "liquido_com_ir": -0.1367882360002638,
-              "custo": 0.0019139654243459539,
+              "custo": 0.0019139654243459543,
               "giro": 0.732652516313637,
               "ew": -0.1487468884801675,
               "selic": 0.13372922394345244,
@@ -1796,7 +1883,7 @@
               "bruto": 0.20422338164917675,
               "liquido": 0.20231206341320873,
               "liquido_com_ir": 0.20231206341320873,
-              "custo": 0.0015871791439147403,
+              "custo": 0.001587179143914741,
               "giro": 0.6608438865305668,
               "ew": 0.2520307404273625,
               "selic": 0.12743660840082338,
@@ -1829,7 +1916,7 @@
               "bruto": 0.0625547339670379,
               "liquido": 0.060560406697354185,
               "liquido_com_ir": 0.057408447424941,
-              "custo": 0.0018769172127612887,
+              "custo": 0.0018769172127612885,
               "giro": 0.7333333333330099,
               "ew": -0.07589156652218879,
               "selic": 0.11346724575245015,
@@ -1865,7 +1952,7 @@
               "bruto": 0.3447287442191861,
               "liquido": 0.3423631158886118,
               "liquido_com_ir": 0.32226384916169026,
-              "custo": 0.0017591862602357195,
+              "custo": 0.00175918626023572,
               "giro": 0.795325264273009,
               "ew": 0.3410817301465795,
               "selic": 0.14691886481931848,
@@ -1880,37 +1967,36 @@
         }
       },
       "portao_llm_medido": {
-        "pareceres": 160,
+        "pareceres": 161,
         "classificacoes": {
-          "aprovar": 74,
-          "aprovar_com_ressalvas": 86
+          "aprovar_com_ressalvas": 86,
+          "aprovar": 75
         },
         "taxa_veto": 0.0,
-        "falhas": 1,
-        "falhas_sem_dossie": 1,
+        "falhas": 0,
+        "falhas_sem_dossie": 0,
         "falhas_modelo_nao_avaliou": 0,
-        "tentativas_perdidas_nesta_rodada": 3,
+        "tentativas_perdidas_nesta_rodada": 0,
         "pareceres_na_segunda_tentativa": 55,
         "exemplos_falha": [
-          "LookupError: sem série anual até o exercício N-1",
           "TimeoutError: provedor não respondeu em 600 s"
         ],
         "modelos": {
+          "openrouter/nvidia/nemotron-3.5-super-vl:free": 36,
           "openrouter/nvidia/nemotron-3-super-120b-a12b:free": 138,
-          "gemini/gemini-3.6-flash": 3,
-          "openrouter/nvidia/nemotron-3.5-super-vl:free": 35
+          "gemini/gemini-3.6-flash": 3
         },
         "repeticoes": 16,
         "concordancia_classificacao": 0.6875,
         "concordancia_veto": 1.0,
-        "sondas": 39,
-        "sonda_acerta_empresa": 0.1026,
-        "sonda_acerta_ano": 0.4872,
-        "sonda_ano_mais_menos_1": 0.6154,
+        "sondas": 40,
+        "sonda_acerta_empresa": 0.1,
+        "sonda_acerta_ano": 0.5,
+        "sonda_ano_mais_menos_1": 0.625,
         "vetos_com_empresa_identificada": 0,
         "taxa_veto_sonda_identificou": 0.0,
         "taxa_veto_sonda_nao_identificou": 0.0,
-        "chamadas_nesta_rodada": 42
+        "chamadas_nesta_rodada": 3
       }
     },
     "Conservador (mais defensivo)": {
@@ -1928,14 +2014,14 @@
         "janela_val_anos": 2,
         "piso_qualidade": true
       },
-      "leitura": "Excesso médio de +1.2 pp por safra sobre pesos iguais, intervalo 95% [-5.7; +8.7] pp, 8 safras, 4 negativa(s). O intervalo cruza o zero: a medição NÃO distingue esta carteira de dividir igualmente entre as empresas. Sem a melhor safra (2024), a média seria -1.1 pp.",
+      "leitura": "Excesso médio de -0.3 pp por safra sobre pesos iguais, intervalo 95% [-8.3; +8.2] pp, 8 safras, 4 negativa(s). O intervalo cruza o zero: a medição NÃO distingue esta carteira de dividir igualmente entre as empresas. Sem a melhor safra (2024), a média seria -2.8 pp.",
       "variantes": {
         "sem_portao": {
           "vs_equal_weight": {
-            "media": 0.011900037034919604,
+            "media": -0.00294605594931973,
             "ic95": [
-              -0.05698404914280149,
-              0.08677253532797563
+              -0.08299370030088453,
+              0.08163250112783998
             ],
             "n_safras": 8,
             "safras_negativas": [
@@ -1946,13 +2032,13 @@
             ],
             "ic_cruza_zero": true,
             "melhor_safra": 2024,
-            "media_sem_melhor_safra": -0.01087179488453913
+            "media_sem_melhor_safra": -0.027834742317482834
           },
           "vs_equal_weight_bruto": {
-            "media": 0.013466877788216303,
+            "media": -0.0014618868844742013,
             "ic95": [
-              -0.055569544110467516,
-              0.08890867418024559
+              -0.08193213686765918,
+              0.08348584836561072
             ],
             "n_safras": 8,
             "safras_negativas": [
@@ -1963,13 +2049,13 @@
             ],
             "ic_cruza_zero": true,
             "melhor_safra": 2024,
-            "media_sem_melhor_safra": -0.009257735648262952
+            "media_sem_melhor_safra": -0.026319180988480673
           },
           "vs_equal_weight_com_ir": {
-            "media": 0.003622888637147152,
+            "media": -0.011223204347092154,
             "ic95": [
-              -0.06224747155159147,
-              0.07778550795607339
+              -0.0885274484340537,
+              0.07257929463581093
             ],
             "n_safras": 8,
             "safras_negativas": [
@@ -1980,28 +2066,30 @@
             ],
             "ic_cruza_zero": true,
             "melhor_safra": 2024,
-            "media_sem_melhor_safra": -0.020331393053421902
+            "media_sem_melhor_safra": -0.0372943404863656
           },
           "vs_selic": {
-            "media": 0.03578258912605839,
+            "media": 0.020936496141819055,
             "ic95": [
-              -0.12937130686984943,
-              0.2315738642011271
+              -0.1412102495414499,
+              0.2188300240945365
             ],
             "n_safras": 8,
             "safras_negativas": [
               2019,
-              2022
+              2022,
+              2023,
+              2025
             ],
             "ic_cruza_zero": true,
             "melhor_safra": 2020,
-            "media_sem_melhor_safra": -0.04569543272769293
+            "media_sem_melhor_safra": -0.06266239613825217
           },
           "vs_ibovespa": {
-            "media": -0.01085415946821311,
+            "media": -0.025700252452452443,
             "ic95": [
-              -0.09232063862026468,
-              0.0726113475652258
+              -0.12620596762899552,
+              0.07137158929136271
             ],
             "n_safras": 8,
             "safras_negativas": [
@@ -2012,10 +2100,10 @@
             ],
             "ic_cruza_zero": true,
             "melhor_safra": 2019,
-            "media_sem_melhor_safra": -0.03692901211301079
+            "media_sem_melhor_safra": -0.053895975523570026
           },
-          "giro_medio": 0.6653215490288826,
-          "custo_medio": 0.0013973015179727878,
+          "giro_medio": 0.5796304961665495,
+          "custo_medio": 0.0013390356082818126,
           "safras_inviaveis_no_cap": [
             2015,
             2016,
@@ -2036,8 +2124,33 @@
             2017
           ],
           "safras_em_caixa": [
-            2018
+            2018,
+            2023,
+            2025
           ],
+          "sensibilidade_pesos_da_tela": {
+            "vs_equal_weight": {
+              "media": 0.03463681875541077,
+              "ic95": [
+                -0.03702028228874275,
+                0.10587787550815712
+              ],
+              "n_safras": 8,
+              "safras_negativas": [
+                2022,
+                2023,
+                2025
+              ],
+              "ic_cruza_zero": true,
+              "melhor_safra": 2024,
+              "media_sem_melhor_safra": 0.015113098510307945
+            },
+            "safras_com_pesos_relaxados": [
+              2018,
+              2023,
+              2025
+            ]
+          },
           "safras": [
             {
               "safra": 2015,
@@ -2267,7 +2380,7 @@
             },
             {
               "safra": 2023,
-              "n_ativos": 5,
+              "n_ativos": 0,
               "segmentos_avaliados": 40,
               "segmentos_aprovados": 5,
               "reprovacoes": {
@@ -2282,20 +2395,21 @@
               "exige_revisao": true,
               "veto": null,
               "selic_meses_pela_meta": [],
-              "maiores": "WEGE3 33%, BRAP4 17%, LEVE3 17%, UNIP6 17%, VULC3 17%",
-              "bruto": 0.16353304539242278,
-              "liquido": 0.16085872207163576,
-              "liquido_com_ir": 0.16085872207163554,
-              "custo": 0.0022984506812053517,
-              "giro": 0.8906040802891998,
+              "maiores": "caixa a Selic (sem carteira-modelo salvável)",
+              "caixa": true,
+              "bruto": 0.12743660840082338,
+              "liquido": 0.12579058277595467,
+              "liquido_com_ir": 0.12579058277595467,
+              "custo": 0.001459971773671086,
+              "giro": 0.0,
               "ew": 0.2594081578188082,
               "selic": 0.12743660840082338,
               "ibov": 0.2623616610823434,
-              "excesso_ew": -0.09854943574717245,
-              "excesso_ew_bruto": -0.09587511242638544,
-              "excesso_ew_com_ir": -0.09854943574717268,
-              "excesso_selic": 0.03342211367081238,
-              "excesso_ibov": -0.10150293901070762
+              "excesso_ew": -0.13361757504285354,
+              "excesso_ew_bruto": -0.13197154941798483,
+              "excesso_ew_com_ir": -0.13361757504285354,
+              "excesso_selic": -0.0016460256248687077,
+              "excesso_ibov": -0.1365710783063887
             },
             {
               "safra": 2024,
@@ -2316,22 +2430,22 @@
               "selic_meses_pela_meta": [],
               "maiores": "BBSE3 25%, CPFE3 25%, WEGE3 12%, BRAP4 9%, LEVE3 9%",
               "bruto": 0.12393174733203942,
-              "liquido": 0.12269543595959909,
-              "liquido_com_ir": 0.12269543595959886,
-              "custo": 0.0010999879444417216,
-              "giro": 0.5,
+              "liquido": 0.12266732411629033,
+              "liquido_com_ir": 0.12266732411629033,
+              "custo": 0.0011250000000003978,
+              "giro": 1.0,
               "ew": -0.04860742451153169,
               "selic": 0.11346724575245015,
               "ibov": 0.023888039893830815,
-              "excesso_ew": 0.17130286047113077,
+              "excesso_ew": 0.17127474862782202,
               "excesso_ew_bruto": 0.1725391718435711,
-              "excesso_ew_com_ir": 0.17130286047113055,
-              "excesso_selic": 0.009228190207148934,
-              "excesso_ibov": 0.09880739606576827
+              "excesso_ew_com_ir": 0.17127474862782202,
+              "excesso_selic": 0.00920007836384018,
+              "excesso_ibov": 0.09877928422245952
             },
             {
               "safra": 2025,
-              "n_ativos": 6,
+              "n_ativos": 0,
               "segmentos_avaliados": 40,
               "segmentos_aprovados": 7,
               "reprovacoes": {
@@ -2349,29 +2463,30 @@
                 "2026-02",
                 "2026-03"
               ],
-              "maiores": "BBSE3 25%, WEGE3 25%, BRAP4 12%, LEVE3 12%, UNIP6 12%",
-              "bruto": 0.23025254520924313,
-              "liquido": 0.22937329280832497,
-              "liquido_com_ir": 0.22937329280832497,
-              "custo": 0.0007146926087183975,
-              "giro": 0.2949243426094648,
+              "maiores": "caixa a Selic (sem carteira-modelo salvável)",
+              "caixa": true,
+              "bruto": 0.14691886481931848,
+              "liquido": 0.14570080007340014,
+              "liquido_com_ir": 0.14570080007339992,
+              "custo": 0.001062032183166185,
+              "giro": 0.0,
               "ew": 0.2991066597103295,
               "selic": 0.14691886481931848,
               "ibov": 0.4476040848389631,
-              "excesso_ew": -0.06973336690200455,
-              "excesso_ew_bruto": -0.06885411450108639,
-              "excesso_ew_com_ir": -0.06973336690200455,
-              "excesso_selic": 0.08245442798900648,
-              "excesso_ibov": -0.2182307920306381
+              "excesso_ew": -0.15340585963692938,
+              "excesso_ew_bruto": -0.15218779489101103,
+              "excesso_ew_com_ir": -0.1534058596369296,
+              "excesso_selic": -0.0012180647459183458,
+              "excesso_ibov": -0.30190328476556294
             }
           ]
         },
         "portao_veta_o_melhor": {
           "vs_equal_weight": {
-            "media": -0.11387888944435674,
+            "media": -0.10686534836596058,
             "ic95": [
-              -0.24017882406609956,
-              -0.002893673555403752
+              -0.23335711518401794,
+              0.0004069224003094067
             ],
             "n_safras": 8,
             "safras_negativas": [
@@ -2382,15 +2497,15 @@
               2023,
               2025
             ],
-            "ic_cruza_zero": false,
+            "ic_cruza_zero": true,
             "melhor_safra": 2024,
-            "media_sem_melhor_safra": -0.14708979557541255
+            "media_sem_melhor_safra": -0.13915238071546196
           },
           "vs_equal_weight_bruto": {
-            "media": -0.11254014778623014,
+            "media": -0.1056937264865612,
             "ic95": [
-              -0.23868006307920633,
-              -0.001034285989009006
+              -0.23214598391603805,
+              0.0015696751050814674
             ],
             "n_safras": 8,
             "safras_negativas": [
@@ -2401,15 +2516,15 @@
               2023,
               2025
             ],
-            "ic_cruza_zero": false,
+            "ic_cruza_zero": true,
             "melhor_safra": 2024,
-            "media_sem_melhor_safra": -0.1457957415362631
+            "media_sem_melhor_safra": -0.13797126005092714
           },
           "vs_equal_weight_com_ir": {
-            "media": -0.11387888944435674,
+            "media": -0.10686534836596058,
             "ic95": [
-              -0.24017882406609956,
-              -0.002893673555403752
+              -0.23335711518401794,
+              0.0004069224003094067
             ],
             "n_safras": 8,
             "safras_negativas": [
@@ -2420,15 +2535,15 @@
               2023,
               2025
             ],
-            "ic_cruza_zero": false,
+            "ic_cruza_zero": true,
             "melhor_safra": 2024,
-            "media_sem_melhor_safra": -0.14708979557541255
+            "media_sem_melhor_safra": -0.13915238071546196
           },
           "vs_selic": {
-            "media": -0.08999633735321796,
+            "media": -0.0829827962748218,
             "ic95": [
-              -0.20285012733730118,
-              -0.007056557805922348
+              -0.19596038149656922,
+              -0.0011463236012565336
             ],
             "n_safras": 8,
             "safras_negativas": [
@@ -2436,17 +2551,18 @@
               2020,
               2022,
               2023,
-              2024
+              2024,
+              2025
             ],
             "ic_cruza_zero": false,
             "melhor_safra": 2021,
-            "media_sem_melhor_safra": -0.10521680978367907
+            "media_sem_melhor_safra": -0.09720133426551203
           },
           "vs_ibovespa": {
-            "media": -0.13663308594748946,
+            "media": -0.1296195448690933,
             "ic95": [
-              -0.29403440553304033,
-              0.0012268573025479548
+              -0.2872898133047367,
+              0.006994203985908543
             ],
             "n_safras": 8,
             "safras_negativas": [
@@ -2458,10 +2574,10 @@
             ],
             "ic_cruza_zero": true,
             "melhor_safra": 2019,
-            "media_sem_melhor_safra": -0.1719328668572874
+            "media_sem_melhor_safra": -0.16391739133912037
           },
-          "giro_medio": 0.6111479813762657,
-          "custo_medio": 0.0013904804268590463,
+          "giro_medio": 0.4850212779937619,
+          "custo_medio": 0.0012192349938133606,
           "safras_inviaveis_no_cap": [
             2015,
             2016,
@@ -2485,8 +2601,36 @@
           ],
           "safras_em_caixa": [
             2018,
-            2020
+            2020,
+            2023,
+            2025
           ],
+          "sensibilidade_pesos_da_tela": {
+            "vs_equal_weight": {
+              "media": -0.018866722196692096,
+              "ic95": [
+                -0.08381524303119023,
+                0.05017778187025904
+              ],
+              "n_safras": 8,
+              "safras_negativas": [
+                2019,
+                2020,
+                2022,
+                2023,
+                2025
+              ],
+              "ic_cruza_zero": true,
+              "melhor_safra": 2024,
+              "media_sem_melhor_safra": -0.03854329434534797
+            },
+            "safras_com_pesos_relaxados": [
+              2018,
+              2020,
+              2023,
+              2025
+            ]
+          },
           "safras": [
             {
               "safra": 2015,
@@ -2563,7 +2707,7 @@
               "excluidos_guarda": [],
               "inviavel_no_cap": true,
               "exige_revisao": true,
-              "veto": "MGLU3 → LAME4",
+              "veto": null,
               "selic_meses_pela_meta": [],
               "maiores": "caixa a Selic (sem carteira-modelo salvável)",
               "caixa": true,
@@ -2704,7 +2848,7 @@
               "bruto": -0.3087771189048128,
               "liquido": -0.3104768744773676,
               "liquido_com_ir": -0.3104768744773676,
-              "custo": 0.0024590557098771344,
+              "custo": 0.0024590557098771336,
               "giro": 0.880170223950095,
               "ew": -0.14902663301343597,
               "selic": 0.13372922394345244,
@@ -2717,7 +2861,7 @@
             },
             {
               "safra": 2023,
-              "n_ativos": 5,
+              "n_ativos": 0,
               "segmentos_avaliados": 40,
               "segmentos_aprovados": 5,
               "reprovacoes": {
@@ -2730,22 +2874,23 @@
               "excluidos_guarda": [],
               "inviavel_no_cap": false,
               "exige_revisao": true,
-              "veto": "VULC3 → SOMA3",
+              "veto": null,
               "selic_meses_pela_meta": [],
-              "maiores": "WEGE3 33%, BRAP4 17%, LEVE3 17%, SOMA3 17%, UNIP6 17%",
-              "bruto": 0.05743638611971997,
-              "liquido": 0.05466002399130576,
-              "liquido_com_ir": 0.05466002399130576,
-              "custo": 0.002625559480322194,
-              "giro": 1.0,
+              "maiores": "caixa a Selic (sem carteira-modelo salvável)",
+              "caixa": true,
+              "bruto": 0.12743660840082338,
+              "liquido": 0.1257917992349753,
+              "liquido_com_ir": 0.1257917992349753,
+              "custo": 0.001458892813655527,
+              "giro": 0.0,
               "ew": 0.2594081578188082,
               "selic": 0.12743660840082338,
               "ibov": 0.2623616610823434,
-              "excesso_ew": -0.20474813382750245,
-              "excesso_ew_bruto": -0.20197177169908825,
-              "excesso_ew_com_ir": -0.20474813382750245,
-              "excesso_selic": -0.07277658440951762,
-              "excesso_ibov": -0.20770163709103762
+              "excesso_ew": -0.13361635858383292,
+              "excesso_ew_bruto": -0.13197154941798483,
+              "excesso_ew_com_ir": -0.13361635858383292,
+              "excesso_selic": -0.0016448091658480823,
+              "excesso_ibov": -0.13656986184736808
             },
             {
               "safra": 2024,
@@ -2766,22 +2911,22 @@
               "selic_meses_pela_meta": [],
               "maiores": "BBSE3 25%, CPFE3 25%, WEGE3 12%, BRAP4 9%, BRKM5 9%",
               "bruto": 0.07164158395246875,
-              "liquido": 0.0699900289615023,
-              "liquido_com_ir": 0.0699900289615023,
-              "custo": 0.0015411449272759773,
-              "giro": 0.6875000000001988,
+              "liquido": 0.07053645356901739,
+              "liquido_com_ir": 0.07053645356901739,
+              "custo": 0.0010312500000002984,
+              "giro": 1.0,
               "ew": -0.04860742451153169,
               "selic": 0.11346724575245015,
               "ibov": 0.023888039893830815,
-              "excesso_ew": 0.11859745347303399,
+              "excesso_ew": 0.11914387808054908,
               "excesso_ew_bruto": 0.12024900846400044,
-              "excesso_ew_com_ir": 0.11859745347303399,
-              "excesso_selic": -0.04347721679094785,
-              "excesso_ibov": 0.04610198906767149
+              "excesso_ew_com_ir": 0.11914387808054908,
+              "excesso_selic": -0.042930792183432764,
+              "excesso_ibov": 0.04664841367518657
             },
             {
               "safra": 2025,
-              "n_ativos": 6,
+              "n_ativos": 0,
               "segmentos_avaliados": 40,
               "segmentos_aprovados": 7,
               "reprovacoes": {
@@ -2794,95 +2939,102 @@
               "excluidos_guarda": [],
               "inviavel_no_cap": false,
               "exige_revisao": true,
-              "veto": "UNIP6 → BRKM5",
+              "veto": null,
               "selic_meses_pela_meta": [
                 "2026-02",
                 "2026-03"
               ],
-              "maiores": "BBSE3 25%, WEGE3 25%, BRAP4 12%, BRKM5 12%, LEVE3 12%",
-              "bruto": 0.16214771670307018,
-              "liquido": 0.16133698785034412,
-              "liquido_com_ir": 0.16133698785034412,
-              "custo": 0.0006976125677257978,
-              "giro": 0.32151362705983183,
+              "maiores": "caixa a Selic (sem carteira-modelo salvável)",
+              "caixa": true,
+              "bruto": 0.14691886481931848,
+              "liquido": 0.1457671166263288,
+              "liquido_com_ir": 0.1457671166263288,
+              "custo": 0.0010042106973026576,
+              "giro": 0.0,
               "ew": 0.2991066597103295,
               "selic": 0.14691886481931848,
               "ibov": 0.4476040848389631,
-              "excesso_ew": -0.1377696718599854,
-              "excesso_ew_bruto": -0.13695894300725933,
-              "excesso_ew_com_ir": -0.1377696718599854,
-              "excesso_selic": 0.014418123031025631,
-              "excesso_ibov": -0.28626709698861896
+              "excesso_ew": -0.15333954308400072,
+              "excesso_ew_bruto": -0.15218779489101103,
+              "excesso_ew_com_ir": -0.15333954308400072,
+              "excesso_selic": -0.0011517481929896878,
+              "excesso_ibov": -0.3018369682126343
             }
           ]
         },
         "portao_veta_o_pior": {
           "vs_equal_weight": {
-            "media": 0.09090949843915594,
+            "media": 0.05982453671356274,
             "ic95": [
-              0.009986046395798757,
-              0.18320849672622766
-            ],
-            "n_safras": 8,
-            "safras_negativas": [
-              2018,
-              2022
-            ],
-            "ic_cruza_zero": false,
-            "melhor_safra": 2020,
-            "media_sem_melhor_safra": 0.056182934722221065
-          },
-          "vs_equal_weight_bruto": {
-            "media": 0.0925302988304784,
-            "ic95": [
-              0.011340488792329101,
-              0.18499018335602524
-            ],
-            "n_safras": 8,
-            "safras_negativas": [
-              2018,
-              2022
-            ],
-            "ic_cruza_zero": false,
-            "melhor_safra": 2020,
-            "media_sem_melhor_safra": 0.05770228026336237
-          },
-          "vs_equal_weight_com_ir": {
-            "media": 0.07629554784047854,
-            "ic95": [
-              -0.0025775584881654184,
-              0.169458264834883
+              -0.041374140761234954,
+              0.16999154156356996
             ],
             "n_safras": 8,
             "safras_negativas": [
               2018,
               2022,
+              2023,
               2025
             ],
             "ic_cruza_zero": true,
             "melhor_safra": 2020,
-            "media_sem_melhor_safra": 0.03948127689516121
+            "media_sem_melhor_safra": 0.020657264178685988
+          },
+          "vs_equal_weight_bruto": {
+            "media": 0.061105883980093534,
+            "ic95": [
+              -0.04020202167598037,
+              0.17182676321169224
+            ],
+            "n_safras": 8,
+            "safras_negativas": [
+              2018,
+              2022,
+              2023,
+              2025
+            ],
+            "ic_cruza_zero": true,
+            "melhor_safra": 2020,
+            "media_sem_melhor_safra": 0.021788663291493954
+          },
+          "vs_equal_weight_com_ir": {
+            "media": 0.04916363348160755,
+            "ic95": [
+              -0.04858735441986702,
+              0.1599879870225103
+            ],
+            "n_safras": 8,
+            "safras_negativas": [
+              2018,
+              2022,
+              2023,
+              2025
+            ],
+            "ic_cruza_zero": true,
+            "melhor_safra": 2020,
+            "media_sem_melhor_safra": 0.008473374770737218
           },
           "vs_selic": {
-            "media": 0.1147920505302947,
+            "media": 0.08370708880470151,
             "ic95": [
-              -0.0665682164365903,
-              0.3436532538740621
+              -0.08878583686382005,
+              0.31864757397017146
             ],
             "n_safras": 8,
             "safras_negativas": [
               2019,
-              2022
+              2022,
+              2023
             ],
             "ic_cruza_zero": true,
             "melhor_safra": 2020,
-            "media_sem_melhor_safra": 0.014785781015259689
+            "media_sem_melhor_safra": -0.020739889528275386
           },
           "vs_ibovespa": {
-            "media": 0.0681553019360232,
+            "media": 0.037070340210430014,
             "ic95": [
-              -0.015992914867862376,
-              0.15639387536170443
+              -0.07702055291544857,
+              0.1476789550393584
             ],
             "n_safras": 8,
             "safras_negativas": [
@@ -2893,10 +3045,10 @@
             ],
             "ic_cruza_zero": true,
             "melhor_safra": 2019,
-            "media_sem_melhor_safra": 0.0429718777796178
+            "media_sem_melhor_safra": 0.0074462072360827235
           },
-          "giro_medio": 0.6643220903101031,
-          "custo_medio": 0.0013351922037710027,
+          "giro_medio": 0.5679990089610452,
+          "custo_medio": 0.0010917117707912377,
           "safras_inviaveis_no_cap": [
             2015,
             2016,
@@ -2908,8 +3060,7 @@
             2016,
             2017,
             2018,
-            2023,
-            2025
+            2023
           ],
           "safras_sem_carteira": [
             2015,
@@ -2917,8 +3068,31 @@
             2017
           ],
           "safras_em_caixa": [
-            2018
+            2018,
+            2023
           ],
+          "sensibilidade_pesos_da_tela": {
+            "vs_equal_weight": {
+              "media": 0.08694004132586589,
+              "ic95": [
+                -0.007167417280517396,
+                0.18702807918559694
+              ],
+              "n_safras": 8,
+              "safras_negativas": [
+                2022,
+                2023,
+                2025
+              ],
+              "ic_cruza_zero": true,
+              "melhor_safra": 2020,
+              "media_sem_melhor_safra": 0.05164641230703249
+            },
+            "safras_com_pesos_relaxados": [
+              2018,
+              2023
+            ]
+          },
           "safras": [
             {
               "safra": 2015,
@@ -2995,7 +3169,7 @@
               "excluidos_guarda": [],
               "inviavel_no_cap": true,
               "exige_revisao": true,
-              "veto": "ABEV3 → ninguém",
+              "veto": null,
               "selic_meses_pela_meta": [],
               "maiores": "caixa a Selic (sem carteira-modelo salvável)",
               "caixa": true,
@@ -3036,7 +3210,7 @@
               "bruto": 0.0008879056585712787,
               "liquido": -0.00019638957255918577,
               "liquido_com_ir": -0.00019638957255918577,
-              "custo": 0.0010833333333335987,
+              "custo": 0.0010833333333335985,
               "giro": 1.0,
               "ew": -0.09055364056995165,
               "selic": 0.055025714912818824,
@@ -3068,7 +3242,7 @@
               "bruto": 0.8406989162540595,
               "liquido": 0.8383679319114687,
               "liquido_com_ir": 0.8383679319114687,
-              "custo": 0.0012663582957578984,
+              "custo": 0.0012663582957578986,
               "giro": 0.7180077179018263,
               "ew": 0.5043724874537688,
               "selic": 0.023531994775928933,
@@ -3101,7 +3275,7 @@
               "bruto": 0.17823531205468918,
               "liquido": 0.1763084759499811,
               "liquido_com_ir": 0.1167784793754334,
-              "custo": 0.0016353576276271287,
+              "custo": 0.001635357627627129,
               "giro": 0.7999999999992361,
               "ew": 0.00864799871112625,
               "selic": 0.06511674335449458,
@@ -3135,7 +3309,7 @@
               "bruto": -0.1622157003879714,
               "liquido": -0.1637118053528106,
               "liquido_com_ir": -0.18946903463390452,
-              "custo": 0.0017857877803774467,
+              "custo": 0.001785787780377447,
               "giro": 0.7139672969150375,
               "ew": -0.14902663301343597,
               "selic": 0.13372922394345244,
@@ -3148,7 +3322,7 @@
             },
             {
               "safra": 2023,
-              "n_ativos": 4,
+              "n_ativos": 0,
               "segmentos_avaliados": 40,
               "segmentos_aprovados": 5,
               "reprovacoes": {
@@ -3161,22 +3335,23 @@
               "excluidos_guarda": [],
               "inviavel_no_cap": false,
               "exige_revisao": true,
-              "veto": "WEGE3 → ninguém",
+              "veto": null,
               "selic_meses_pela_meta": [],
-              "maiores": "BRAP4 25%, LEVE3 25%, UNIP6 25%, VULC3 25%",
-              "bruto": 0.26532114630429815,
-              "liquido": 0.2619462675269175,
-              "liquido_com_ir": 0.2619462675269173,
-              "custo": 0.002667211235059184,
-              "giro": 0.9011294065234254,
+              "maiores": "caixa a Selic (sem carteira-modelo salvável)",
+              "caixa": true,
+              "bruto": 0.12743660840082338,
+              "liquido": 0.1257862407449415,
+              "liquido_com_ir": 0.1257862407449415,
+              "custo": 0.0014638230154889072,
+              "giro": 0.0,
               "ew": 0.2594081578188082,
               "selic": 0.12743660840082338,
               "ibov": 0.2623616610823434,
-              "excesso_ew": 0.002538109708109304,
-              "excesso_ew_bruto": 0.005912988485489934,
-              "excesso_ew_com_ir": 0.002538109708109082,
-              "excesso_selic": 0.13450965912609414,
-              "excesso_ibov": -0.0004153935554258581
+              "excesso_ew": -0.13362191707386673,
+              "excesso_ew_bruto": -0.13197154941798483,
+              "excesso_ew_com_ir": -0.13362191707386673,
+              "excesso_selic": -0.0016503676558818903,
+              "excesso_ibov": -0.1365754203374019
             },
             {
               "safra": 2024,
@@ -3197,22 +3372,22 @@
               "selic_meses_pela_meta": [],
               "maiores": "BBSE3 25%, CMIG4 25%, WEGE3 12%, BRAP4 9%, LEVE3 9%",
               "bruto": 0.15319512196379428,
-              "liquido": 0.15175362806134052,
-              "liquido_com_ir": 0.14446982020196675,
-              "custo": 0.001249999999999204,
-              "giro": 0.6249999999996021,
+              "liquido": 0.15218607623207547,
+              "liquido_com_ir": 0.1521860762320757,
+              "custo": 0.0008750000000003979,
+              "giro": 1.0,
               "ew": -0.04860742451153169,
               "selic": 0.11346724575245015,
               "ibov": 0.023888039893830815,
-              "excesso_ew": 0.2003610525728722,
+              "excesso_ew": 0.20079350074360716,
               "excesso_ew_bruto": 0.20180254647532597,
-              "excesso_ew_com_ir": 0.19307724471349844,
-              "excesso_selic": 0.038286382308890365,
-              "excesso_ibov": 0.1278655881675097
+              "excesso_ew_com_ir": 0.20079350074360738,
+              "excesso_selic": 0.03871883047962532,
+              "excesso_ibov": 0.12829803633824466
             },
             {
               "safra": 2025,
-              "n_ativos": 6,
+              "n_ativos": 7,
               "segmentos_avaliados": 40,
               "segmentos_aprovados": 7,
               "reprovacoes": {
@@ -3224,35 +3399,35 @@
               "vagas_perdidas_piso": 1,
               "excluidos_guarda": [],
               "inviavel_no_cap": false,
-              "exige_revisao": true,
-              "veto": "BBSE3 → CXSE3",
+              "exige_revisao": false,
+              "veto": "JBSS3 → MBRF3",
               "selic_meses_pela_meta": [
                 "2026-02",
                 "2026-03"
               ],
-              "maiores": "CXSE3 25%, WEGE3 25%, BRAP4 12%, LEVE3 12%, UNIP6 12%",
-              "bruto": 0.32040650148478333,
-              "liquido": 0.3190946916773063,
-              "liquido_com_ir": 0.29475412060290296,
-              "custo": 0.000993489358013561,
-              "giro": 0.5564723011416978,
+              "maiores": "BBSE3 25%, MBRF3 25%, WEGE3 12%, BRAP4 9%, LEVE3 9%",
+              "bruto": 0.2068957205851792,
+              "liquido": 0.20614257648380185,
+              "liquido_com_ir": 0.20614257648380185,
+              "custo": 0.0006240341137445225,
+              "giro": 0.3120170568722613,
               "ew": 0.2991066597103295,
               "selic": 0.14691886481931848,
               "ibov": 0.4476040848389631,
-              "excesso_ew": 0.019988031966976794,
-              "excesso_ew_bruto": 0.02129984177445382,
-              "excesso_ew_com_ir": -0.004352539107426556,
-              "excesso_selic": 0.17217582685798782,
-              "excesso_ibov": -0.12850939316165677
+              "excesso_ew": -0.09296408322652766,
+              "excesso_ew_bruto": -0.09221093912515033,
+              "excesso_ew_com_ir": -0.09296408322652766,
+              "excesso_selic": 0.05922371166448337,
+              "excesso_ibov": -0.24146150835516123
             }
           ]
         },
         "portao_llm_medido": {
           "vs_equal_weight": {
-            "media": 0.011900037034919604,
+            "media": -0.00294605594931973,
             "ic95": [
-              -0.05698404914280149,
-              0.08677253532797563
+              -0.08299370030088453,
+              0.08163250112783998
             ],
             "n_safras": 8,
             "safras_negativas": [
@@ -3263,13 +3438,13 @@
             ],
             "ic_cruza_zero": true,
             "melhor_safra": 2024,
-            "media_sem_melhor_safra": -0.01087179488453913
+            "media_sem_melhor_safra": -0.027834742317482834
           },
           "vs_equal_weight_bruto": {
-            "media": 0.013466877788216303,
+            "media": -0.0014618868844742013,
             "ic95": [
-              -0.055569544110467516,
-              0.08890867418024559
+              -0.08193213686765918,
+              0.08348584836561072
             ],
             "n_safras": 8,
             "safras_negativas": [
@@ -3280,13 +3455,13 @@
             ],
             "ic_cruza_zero": true,
             "melhor_safra": 2024,
-            "media_sem_melhor_safra": -0.009257735648262952
+            "media_sem_melhor_safra": -0.026319180988480673
           },
           "vs_equal_weight_com_ir": {
-            "media": 0.003622888637147152,
+            "media": -0.011223204347092154,
             "ic95": [
-              -0.06224747155159147,
-              0.07778550795607339
+              -0.0885274484340537,
+              0.07257929463581093
             ],
             "n_safras": 8,
             "safras_negativas": [
@@ -3297,28 +3472,30 @@
             ],
             "ic_cruza_zero": true,
             "melhor_safra": 2024,
-            "media_sem_melhor_safra": -0.020331393053421902
+            "media_sem_melhor_safra": -0.0372943404863656
           },
           "vs_selic": {
-            "media": 0.03578258912605839,
+            "media": 0.020936496141819055,
             "ic95": [
-              -0.12937130686984943,
-              0.2315738642011271
+              -0.1412102495414499,
+              0.2188300240945365
             ],
             "n_safras": 8,
             "safras_negativas": [
               2019,
-              2022
+              2022,
+              2023,
+              2025
             ],
             "ic_cruza_zero": true,
             "melhor_safra": 2020,
-            "media_sem_melhor_safra": -0.04569543272769293
+            "media_sem_melhor_safra": -0.06266239613825217
           },
           "vs_ibovespa": {
-            "media": -0.01085415946821311,
+            "media": -0.025700252452452443,
             "ic95": [
-              -0.09232063862026468,
-              0.0726113475652258
+              -0.12620596762899552,
+              0.07137158929136271
             ],
             "n_safras": 8,
             "safras_negativas": [
@@ -3329,10 +3506,10 @@
             ],
             "ic_cruza_zero": true,
             "melhor_safra": 2019,
-            "media_sem_melhor_safra": -0.03692901211301079
+            "media_sem_melhor_safra": -0.053895975523570026
           },
-          "giro_medio": 0.6653215490288826,
-          "custo_medio": 0.0013973015179727878,
+          "giro_medio": 0.5796304961665495,
+          "custo_medio": 0.0013390356082818126,
           "safras_inviaveis_no_cap": [
             2015,
             2016,
@@ -3353,8 +3530,33 @@
             2017
           ],
           "safras_em_caixa": [
-            2018
+            2018,
+            2023,
+            2025
           ],
+          "sensibilidade_pesos_da_tela": {
+            "vs_equal_weight": {
+              "media": 0.03463681875541077,
+              "ic95": [
+                -0.03702028228874275,
+                0.10587787550815712
+              ],
+              "n_safras": 8,
+              "safras_negativas": [
+                2022,
+                2023,
+                2025
+              ],
+              "ic_cruza_zero": true,
+              "melhor_safra": 2024,
+              "media_sem_melhor_safra": 0.015113098510307945
+            },
+            "safras_com_pesos_relaxados": [
+              2018,
+              2023,
+              2025
+            ]
+          },
           "safras": [
             {
               "safra": 2015,
@@ -3584,7 +3786,7 @@
             },
             {
               "safra": 2023,
-              "n_ativos": 5,
+              "n_ativos": 0,
               "segmentos_avaliados": 40,
               "segmentos_aprovados": 5,
               "reprovacoes": {
@@ -3599,20 +3801,21 @@
               "exige_revisao": true,
               "veto": null,
               "selic_meses_pela_meta": [],
-              "maiores": "WEGE3 33%, BRAP4 17%, LEVE3 17%, UNIP6 17%, VULC3 17%",
-              "bruto": 0.16353304539242278,
-              "liquido": 0.16085872207163576,
-              "liquido_com_ir": 0.16085872207163554,
-              "custo": 0.0022984506812053517,
-              "giro": 0.8906040802891998,
+              "maiores": "caixa a Selic (sem carteira-modelo salvável)",
+              "caixa": true,
+              "bruto": 0.12743660840082338,
+              "liquido": 0.12579058277595467,
+              "liquido_com_ir": 0.12579058277595467,
+              "custo": 0.001459971773671086,
+              "giro": 0.0,
               "ew": 0.2594081578188082,
               "selic": 0.12743660840082338,
               "ibov": 0.2623616610823434,
-              "excesso_ew": -0.09854943574717245,
-              "excesso_ew_bruto": -0.09587511242638544,
-              "excesso_ew_com_ir": -0.09854943574717268,
-              "excesso_selic": 0.03342211367081238,
-              "excesso_ibov": -0.10150293901070762
+              "excesso_ew": -0.13361757504285354,
+              "excesso_ew_bruto": -0.13197154941798483,
+              "excesso_ew_com_ir": -0.13361757504285354,
+              "excesso_selic": -0.0016460256248687077,
+              "excesso_ibov": -0.1365710783063887
             },
             {
               "safra": 2024,
@@ -3633,22 +3836,22 @@
               "selic_meses_pela_meta": [],
               "maiores": "BBSE3 25%, CPFE3 25%, WEGE3 12%, BRAP4 9%, LEVE3 9%",
               "bruto": 0.12393174733203942,
-              "liquido": 0.12269543595959909,
-              "liquido_com_ir": 0.12269543595959886,
-              "custo": 0.0010999879444417216,
-              "giro": 0.5,
+              "liquido": 0.12266732411629033,
+              "liquido_com_ir": 0.12266732411629033,
+              "custo": 0.0011250000000003978,
+              "giro": 1.0,
               "ew": -0.04860742451153169,
               "selic": 0.11346724575245015,
               "ibov": 0.023888039893830815,
-              "excesso_ew": 0.17130286047113077,
+              "excesso_ew": 0.17127474862782202,
               "excesso_ew_bruto": 0.1725391718435711,
-              "excesso_ew_com_ir": 0.17130286047113055,
-              "excesso_selic": 0.009228190207148934,
-              "excesso_ibov": 0.09880739606576827
+              "excesso_ew_com_ir": 0.17127474862782202,
+              "excesso_selic": 0.00920007836384018,
+              "excesso_ibov": 0.09877928422245952
             },
             {
               "safra": 2025,
-              "n_ativos": 6,
+              "n_ativos": 0,
               "segmentos_avaliados": 40,
               "segmentos_aprovados": 7,
               "reprovacoes": {
@@ -3666,20 +3869,21 @@
                 "2026-02",
                 "2026-03"
               ],
-              "maiores": "BBSE3 25%, WEGE3 25%, BRAP4 12%, LEVE3 12%, UNIP6 12%",
-              "bruto": 0.23025254520924313,
-              "liquido": 0.22937329280832497,
-              "liquido_com_ir": 0.22937329280832497,
-              "custo": 0.0007146926087183975,
-              "giro": 0.2949243426094648,
+              "maiores": "caixa a Selic (sem carteira-modelo salvável)",
+              "caixa": true,
+              "bruto": 0.14691886481931848,
+              "liquido": 0.14570080007340014,
+              "liquido_com_ir": 0.14570080007339992,
+              "custo": 0.001062032183166185,
+              "giro": 0.0,
               "ew": 0.2991066597103295,
               "selic": 0.14691886481931848,
               "ibov": 0.4476040848389631,
-              "excesso_ew": -0.06973336690200455,
-              "excesso_ew_bruto": -0.06885411450108639,
-              "excesso_ew_com_ir": -0.06973336690200455,
-              "excesso_selic": 0.08245442798900648,
-              "excesso_ibov": -0.2182307920306381
+              "excesso_ew": -0.15340585963692938,
+              "excesso_ew_bruto": -0.15218779489101103,
+              "excesso_ew_com_ir": -0.1534058596369296,
+              "excesso_selic": -0.0012180647459183458,
+              "excesso_ibov": -0.30190328476556294
             }
           ]
         }
@@ -3694,10 +3898,9 @@
         "falhas": 0,
         "falhas_sem_dossie": 0,
         "falhas_modelo_nao_avaliou": 0,
-        "tentativas_perdidas_nesta_rodada": 3,
+        "tentativas_perdidas_nesta_rodada": 0,
         "pareceres_na_segunda_tentativa": 21,
         "exemplos_falha": [
-          "LookupError: sem série anual até o exercício N-1",
           "TimeoutError: provedor não respondeu em 600 s"
         ],
         "modelos": {
@@ -3714,7 +3917,7 @@
         "vetos_com_empresa_identificada": 0,
         "taxa_veto_sonda_identificou": 0.0,
         "taxa_veto_sonda_nao_identificou": 0.0,
-        "chamadas_nesta_rodada": 42
+        "chamadas_nesta_rodada": 3
       }
     },
     "Amplo (diagnóstico, não para decidir)": {
@@ -3829,6 +4032,24 @@
             2016
           ],
           "safras_em_caixa": [],
+          "sensibilidade_pesos_da_tela": {
+            "vs_equal_weight": {
+              "media": 0.11541875013326772,
+              "ic95": [
+                0.008330343545342666,
+                0.24975639185639284
+              ],
+              "n_safras": 9,
+              "safras_negativas": [
+                2018,
+                2023
+              ],
+              "ic_cruza_zero": false,
+              "melhor_safra": 2017,
+              "media_sem_melhor_safra": 0.06176335554343075
+            },
+            "safras_com_pesos_relaxados": []
+          },
           "safras": [
             {
               "safra": 2015,
@@ -3922,7 +4143,7 @@
               "bruto": 0.11108358764514097,
               "liquido": 0.10881339591284345,
               "liquido_com_ir": 0.04708634568737802,
-              "custo": 0.002043223171992923,
+              "custo": 0.0020432231719929228,
               "giro": 0.7777777777771714,
               "ew": 0.1507441853621791,
               "selic": 0.06500463618347241,
@@ -3956,7 +4177,7 @@
               "bruto": 0.03714803033760937,
               "liquido": 0.034908682913605826,
               "liquido_com_ir": 0.017721208693377566,
-              "custo": 0.002159139639183929,
+              "custo": 0.0021591396391839285,
               "giro": 0.7917140648003005,
               "ew": 0.026591187542079668,
               "selic": 0.055025714912818824,
@@ -3989,7 +4210,7 @@
               "bruto": 1.047199622346605,
               "liquido": 1.042966112634267,
               "liquido_com_ir": 1.0418408833380188,
-              "custo": 0.0020679515891494954,
+              "custo": 0.0020679515891494963,
               "giro": 0.77334092616439,
               "ew": 0.7410880242608644,
               "selic": 0.023531994775928933,
@@ -4026,7 +4247,7 @@
               "bruto": 0.2026686875585786,
               "liquido": 0.20030876935735242,
               "liquido_com_ir": 0.11569660927370373,
-              "custo": 0.00196223467496834,
+              "custo": 0.0019622346749683397,
               "giro": 0.7496141731564736,
               "ew": 0.042728672215281246,
               "selic": 0.06511674335449458,
@@ -4094,7 +4315,7 @@
               "bruto": 0.2336537032614295,
               "liquido": 0.23170031483641385,
               "liquido_com_ir": 0.23170031483641362,
-              "custo": 0.0015834171452260165,
+              "custo": 0.0015834171452260163,
               "giro": 0.574870752512082,
               "ew": 0.30237354287183743,
               "selic": 0.12743660840082338,
@@ -4127,7 +4348,7 @@
               "bruto": -0.05146433655764089,
               "liquido": -0.05296533647952284,
               "liquido_com_ir": -0.06036936334645748,
-              "custo": 0.0015824391003229437,
+              "custo": 0.001582439100322944,
               "giro": 0.5571428571417951,
               "ew": -0.06593447843224906,
               "selic": 0.11346724575245015,
@@ -4265,7 +4486,7 @@
             "media_sem_melhor_safra": 0.03047449306532371
           },
           "giro_medio": 0.7357098946690618,
-          "custo_medio": 0.0018516538246781246,
+          "custo_medio": 0.001851653824678125,
           "safras_inviaveis_no_cap": [
             2015,
             2016
@@ -4279,6 +4500,26 @@
             2016
           ],
           "safras_em_caixa": [],
+          "sensibilidade_pesos_da_tela": {
+            "vs_equal_weight": {
+              "media": 0.048180202858206754,
+              "ic95": [
+                -0.026663303807030945,
+                0.136568077356624
+              ],
+              "n_safras": 9,
+              "safras_negativas": [
+                2018,
+                2019,
+                2023,
+                2024
+              ],
+              "ic_cruza_zero": true,
+              "melhor_safra": 2017,
+              "media_sem_melhor_safra": 0.012816978514125246
+            },
+            "safras_com_pesos_relaxados": []
+          },
           "safras": [
             {
               "safra": 2015,
@@ -4372,7 +4613,7 @@
               "bruto": 0.06312269120422957,
               "liquido": 0.060679929296414636,
               "liquido_com_ir": 0.008362126354295452,
-              "custo": 0.0022977234217886728,
+              "custo": 0.002297723421788673,
               "giro": 0.8333333333328785,
               "ew": 0.1507441853621791,
               "selic": 0.06500463618347241,
@@ -4406,7 +4647,7 @@
               "bruto": 0.010377189993803056,
               "liquido": 0.008168286564095961,
               "liquido_com_ir": -0.003266847230133263,
-              "custo": 0.0021862166442224136,
+              "custo": 0.0021862166442224145,
               "giro": 0.7917349415298454,
               "ew": 0.026591187542079668,
               "selic": 0.055025714912818824,
@@ -4439,7 +4680,7 @@
               "bruto": 0.8567589653955006,
               "liquido": 0.8528122203428914,
               "liquido_com_ir": 0.8528122203428914,
-              "custo": 0.0021256097997450823,
+              "custo": 0.002125609799745082,
               "giro": 0.8050924907898932,
               "ew": 0.7410880242608644,
               "selic": 0.023531994775928933,
@@ -4476,7 +4717,7 @@
               "bruto": 0.1799751323625202,
               "liquido": 0.17776203184429185,
               "liquido_com_ir": 0.10552896686036317,
-              "custo": 0.0018755484395652183,
+              "custo": 0.0018755484395652187,
               "giro": 0.7338109299608271,
               "ew": 0.042728672215281246,
               "selic": 0.06511674335449458,
@@ -4577,7 +4818,7 @@
               "bruto": -0.08162158320758563,
               "liquido": -0.08311606055100984,
               "liquido_com_ir": -0.08761024532358519,
-              "custo": 0.0016273001587339341,
+              "custo": 0.0016273001587339335,
               "giro": 0.5735294117638805,
               "ew": -0.06593447843224906,
               "selic": 0.11346724575245015,
@@ -4717,6 +4958,24 @@
             2016
           ],
           "safras_em_caixa": [],
+          "sensibilidade_pesos_da_tela": {
+            "vs_equal_weight": {
+              "media": 0.15238187779260043,
+              "ic95": [
+                0.03507567206109303,
+                0.30196873298804944
+              ],
+              "n_safras": 9,
+              "safras_negativas": [
+                2018,
+                2023
+              ],
+              "ic_cruza_zero": false,
+              "melhor_safra": 2017,
+              "media_sem_melhor_safra": 0.0927109012161501
+            },
+            "safras_com_pesos_relaxados": []
+          },
           "safras": [
             {
               "safra": 2015,
@@ -4950,7 +5209,7 @@
               "bruto": -0.11376573523875622,
               "liquido": -0.11529171079138212,
               "liquido_com_ir": -0.13389623055373467,
-              "custo": 0.0017218647634179138,
+              "custo": 0.0017218647634179144,
               "giro": 0.6357970970186604,
               "ew": -0.16669147613091023,
               "selic": 0.13372922394345244,
@@ -4982,7 +5241,7 @@
               "bruto": 0.2675358147663951,
               "liquido": 0.2654866836932086,
               "liquido_com_ir": 0.2654866836932086,
-              "custo": 0.001616625778392081,
+              "custo": 0.0016166257783920802,
               "giro": 0.5853201851282065,
               "ew": 0.30237354287183743,
               "selic": 0.12743660840082338,
@@ -5015,7 +5274,7 @@
               "bruto": -0.03537983273739326,
               "liquido": -0.036910036897688236,
               "liquido_com_ir": -0.05154170919835199,
-              "custo": 0.0015863281861888986,
+              "custo": 0.0015863281861888982,
               "giro": 0.5582487215987529,
               "ew": -0.06593447843224906,
               "selic": 0.11346724575245015,
@@ -5159,6 +5418,24 @@
             2016
           ],
           "safras_em_caixa": [],
+          "sensibilidade_pesos_da_tela": {
+            "vs_equal_weight": {
+              "media": 0.12203657987396246,
+              "ic95": [
+                0.00876278575575027,
+                0.2612530004549335
+              ],
+              "n_safras": 9,
+              "safras_negativas": [
+                2018,
+                2023
+              ],
+              "ic_cruza_zero": false,
+              "melhor_safra": 2017,
+              "media_sem_melhor_safra": 0.06920841400171233
+            },
+            "safras_com_pesos_relaxados": []
+          },
           "safras": [
             {
               "safra": 2015,
@@ -5252,7 +5529,7 @@
               "bruto": 0.11108358764514097,
               "liquido": 0.10881339591284345,
               "liquido_com_ir": 0.04708634568737802,
-              "custo": 0.002043223171992923,
+              "custo": 0.0020432231719929228,
               "giro": 0.7777777777771714,
               "ew": 0.1507441853621791,
               "selic": 0.06500463618347241,
@@ -5286,7 +5563,7 @@
               "bruto": 0.03714803033760937,
               "liquido": 0.034908682913605826,
               "liquido_com_ir": 0.017721208693377566,
-              "custo": 0.002159139639183929,
+              "custo": 0.0021591396391839285,
               "giro": 0.7917140648003005,
               "ew": 0.026591187542079668,
               "selic": 0.055025714912818824,
@@ -5319,7 +5596,7 @@
               "bruto": 1.106878633140363,
               "liquido": 1.102566945054995,
               "liquido_com_ir": 1.1023243792434663,
-              "custo": 0.0020464814714748593,
+              "custo": 0.0020464814714748598,
               "giro": 0.7685996792108006,
               "ew": 0.7410880242608644,
               "selic": 0.023531994775928933,
@@ -5356,7 +5633,7 @@
               "bruto": 0.2026686875585786,
               "liquido": 0.20026840460287754,
               "liquido_com_ir": 0.11437391481904968,
-              "custo": 0.0019957973301636903,
+              "custo": 0.0019957973301636895,
               "giro": 0.7620126901138778,
               "ew": 0.042728672215281246,
               "selic": 0.06511674335449458,
@@ -5392,7 +5669,7 @@
               "bruto": -0.13768350210171557,
               "liquido": -0.1391057802805603,
               "liquido_com_ir": -0.1544812924601665,
-              "custo": 0.0016493690916401364,
+              "custo": 0.0016493690916401362,
               "giro": 0.6121463970304336,
               "ew": -0.16669147613091023,
               "selic": 0.13372922394345244,
@@ -5424,7 +5701,7 @@
               "bruto": 0.2336537032614295,
               "liquido": 0.23170031483641362,
               "liquido_com_ir": 0.23170031483641407,
-              "custo": 0.0015834171452260163,
+              "custo": 0.0015834171452260165,
               "giro": 0.5748707525120819,
               "ew": 0.30237354287183743,
               "selic": 0.12743660840082338,
@@ -5457,7 +5734,7 @@
               "bruto": -0.05146433655764089,
               "liquido": -0.05296533647952273,
               "liquido_com_ir": -0.0608425974542367,
-              "custo": 0.0015824391003229437,
+              "custo": 0.0015824391003229432,
               "giro": 0.5571428571417951,
               "ew": -0.06593447843224906,
               "selic": 0.11346724575245015,
@@ -5493,7 +5770,7 @@
               "bruto": 0.3143755043125164,
               "liquido": 0.3120658227595652,
               "liquido_com_ir": 0.31153630425548395,
-              "custo": 0.0017572463465523698,
+              "custo": 0.0017572463465523693,
               "giro": 0.6410546946027857,
               "ew": 0.21368547961743634,
               "selic": 0.14691886481931848,
@@ -5508,38 +5785,38 @@
         }
       },
       "portao_llm_medido": {
-        "pareceres": 389,
+        "pareceres": 391,
         "classificacoes": {
           "aprovar": 179,
-          "aprovar_com_ressalvas": 209,
+          "aprovar_com_ressalvas": 211,
           "vetar": 1
         },
         "taxa_veto": 0.0026,
-        "falhas": 2,
-        "falhas_sem_dossie": 2,
+        "falhas": 0,
+        "falhas_sem_dossie": 0,
         "falhas_modelo_nao_avaliou": 0,
-        "tentativas_perdidas_nesta_rodada": 9,
+        "tentativas_perdidas_nesta_rodada": 0,
         "pareceres_na_segunda_tentativa": 40,
         "exemplos_falha": [
-          "LookupError: sem série anual até o exercício N-1",
-          "TimeoutError: provedor não respondeu em 600 s"
+          "TimeoutError: provedor não respondeu em 600 s",
+          "ValueError: resposta vazia do provedor"
         ],
         "modelos": {
           "openrouter/nvidia/nemotron-3-super-120b-a12b:free": 377,
-          "gemini/gemini-3.6-flash": 2,
-          "openrouter/nvidia/nemotron-3.5-super-vl:free": 51
+          "openrouter/nvidia/nemotron-3.5-super-vl:free": 53,
+          "gemini/gemini-3.6-flash": 2
         },
         "repeticoes": 41,
         "concordancia_classificacao": 0.4878,
         "concordancia_veto": 0.9756,
-        "sondas": 106,
-        "sonda_acerta_empresa": 0.1415,
-        "sonda_acerta_ano": 0.4623,
-        "sonda_ano_mais_menos_1": 0.6226,
+        "sondas": 107,
+        "sonda_acerta_empresa": 0.1402,
+        "sonda_acerta_ano": 0.4579,
+        "sonda_ano_mais_menos_1": 0.6168,
         "vetos_com_empresa_identificada": 0,
         "taxa_veto_sonda_identificou": 0.0,
         "taxa_veto_sonda_nao_identificou": 0.0,
-        "chamadas_nesta_rodada": 94
+        "chamadas_nesta_rodada": 7
       }
     }
   }
