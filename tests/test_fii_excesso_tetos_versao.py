@@ -2,7 +2,8 @@
 
 - FII-02: o selo "validado" aparecia sem o IC do excesso sobre o IFIX, que no
   run 90 (v6.10.0) vai de −0,127 a +0,380 p.p./mês. O piso no limite inferior
-  é AVISO, não bloqueio — o portão não muda e o run 90 continua aprovado.
+  é AVISO, não bloqueio — o run 90 continua aprovado. (Desde 19/11/2026 o
+  portão exige média > 0; o piso do IC segue aviso.)
 - FII-03: 4 dos 6 tetos de look-through ficavam inativos em silêncio por
   cobertura abaixo de 80%; e o teto `max_manager` usa o CNPJ do ADMINISTRADOR.
 - FII-07: a tela dizia "v6.7" com a metodologia em 6.10.0 e o modelo
@@ -97,12 +98,12 @@ def test_card_do_protocolo_com_excesso_significativo_continua_verde():
 
 
 def test_piso_e_aviso_nao_bloqueio():
-    """O portão de validação não ganhou o piso: o run 90 segue aprovado e a
-    vitrine de FIIs (destravada no PR #486) segue publicando."""
+    """O piso do IC não entrou no portão: o run 90 (média +0,136, IC cruzando
+    o zero) segue aprovado. Desde 19/11/2026 o portão exige média > 0, e isso
+    mora em `bloqueio_por_excesso` -- ver tests/test_fii_portao_exige_ganhar_ifix.py."""
     fonte = (_RAIZ / "core" / "fii_validation.py").read_text(encoding="utf-8")
-    corpo = fonte.split("def validate_methodology", 1)[1]
+    corpo = fonte.split("def validate_methodology", 1)[1].split("\ndef ", 1)[0]
     assert "PISO_IC_EXCESSO" not in corpo
-    assert "leitura_do_excesso" not in corpo
 
 
 def test_metadado_do_cabecalho_resume_o_ic():

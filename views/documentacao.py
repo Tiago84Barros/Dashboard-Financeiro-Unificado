@@ -1313,14 +1313,16 @@ FLOW_SELECAO_FIIS = FlowSpec(
             "carteira -- entra na conta como caixa a Selic, a mesma regra da Empresas "
             "B3, e o desempenho desses meses aparece em bloco separado; o rascunho "
             "medido com os próprios pesos vira sensibilidade. O selo "
-            "\"Aprovado\" atesta o protocolo, não o "
-            "desempenho: ao lado dele a tela diz de que lado do zero está o excesso "
-            "sobre o IFIX, e um intervalo inteiro abaixo de zero sai em vermelho "
-            "como \"perde do IFIX\".",
+            "\"Aprovado\" exige o protocolo íntegro E que a carteira tenha ganhado "
+            "do IFIX na média do walk-forward, líquida de custos: empatar ou perder "
+            "reprova. Ganhar com significância não é exigido -- ao lado do selo a "
+            "tela mostra o intervalo de 95% do excesso e marca \"não "
+            "significativo\" quando ele cruza o zero.",
             (
                 "Safras reconstruídas com dado da época",
                 "Mínimo metodológico de períodos para valer",
                 "Snapshots verificados e contados na tela",
+                "Excesso médio sobre o IFIX acima de zero para aprovar",
             ),
             "Sem point-in-time, o backtest lê o futuro e aprova qualquer regra. Mudar a "
             "versão de metodologia sem reconstruir a safra desliga o backtest em silêncio.",
@@ -1328,8 +1330,9 @@ FLOW_SELECAO_FIIS = FlowSpec(
         "gate_fii": _node(
             "gate_fii", "Portão de publicação", "Validação",
             "O app só chama o resultado de Carteira-Modelo se passar no portão: cobertura "
-            "mínima, confiança mediana e validação PIT em dia. Senão, sai como Lista de "
-            "Diligência, com os motivos listados na tela. Salvar continua possível: "
+            "mínima, confiança mediana e validação PIT aprovada para a versão corrente "
+            "-- e a validação só aprova a regra que ganhou do IFIX na média. Senão, sai "
+            "como Lista de Diligência, com os motivos listados na tela. Salvar continua possível: "
             "você marca que entendeu os motivos e a carteira fica gravada como salva "
             "sem aprovação da metodologia.",
             (

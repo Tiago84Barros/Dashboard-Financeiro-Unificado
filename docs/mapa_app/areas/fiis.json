@@ -221,7 +221,7 @@
         {
           "nome": "Validação point-in-time da metodologia",
           "resumo": "Situação e números do teste histórico",
-          "explicacao": "Cartões com a situação do teste (aprovada, bloqueada ou não executada), número de períodos, dados verificados e a faixa provável do ganho sobre o IFIX. Abaixo, aviso de validação bloqueada ou aprovada, lembrando quando o ganho não é estatisticamente confiável.",
+          "explicacao": "Cartões com a situação do teste (aprovada, bloqueada ou não executada), número de períodos, dados verificados e a faixa provável do ganho sobre o IFIX. Abaixo, aviso de validação bloqueada ou aprovada. Só aprova o método que ganhou do IFIX na média, depois de custos; quando o ganho não é estatisticamente confiável, a tela avisa.",
           "so_admin": false,
           "fonte": "views/fiis.py:2753"
         },

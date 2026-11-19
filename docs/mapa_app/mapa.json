@@ -1,7 +1,7 @@
 {
   "nome": "Dashboard Financeiro Unificado",
   "explicacao": "Junta num lugar só suas contas do dia a dia, seus investimentos e a análise de empresas do Brasil e dos EUA. Abaixo estão as 8 telas do menu lateral e, por último, o que funciona por trás delas.",
-  "data_mapa": "18/11/2026",
+  "data_mapa": "19/11/2026",
   "filhos": [
     {
       "nome": "Dashboard Geral",
@@ -2686,7 +2686,7 @@
             {
               "nome": "Validação point-in-time da metodologia",
               "resumo": "Situação e números do teste histórico",
-              "explicacao": "Cartões com a situação do teste (aprovada, bloqueada ou não executada), número de períodos, dados verificados e a faixa provável do ganho sobre o IFIX. Abaixo, aviso de validação bloqueada ou aprovada, lembrando quando o ganho não é estatisticamente confiável.",
+              "explicacao": "Cartões com a situação do teste (aprovada, bloqueada ou não executada), número de períodos, dados verificados e a faixa provável do ganho sobre o IFIX. Abaixo, aviso de validação bloqueada ou aprovada. Só aprova o método que ganhou do IFIX na média, depois de custos; quando o ganho não é estatisticamente confiável, a tela avisa.",
               "so_admin": false
             },
             {
