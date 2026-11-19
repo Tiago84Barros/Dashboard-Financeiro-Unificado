@@ -49,6 +49,8 @@ def main() -> int:
         "curvas_por_padrao": metrics.get("curvas_por_padrao"),
         "curvas_por_publicacao": metrics.get("curvas_por_publicacao"),
         "publication_refused_periods": metrics.get("publication_refused_periods"),
+        "cash_periods": metrics.get("cash_periods"),
+        "sensibilidade_rascunho": metrics.get("sensibilidade_rascunho"),
         "blockers": result.get("blockers") or [],
     }
     print(json.dumps(summary, ensure_ascii=False, sort_keys=True))

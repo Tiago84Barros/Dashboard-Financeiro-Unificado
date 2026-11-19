@@ -240,9 +240,9 @@
           "fonte": "views/fiis.py:2650"
         },
         {
-          "nome": "Carteira publicável × rascunho não publicável",
-          "resumo": "Meses com e sem publicação, lado a lado",
-          "explicacao": "Só aparece quando houve mês em que a carteira foi montada e a publicação foi recusada. O teste histórico mede também esses meses, porque a tela mostrou a carteira como rascunho, e este bloco separa o desempenho deles do das carteiras publicáveis.",
+          "nome": "Carteira publicável × caixa a Selic",
+          "resumo": "Meses com e sem carteira publicável, lado a lado",
+          "explicacao": "Só aparece quando houve mês sem carteira publicável: a publicação foi recusada (a tela mostra o rascunho, mas não deixa publicá-lo) ou o otimizador não montou carteira. O teste histórico conta esses meses como caixa a Selic, a mesma regra da Empresas B3, e este bloco separa o desempenho deles do das carteiras publicáveis. O rascunho medido com os próprios pesos fica numa sensibilidade à parte. Medições gravadas antes de 18/11/2026 ainda mostram o rascunho medido.",
           "so_admin": false,
           "fonte": "views/fiis.py:2847"
         },

@@ -388,9 +388,65 @@ def test_caixa_em_sequencia_nao_paga_nada():
     assert all(o["custo_pct"] == 0.0 for o in out)
 
 
-def _linha(safra, pesos, inviavel=False, mensuravel=True, selic=0.1):
+def _linha(safra, pesos, inviavel=False, mensuravel=True, selic=0.1, revisao=None):
     return {"safra": safra, "pesos": pesos, "retornos": {tk: 0.0 for tk in pesos},
-            "inviavel_no_cap": inviavel, "mensuravel": mensuravel, "selic": selic}
+            "inviavel_no_cap": inviavel,
+            "exige_revisao": inviavel if revisao is None else revisao,
+            "mensuravel": mensuravel, "selic": selic}
+
+
+def _carteira_de_tetos_que_nao_fecham():
+    # Três setores com teto de 20% cada não somam 100%: há ativos para o cap,
+    # mas os tetos não fecham -- a rota relaxada sem `inviavel`.
+    itens = [(f"S{i}", [f"T{i}", f"U{i}"], {f"T{i}": 0.5, f"U{i}": 0.5})
+             for i in range(3)]
+    return oos.montar_carteira(itens, cap=0.5, teto_setor=0.2, teto_ciclico=1.0)
+
+
+def test_tetos_que_nao_fecham_nao_dao_carteira_salvavel():
+    """Unificação 2.6.0: a tela desliga o salvar nos DOIS casos relaxados
+    (``disabled=(not _portfolio_viavel) or _rota_relaxada``); a medição
+    converte os dois em caixa, não só o inviável no cap."""
+    cart = _carteira_de_tetos_que_nao_fecham()
+    assert cart["pesos"] and not cart["inviavel"] and cart["exige_revisao"]
+    assert not oos.carteira_salvavel(cart["pesos"], inviavel=False, exige_revisao=True)
+    assert not oos.carteira_salvavel(cart["pesos"], inviavel=True, exige_revisao=True)
+    assert not oos.carteira_salvavel({}, inviavel=False, exige_revisao=False)
+    assert oos.carteira_salvavel(cart["pesos"], inviavel=False, exige_revisao=False)
+    assert oos.rendimento_contado(cart, 0.30, 0.10) == pytest.approx(0.10)
+    assert oos.rendimento_contado(cart, 0.30, None) == pytest.approx(0.30)
+
+
+def test_banda_e_cadeia_leem_a_mesma_regra_de_salvavel():
+    """`rendimento_contado` (banda do portão) e `itens_da_cadeia` (manchete)
+    convertem as mesmas safras em caixa -- a regra é uma função só."""
+    casos = [({"A3": 1.0}, False, False), ({"A3": 1.0}, True, True),
+             ({"A3": 1.0}, False, True), ({}, False, False)]
+    for pesos, inviavel, revisao in casos:
+        cart = {"pesos": pesos, "inviavel": inviavel, "exige_revisao": revisao}
+        na_banda = oos.rendimento_contado(cart, 0.5, 0.1) == pytest.approx(0.1)
+        item = oos.itens_da_cadeia(
+            [_linha(2017, {"Z3": 1.0}),
+             _linha(2018, pesos, inviavel=inviavel, revisao=revisao)])[1]
+        assert ("rendimento_caixa" in item) == na_banda, (pesos, inviavel, revisao)
+
+
+def test_safra_de_tetos_vira_caixa_e_pesos_da_tela_vao_a_sensibilidade():
+    linhas = [_linha(2018, {"AAAA3": 0.5, "BBBB3": 0.5}),
+              {**_linha(2019, {"AAAA3": 0.6, "BBBB3": 0.4}, revisao=True),
+               "retornos": {"AAAA3": 0.9, "BBBB3": 0.9}},
+              _linha(2020, {"AAAA3": 1.0}, inviavel=True),
+              _linha(2021, {})]
+    manchete = oos.simular_custos(oos.itens_da_cadeia(linhas), CFG)
+    assert [bool(c.get("caixa")) for c in manchete] == [False, True, True, True]
+    assert manchete[1]["bruto"] == pytest.approx(0.1)
+
+    tela = oos.simular_custos(oos.itens_da_cadeia(linhas, pesos_da_tela=True), CFG)
+    # Os pesos relaxados entram medidos; só a safra sem pesos fica em caixa.
+    assert [bool(c.get("caixa")) for c in tela] == [False, False, False, True]
+    assert tela[1]["bruto"] == pytest.approx(0.9)
+    # As safras salváveis rendem o mesmo nas duas cadeias.
+    assert tela[0]["liquido"] == pytest.approx(manchete[0]["liquido"])
 
 
 def test_itens_da_cadeia_caixa_so_depois_do_aquecimento():
