@@ -22,6 +22,7 @@ import core.b3_troca_codigo as _troca
 import core.b3_universo_pit as _upit
 import core.data_reconciliacao as _recon
 import core.market_read as _mr
+import views.portfolio_b3_nota_fatores as _nota_fatores
 from core.b3_evidence import sinal_significante, teste_t_unilateral
 from core.b3_methodology import (
     MODEL_SCHEMA_VERSION,
@@ -93,7 +94,6 @@ from views.empresas_b3 import (
     _yf_multiplos_dividendos,
     _yf_trailing12m_divs,
 )
-import views.portfolio_b3_nota_fatores as _nota_fatores
 from views.portfolio_b3_safras import render_safras
 
 logger = logging.getLogger(__name__)
