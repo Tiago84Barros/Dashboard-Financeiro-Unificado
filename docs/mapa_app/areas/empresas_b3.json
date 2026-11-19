@@ -467,16 +467,16 @@
             {
               "nome": "Desempenho safra a safra",
               "resumo": "Resultado de cada carteira anual passada",
-              "explicacao": "Cartões, tabela e gráfico de barras com o resultado da carteira de cada ano contra a Selic e contra as ações em partes iguais, já descontando custos e imposto.",
+              "explicacao": "Cartões, tabela e gráfico de barras com o resultado da carteira de cada ano contra a Selic e contra as ações em partes iguais, já descontando custos e imposto. Abaixo do gráfico, três cartões mostram quanto R$ 1 teria virado reaplicado a cada abril em todas essas safras, na carteira, nas ações em partes iguais e na Selic, com a taxa ao ano. É o resultado do período, não a prova: a prova é o teste ano a ano.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4998 -> views/portfolio_b3_safras.py:264",
+              "fonte": "views/portfolio_b3.py:4998 -> views/portfolio_b3_safras.py:314",
               "filhos": [
                 {
                   "nome": "O que esperar da safra vigente",
                   "resumo": "Expectativa e fragilidade da carteira atual",
                   "explicacao": "Quatro cartões: se a nota ordena bem as empresas, se a carteira tende a superar a Selic e o mercado, e quão frágil é essa conclusão.",
                   "so_admin": false,
-                  "fonte": "views/portfolio_b3_safras.py:344 -> :765",
+                  "fonte": "views/portfolio_b3_safras.py:402 -> :847",
                   "filhos": []
                 }
               ]
@@ -486,9 +486,9 @@
         {
           "nome": "Carteira ampla: nota + fatores (alternativa medida)",
           "resumo": "Tira os 30% piores e divide igual no resto",
-          "explicacao": "Outra carteira, mais ampla, feita com a mesma nota. Junta a nota com três dados de mercado (momento, baixa volatilidade e ROE), tira os 30% de pior resultado e divide o dinheiro em partes iguais entre os que ficam. É refeita uma vez por ano, em abril. Três cartões mostram quanto ela rendeu a mais que dividir igual entre todas as empresas nos anos passados, ao lado da nota sozinha e da carteira concentrada. A lista de hoje aparece depois de rodar a aba; entre janeiro e março ela é uma prévia.",
+          "explicacao": "Outra carteira, mais ampla, feita com a mesma nota. Junta a nota com três dados de mercado (momento, baixa volatilidade e ROE), tira os 30% de pior resultado e divide o dinheiro em partes iguais entre os que ficam. É refeita uma vez por ano, em abril. Três cartões mostram quanto ela rendeu a mais que dividir igual entre todas as empresas nos anos passados, ao lado da nota sozinha e da carteira concentrada. Outros três mostram quanto R$ 1 teria virado reaplicado a cada abril nesses anos (nota + fatores, a nota sozinha e partes iguais), com a taxa ao ano: é o resultado do período, não a prova. A lista de hoje aparece depois de rodar a aba; entre janeiro e março ela é uma prévia.",
           "so_admin": false,
-          "fonte": "views/portfolio_b3.py:5197 -> views/portfolio_b3_nota_fatores.py:123",
+          "fonte": "views/portfolio_b3.py:5197 -> views/portfolio_b3_nota_fatores.py:173",
           "filhos": []
         },
         {

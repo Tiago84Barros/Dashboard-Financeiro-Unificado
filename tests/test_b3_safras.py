@@ -1332,3 +1332,55 @@ def test_d13_oos_usa_a_mesma_janela_da_tabela():
     assert por_ticker["AAAA3"] == pytest.approx(out["retorno_estrategia"])
     assert por_ticker["AAAA3"] == pytest.approx(0.5)
     assert oos.retorno_benchmark(df["BBBB3"], df, 2024) == pytest.approx(0.5)
+
+
+# ── Acumulado das safras (R$ 1 encadeado): resultado, não prova ──
+
+def test_acumulado_usa_so_safras_com_todas_as_series():
+    from core.b3_safras import acumulado_das_safras
+    acum = acumulado_das_safras({
+        "a": {2017: 0.10, 2018: 0.20, 2019: -0.10, 2020: 0.05},
+        "b": {2017: 0.05, 2018: None, 2019: 0.00, 2020: float("nan")},
+    })
+    assert acum["safras"] == [2017, 2019] and acum["n"] == 2
+    assert acum["pulados"] == [2018] and acum["fora"] == [2020]
+    a = acum["series"]["a"]
+    assert a["valor_final"] == pytest.approx(1.10 * 0.90)
+    assert a["anual"] == pytest.approx((1.10 * 0.90) ** 0.5 - 1)
+    assert acum["series"]["b"]["valor_final"] == pytest.approx(1.05)
+
+
+def test_acumulado_perda_total_nao_tem_taxa_e_vazio_nao_quebra():
+    from core.b3_safras import acumulado_das_safras
+    acum = acumulado_das_safras({"a": {2020: -1.0, 2021: 0.5}})
+    assert acum["series"]["a"]["valor_final"] == 0.0
+    assert acum["series"]["a"]["anual"] is None
+    assert acum_vazio_ok(acumulado_das_safras({}))
+    assert acum_vazio_ok(acumulado_das_safras(None))
+    sem = acumulado_das_safras({"a": {2020: 0.1}, "b": {2021: 0.1}})
+    assert sem["n"] == 0 and sem["fora"] == [2020, 2021]
+
+
+def acum_vazio_ok(acum):
+    return acum["n"] == 0 and acum["series"] == {} and acum["safras"] == []
+
+
+def test_fmt_e_legenda_do_acumulado():
+    from core.b3_safras import (
+        acumulado_das_safras,
+        fmt_ao_ano,
+        fmt_reais,
+        legenda_acumulado,
+    )
+    assert fmt_reais(3.5184) == "R$ 3,52"
+    assert fmt_reais(1234.5) == "R$ 1.234,50"
+    assert fmt_reais(None) == "—"
+    assert fmt_ao_ano(0.15) == "+15,0% ao ano"
+    assert fmt_ao_ano(-0.031) == "-3,1% ao ano"
+    assert fmt_ao_ano(None) == "—"
+    acum = acumulado_das_safras({"a": {2017: 0.1, 2018: None, 2019: 0.1, 2020: None}})
+    txt = legenda_acumulado(acum, base="tudo bruto")
+    assert "abril/2017" in txt and "março/2020" in txt and "2 safras" in txt
+    assert "2018" in txt and "2020" in txt and "tudo bruto" in txt
+    assert "não a prova" in txt
+    assert "não há o que encadear" in legenda_acumulado(acumulado_das_safras({}), base="x")

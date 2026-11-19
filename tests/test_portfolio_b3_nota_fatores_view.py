@@ -85,3 +85,29 @@ def test_grau_de_confianca_nomeia_a_medicao_gravada():
     nota = nota_medicao_nota_fatores()
     assert nf.VERSAO in nota and "oos_nota_fatores_b3.json" in nota
     assert "VENCIDA" not in nota
+
+
+def test_series_do_acumulado_da_medicao():
+    dados = {"nota_fatores": {"safras": [
+                 {"safra": 2017, "liquido": 0.10, "equal_weight": 0.08},
+                 {"safra": 2018, "liquido": -0.05, "equal_weight": 0.01}]},
+             "comparacoes": {"tirar_30_pela_nota": {"safras": [
+                 {"safra": 2017, "liquido": 0.09}, {"safra": 2018, "liquido": 0.0}]}}}
+    s = v.series_do_acumulado(dados)
+    assert s == {"nota_fatores": {2017: 0.10, 2018: -0.05},
+                 "equal_weight": {2017: 0.08, 2018: 0.01},
+                 "so_nota": {2017: 0.09, 2018: 0.0}}
+    assert v.series_do_acumulado(None) == {}
+    assert v.series_do_acumulado({}) == {}
+
+
+def test_acumulado_da_medicao_gravada():
+    """Na medição do repositório, as três séries cobrem as mesmas safras."""
+    from core.b3_safras import acumulado_das_safras
+    dados = json.loads((ROOT / "data" / "oos_nota_fatores_b3.json").read_text(encoding="utf-8"))
+    acum = acumulado_das_safras(v.series_do_acumulado(dados))
+    assert acum["safras"] == dados["safras"]
+    assert acum["pulados"] == [] and acum["fora"] == []
+    nf_ = acum["series"]["nota_fatores"]
+    esperado = float(np.prod([1 + t["liquido"] for t in dados["nota_fatores"]["safras"]]))
+    assert nf_["valor_final"] == pytest.approx(esperado)

@@ -883,6 +883,95 @@ def bootstrap_excesso(excessos: list[float], *,
             float(np.percentile(medias, 97.5)))
 
 
+def acumulado_das_safras(retornos: dict[str, dict[int, float | None]]) -> dict:
+    """R$ 1 encadeado pelas safras (abril/N a março/N+1), série a série.
+
+    ``retornos`` mapeia o nome da série para ``{safra: retorno}`` em fração.
+    Só entram as safras em que TODAS as séries têm retorno finito: R$ 1 da
+    carteira em nove anos contra R$ 1 do benchmark em oito mede tempos
+    diferentes. Safra sem retorno em alguma série fica de fora: ``pulados``
+    lista as que caem entre a primeira e a última safra usadas (ali o
+    produto pula um ano e a cadeia não é contínua) e ``fora`` as das pontas.
+    A tela tem de dizer as duas.
+
+    ``anual`` é a taxa composta, ``valor_final ** (1/n) - 1``: cada safra
+    dura doze meses. Com um retorno de -100% ou pior no caminho, a taxa não
+    existe e sai ``None``.
+
+    É resultado, não prova. O mesmo produto sai de nove anos parecidos ou de
+    um ano muito bom carregando os outros; a evidência é a distribuição ano
+    a ano (``bootstrap_excesso``, ``fragilidade_leave_one_out``).
+    """
+    vazio = {"safras": [], "n": 0, "pulados": [], "fora": [], "series": {}}
+    series = {str(k): dict(v or {}) for k, v in (retornos or {}).items()}
+    if not series:
+        return vazio
+
+    def _ok(v) -> bool:
+        try:
+            return v is not None and bool(np.isfinite(float(v)))
+        except (TypeError, ValueError):
+            return False
+
+    validas = {nome: {int(s): float(v) for s, v in r.items() if _ok(v)}
+               for nome, r in series.items()}
+    safras = sorted(set.intersection(*[set(r) for r in validas.values()]))
+    todas = sorted({int(s) for r in series.values() for s in r})
+    if not safras:
+        return {**vazio, "fora": todas}
+    pulados = [s for s in range(safras[0], safras[-1] + 1) if s not in safras]
+    fora = [s for s in todas if s not in safras and s not in pulados]
+    n = len(safras)
+    out = {}
+    for nome, r in validas.items():
+        valor = float(np.prod([1.0 + r[s] for s in safras]))
+        out[nome] = {"valor_final": valor,
+                     "anual": (valor ** (1.0 / n) - 1.0) if valor > 0 else None}
+    return {"safras": safras, "n": n, "pulados": pulados, "fora": fora,
+            "series": out}
+
+
+def fmt_reais(valor: float | None) -> str:
+    """``3.5184`` -> ``"R$ 3,52"``; ``None`` -> ``"—"``."""
+    if valor is None:
+        return "—"
+    return "R$ " + f"{valor:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
+
+
+def fmt_ao_ano(anual: float | None) -> str:
+    """``0.15`` -> ``"+15,0% ao ano"``; ``None`` -> ``"—"``."""
+    return "—" if anual is None else f"{anual * 100:+.1f}% ao ano".replace(".", ",")
+
+
+def legenda_acumulado(acum: dict, *, base: str) -> str:
+    """Frase que acompanha os cartões do acumulado (de `acumulado_das_safras`).
+
+    ``base`` diz o que cada série desconta, por exemplo "a estratégia já
+    líquida de custo e IR". A frase nomeia a janela encadeada, as safras que
+    ficaram de fora e repete que o acumulado é resultado, não prova.
+    """
+    safras = acum.get("safras") or []
+    if not safras:
+        return "Nenhuma safra tem retorno em todas as séries; não há o que encadear."
+    n = len(safras)
+    txt = (f"R$ 1 aplicado em abril/{safras[0]} e reaplicado a cada abril até "
+           f"março/{safras[-1] + 1}: {n} safra{'s' if n > 1 else ''} "
+           f"encadeada{'s' if n > 1 else ''}, {base}.")
+    pulados = acum.get("pulados") or []
+    if pulados:
+        txt += (" No meio, ficaram de fora as safras "
+                + ", ".join(str(s) for s in pulados)
+                + " (falta retorno em alguma série); a taxa ao ano conta só as "
+                  "safras encadeadas.")
+    fora = acum.get("fora") or []
+    if fora:
+        txt += (" Fora da janela: " + ", ".join(str(s) for s in fora)
+                + " (falta retorno em alguma série).")
+    txt += (" É o resultado do período, não a prova: um ano muito bom pode "
+            "carregar os outros. A prova é o teste ano a ano.")
+    return txt
+
+
 def _ic_limpos(ic_values: list[float] | None) -> list[float]:
     """Rank-ICs finitos, na ordem de entrada. Ano sem IC calculavel chega
     como `None`/`NaN` e nao e observacao."""

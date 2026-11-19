@@ -381,7 +381,9 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
             "macro_cp", "Cenário macro", "Dados",
             "Carrega Selic e demais variáveis macro para simular benchmark e ajustar o score. "
             "O desempenho safra a safra usa a Selic realizada mês a mês; a meta do ano só "
-            "cobre mês sem dado, e esses meses aparecem nomeados.",
+            "cobre mês sem dado, e esses meses aparecem nomeados. Abaixo das barras, "
+            "R$ 1 encadeado pelas safras medidas (carteira, pesos iguais e Selic, com a "
+            "taxa ao ano) mostra o resultado do período; a prova segue o teste ano a ano.",
             ("load_selic_macro()", "load_selic_mensal()", "load_macro_history()", "Taxa Selic média de fallback"),
             "A comparação contra Selic é essencial porque o investidor brasileiro sempre tem uma alternativa de renda fixa.",
         ),
@@ -504,8 +506,11 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
             "fator fica no meio (50). A carteira é refeita uma vez por ano, em abril; "
             "de janeiro a março a lista sai como prévia. Os três cards mostram a "
             "medição fora da amostra gravada (excesso líquido sobre pesos iguais, com "
-            "intervalo de 95%), a mesma régua só com a nota e a carteira concentrada; "
-            "a tela avisa quando a medição é de outra versão ou de outro perfil.",
+            "intervalo de 95%), a mesma régua só com a nota e a carteira concentrada. "
+            "Outros três cards encadeiam R$ 1 pelas mesmas safras (nota + fatores, só "
+            "a nota e pesos iguais), com a taxa composta ao ano: é resultado do "
+            "período, não prova, que continua sendo o teste ano a ano. A tela avisa "
+            "quando a medição é de outra versão ou de outro perfil.",
             ("core/b3_nota_fatores.py: a regra, a mesma da medição",
              "data/oos_nota_fatores_b3.json (scripts/medir_nota_fatores_b3.py)",
              "Sem guarda de entrada, piso de qualidade, portão de LLM nem tetos de setor",

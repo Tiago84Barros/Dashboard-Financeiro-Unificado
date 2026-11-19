@@ -2661,3 +2661,41 @@ def test_d13_tela_passa_a_selic_mensal_para_as_safras():
     assert "selic_mensal=selic_mensal" in fonte_tela
     fonte = (RAIZ / "views" / "portfolio_b3_safras.py").read_text(encoding="utf-8")
     assert "st.caption(_legenda_selic(tabela))" in fonte
+
+
+# ── Acumulado (R$ 1 encadeado) ao lado do ano a ano ──
+
+def test_series_do_acumulado_le_as_safras_medidas_em_fracao():
+    from views.portfolio_b3_safras import series_do_acumulado
+    tabela = _tabela(
+        [_linha(2020, completa=True, mensuravel=True, estrategia=10.0, arrasto=1.0),
+         _linha(2021, completa=True, mensuravel=False),
+         _linha(2022, completa=False, mensuravel=True)],
+        safras_completas=[2020, 2021],
+    )
+    series, liquida = series_do_acumulado(_resumo_safras(tabela)["completas"])
+    assert liquida is True
+    assert set(series) == {"estrategia", "equal_weight", "selic"}
+    assert series["estrategia"][2020] == pytest.approx(0.09)     # líquida
+    assert series["equal_weight"][2020] == pytest.approx(0.08)
+    assert series["estrategia"][2021] is None                    # não mensurável
+    assert 2022 not in series["selic"]                           # não medida
+
+
+def test_series_do_acumulado_quadro_antigo_cai_no_bruto():
+    from views.portfolio_b3_safras import series_do_acumulado
+    tabela = _tabela([_linha(2020, completa=True, mensuravel=True, liquido=False)],
+                     safras_completas=[2020])
+    series, liquida = series_do_acumulado(_resumo_safras(tabela)["completas"])
+    assert liquida is False and series["estrategia"][2020] == pytest.approx(0.10)
+    assert series_do_acumulado(pd.DataFrame()) == ({}, False)
+
+
+def test_render_safras_mostra_o_acumulado():
+    caminho = RAIZ / "views" / "portfolio_b3_safras.py"
+    arvore = ast.parse(caminho.read_text(encoding="utf-8"))
+    render = next(no for no in ast.walk(arvore)
+                  if isinstance(no, ast.FunctionDef) and no.name == "render_safras")
+    nomes = {no.func.id for no in ast.walk(render)
+             if isinstance(no, ast.Call) and isinstance(no.func, ast.Name)}
+    assert "_render_acumulado" in nomes

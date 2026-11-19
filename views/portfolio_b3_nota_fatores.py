@@ -7,7 +7,8 @@ entre o resto. A regra mora em `core/b3_nota_fatores.py` (a mesma que a
 medição usa); a evidência vem gravada em `data/oos_nota_fatores_b3.json` por
 `scripts/medir_nota_fatores_b3.py`.
 
-`formar_hoje`, `tabela_para_exibicao` e `avisos_da_medicao` são puras (sem
+`formar_hoje`, `tabela_para_exibicao`, `series_do_acumulado` e
+`avisos_da_medicao` são puras (sem
 streamlit, sem banco) para poderem ser testadas direto -- nesta base, teste
 via AppTest vaza atribuição de módulo (nota `apptest-vaza-atribuicao-de-modulo`).
 """
@@ -21,6 +22,12 @@ import pandas as pd
 import streamlit as st
 
 import core.b3_nota_fatores as nf
+from core.b3_safras import (
+    acumulado_das_safras,
+    fmt_ao_ano,
+    fmt_reais,
+    legenda_acumulado,
+)
 from design.componentes import card_metrica
 from design.lacunas import aviso_lacuna, detalhe_tecnico
 
@@ -77,6 +84,30 @@ def tabela_para_exibicao(tabela: pd.DataFrame) -> pd.DataFrame:
     return out.reset_index(drop=True)
 
 
+def series_do_acumulado(dados: dict | None) -> dict:
+    """Séries por safra, em fração, para `core.b3_safras.acumulado_das_safras`.
+
+    As duas carteiras saem LÍQUIDAS do custo do giro (sem IR), como o cartão
+    de excesso ao lado; pesos iguais é bruto e vem das safras da principal.
+    """
+    if not dados:
+        return {}
+    principal = (dados.get("nota_fatores") or {}).get("safras") or []
+    so_nota = (((dados.get("comparacoes") or {}).get("tirar_30_pela_nota") or {})
+               .get("safras") or [])
+
+    def _col(linhas, campo):
+        return {int(t["safra"]): t.get(campo) for t in linhas if "safra" in t}
+
+    series = {}
+    if principal:
+        series["nota_fatores"] = _col(principal, "liquido")
+        series["equal_weight"] = _col(principal, "equal_weight")
+    if so_nota:
+        series["so_nota"] = _col(so_nota, "liquido")
+    return series
+
+
 def avisos_da_medicao(dados: dict | None, motivos_vencida: list[str],
                       perfil_ativo: str | None) -> list[str]:
     """Ressalvas que a tela tem de dizer sobre a medição gravada."""
@@ -118,6 +149,25 @@ def _column_config() -> dict:
 
 def _fmt_pp(v) -> str:
     return "—" if v is None else f"{v * 100:+.1f} pp".replace(".", ",")
+
+
+def _render_acumulado(dados: dict) -> None:
+    """R$ 1 encadeado pelas safras medidas: resultado, ao lado do ano a ano."""
+    acum = acumulado_das_safras(series_do_acumulado(dados))
+    if not acum["n"]:
+        return
+    rotulos = (("nota_fatores", "R$ 1 em nota + fatores"),
+               ("so_nota", "R$ 1 só na nota, tirando 30%"),
+               ("equal_weight", "R$ 1 em pesos iguais"))
+    presentes = [(k, r) for k, r in rotulos if k in acum["series"]]
+    for col, (chave, rotulo) in zip(st.columns(len(presentes), gap="small"), presentes):
+        s = acum["series"][chave]
+        with col:
+            card_metrica(rotulo, fmt_reais(s["valor_final"]), delta=fmt_ao_ano(s["anual"]),
+                         ajuda="Quanto R$ 1 vira reaplicado a cada abril pelas safras "
+                               "medidas, e a taxa composta ao ano.")
+    st.caption(legenda_acumulado(
+        acum, base="as carteiras já líquidas do custo do giro, sem IR; pesos iguais bruto"))
 
 
 def render_nota_fatores(perfil_ativo: str | None = None) -> None:
@@ -169,6 +219,7 @@ def render_nota_fatores(perfil_ativo: str | None = None) -> None:
                          ajuda="A carteira de líderes por segmento, sem o portão de "
                                "LLM, na mesma rodada e na mesma régua.")
         st.caption(oos.leitura_honesta(resumo))
+        _render_acumulado(dados)
         st.caption(
             f"Medido em {len(dados.get('safras') or [])} safras "
             f"({html.escape(str(dados.get('janela') or '—'))}). É pouco ano e o "

@@ -5,7 +5,8 @@ Renderizacao apenas: toda a aritmetica de safra mora em core/b3_safras.py.
 views/portfolio_b3.py ja tem 4.400+ linhas e nao recebe logica nova.
 
 `_resumo_safras`, `_legenda_resumo`, `_tabela_para_exibicao`,
-`_column_config_retorno`, `_grafico_barras` e `_expectativa` sao as pecas
+`_column_config_retorno`, `_grafico_barras`, `series_do_acumulado` e
+`_expectativa` sao as pecas
 de logica deste modulo, e sao deliberadamente
 puras (sem streamlit, sem banco) para poder ser testadas direto — nesta
 base, teste via Streamlit AppTest vaza atribuicao de modulo e falha só
@@ -24,7 +25,14 @@ import plotly.express as px
 import streamlit as st
 
 from core.b3_pooled_evidence import MIN_ATIVOS_ANO
-from core.b3_safras import MIN_SAFRAS_LOO, tabela_de_safras
+from core.b3_safras import (
+    MIN_SAFRAS_LOO,
+    acumulado_das_safras,
+    fmt_ao_ano,
+    fmt_reais,
+    legenda_acumulado,
+    tabela_de_safras,
+)
 from core.glossario import leitura_rank_ic
 from design.componentes import card_metrica, explicar_rank_ic
 from design.lacunas import aviso_lacuna, detalhe_tecnico
@@ -262,6 +270,47 @@ def _grafico_barras(completas: pd.DataFrame):
     return fig
 
 
+def series_do_acumulado(completas: pd.DataFrame) -> tuple[dict, bool]:
+    """Séries em fração, por safra, para `acumulado_das_safras`.
+
+    Devolve ``(series, liquida)``: a estratégia sai da coluna líquida quando
+    a tabela a tem e da bruta só num quadro antigo -- e ``liquida`` diz qual,
+    para o rótulo do cartão. Equal-weight e Selic são brutos, como na tabela.
+    """
+    if completas is None or completas.empty:
+        return {}, False
+    liquida = "Estratégia líquida (%)" in completas.columns
+    colunas = [("Estratégia líquida (%)" if liquida else "Estratégia (%)", "estrategia"),
+               ("Equal-weight (%)", "equal_weight"), ("Selic (%)", "selic")]
+    series = {}
+    for coluna, nome in colunas:
+        if coluna in completas.columns:
+            series[nome] = {int(s): (float(v) / 100.0 if pd.notna(v) else None)
+                            for s, v in zip(completas["Safra"], completas[coluna])}
+    return series, liquida
+
+
+def _render_acumulado(completas: pd.DataFrame) -> None:
+    """Cartões do R$ 1 encadeado: resultado do período, ao lado do ano a ano."""
+    series, liquida = series_do_acumulado(completas)
+    acum = acumulado_das_safras(series)
+    if not acum["n"]:
+        return
+    rotulos = (("estrategia", "R$ 1 na estratégia (" + ("líquido" if liquida else "bruto") + ")"),
+               ("equal_weight", "R$ 1 em pesos iguais"), ("selic", "R$ 1 na Selic"))
+    presentes = [(k, r) for k, r in rotulos if k in acum["series"]]
+    cols = st.columns(len(presentes))
+    for col, (chave, rotulo) in zip(cols, presentes):
+        s = acum["series"][chave]
+        with col:
+            card_metrica(rotulo, fmt_reais(s["valor_final"]), delta=fmt_ao_ano(s["anual"]),
+                         ajuda="Quanto R$ 1 vira reaplicado a cada abril pelas safras "
+                               "medidas, e a taxa composta ao ano.")
+    base = ("a estratégia já líquida de custo de giro e IR; pesos iguais e Selic "
+            "brutos" if liquida else "todas as séries brutas")
+    st.caption(legenda_acumulado(acum, base=base))
+
+
 def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
                   selic_por_ano: dict[int, float],
                   taxa_selic_aa: float,
@@ -344,10 +393,11 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
                         config={"displayModeBar": False},
                         key="pb3_safras_barras")
         st.caption(
-            "Barras, não curva acumulada: encadear os retornos produziria um "
-            "número grande e único, que esconde quantas safras individuais "
-            "ficaram atrás do benchmark."
+            "As barras mostram cada safra sozinha: o acumulado abaixo é um "
+            "número único, que esconde quantas safras individuais ficaram "
+            "atrás do benchmark."
         )
+        _render_acumulado(completas)
 
     render_expectativa(resultados, tabela)
 
