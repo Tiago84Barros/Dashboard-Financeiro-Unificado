@@ -12,6 +12,9 @@ if str(ROOT) not in sys.path:
 
 
 def main() -> int:
+    from scripts._saida_utf8 import saida_utf8
+
+    saida_utf8()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--years", type=int, default=10)
     parser.add_argument("--top-n", type=int, default=12)

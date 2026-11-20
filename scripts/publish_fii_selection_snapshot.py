@@ -606,6 +606,9 @@ def publish(source_url: str, target_url: str, dry_run: bool = False) -> dict[str
 
 
 def main() -> int:
+    from scripts._saida_utf8 import saida_utf8
+
+    saida_utf8()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-url", default=os.getenv("WAREHOUSE_DB_URL"))
     parser.add_argument("--target-url", default=os.getenv("TARGET_DB_URL"))
