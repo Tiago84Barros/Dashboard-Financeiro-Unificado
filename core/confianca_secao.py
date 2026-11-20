@@ -160,11 +160,15 @@ def nota_medicao_acumulado_safras() -> str:
     Desde 20/11/2026 os cartoes, a tabela e o grafico (barras do ano a ano e
     linha acumulada) nao usam a reconstrucao com os segmentos aprovados hoje:
     leem as medicoes fora da amostra gravadas, em que cada safra usa a
-    carteira escolhida naquele abril. A reconstrucao so aparece no topo sem
-    medicao da lider, e segue alimentando o bloco de expectativa.
+    carteira escolhida naquele abril. Desde a mesma data o bloco "O que
+    esperar da safra vigente" tambem: as bandas saem das mesmas safras
+    medidas, e "Ordena?"/"Fragilidade" do Rank-IC de cada ano sobre o
+    universo inteiro, sem portao (data/vantagem_oos.json), so quando a versao
+    gravada e a do motor. A reconstrucao com os segmentos de hoje so aparece
+    sem essas medicoes, e a tela diz isso.
     A lider de cada segmento vem de data/oos_carteira_b3.json; nota + fatores,
     de data/oos_nota_fatores_b3.json (nota acima). Diz de quando e de que
-    versao e a primeira, e se a tela a mostra como vencida."""
+    versao e cada uma, e se a tela a mostra como vencida."""
     try:
         import core.b3_oos_carteira as oos
         from core.b3_methodology import SCORE_VERSION
@@ -174,15 +178,38 @@ def nota_medicao_acumulado_safras() -> str:
             return ("acumulado das safras: sem medicao da lider de cada segmento "
                     "(data/oos_carteira_b3.json); a linha dela fica de fora")
         motivos = oos.vencida(dados, SCORE_VERSION, PRESETS_VERSION)
-        base = (f"cartoes, tabela e grafico das safras: carteiras escolhidas "
-                f"ano a ano, lidas da medicao {dados.get('versao_medicao')} de "
+        base = (f"cartoes, tabela, grafico e bandas da expectativa das safras: "
+                f"carteiras escolhidas ano a ano, lidas da medicao "
+                f"{dados.get('versao_medicao')} de "
                 f"{str(dados.get('medido_em') or '')[:10]} "
                 "(data/oos_carteira_b3.json, sem o portao de LLM) e da medicao "
-                "de nota + fatores; o bloco de expectativa ainda refaz cada "
-                "safra so com os segmentos aprovados hoje")
+                "de nota + fatores")
+        base += "; " + _nota_ic_da_expectativa()
         return base + ("; VENCIDA: " + "; ".join(motivos) if motivos else "")
     except Exception as exc:  # noqa: BLE001
         return f"acumulado das safras: medicao nao lida ({type(exc).__name__})"
+
+
+def _nota_ic_da_expectativa() -> str:
+    """De onde sai o "Ordena?" e a "Fragilidade" do bloco de expectativa:
+    o Rank-IC anual do universo gravado em data/vantagem_oos.json, que so
+    entra com a versao do motor -- a mesma checagem da tela."""
+    try:
+        from core.vantagem_oos import carregar_medicao, versao_corrente
+        med = carregar_medicao("b3")
+        atual = versao_corrente("b3")
+        if not med or not (med.get("extras") or {}).get("ic_por_ano"):
+            return ("Rank-IC da expectativa: sem medicao em data/vantagem_oos.json; "
+                    "a tela usa a reconstrucao com os segmentos de hoje")
+        versao = med.get("versao_metodologia")
+        if versao != atual:
+            return (f"Rank-IC da expectativa: medicao {versao} difere do motor "
+                    f"{atual}; a tela usa a reconstrucao com os segmentos de hoje")
+        return (f"Rank-IC da expectativa: {med.get('n_periodos')} anos do "
+                f"universo, sem portao, medicao {versao} de "
+                f"{med.get('medido_em')} (data/vantagem_oos.json)")
+    except Exception as exc:  # noqa: BLE001
+        return f"Rank-IC da expectativa: medicao nao lida ({type(exc).__name__})"
 
 
 def _declarar_nao_medidos(comps: list["Componente"], motivo: str,

@@ -3014,7 +3014,8 @@ def test_render_safras_usa_a_tabela_medida_e_so_cai_para_a_reconstrucao_sem_ela(
     assert "tabela_m = tabela_medida(medidas)" in trecho
     assert trecho.index("_render_topo_medido(medidas, tabela_m)") < trecho.index(
         "_render_topo_reconstruido(resumo, tabela)")
-    assert "render_expectativa(resultados, tabela)" in trecho
+    assert "fontes = _carregar_fontes_expectativa(medidas)" in trecho
+    assert "render_expectativa(resultados, tabela, fontes)" in trecho
 
 
 def test_medicao_gravada_da_a_tabela_do_topo_de_2017_a_2025():
@@ -3030,3 +3031,134 @@ def test_medicao_gravada_da_a_tabela_do_topo_de_2017_a_2025():
     assert r["n_medidas"] == 9
     assert m["sem_carteira"] == [2015, 2016] and m["em_caixa"] == [2017]
     assert t["Maiores posições"].str.len().gt(0).all()
+
+
+# ── Bloco 3 pelas escolhas de cada abril e pelo Rank-IC do universo ──
+
+_VANTAGEM_B3 = {"versao_metodologia": "2.33.0", "medido_em": "2026-11-17",
+                "extras": {"ic_por_ano": {"2016": -0.02, "2017": 0.03,
+                                          "2018": 0.04, "2019": 0.12,
+                                          "2020": 0.05, "2021": 0.20}}}
+
+
+def _tabela_vazia():
+    t = pd.DataFrame(columns=["Safra"])
+    t.attrs["safras_completas"] = []
+    return t
+
+
+def test_fontes_medidas_leem_a_carteira_de_cada_abril_e_o_ic_do_universo():
+    from views.portfolio_b3_safras import (
+        fontes_medidas_da_expectativa,
+        series_medidas,
+    )
+    f = fontes_medidas_da_expectativa(series_medidas(_medicao_completa(), None),
+                                      _VANTAGEM_B3, "2.33.0")
+    assert f["excessos_medidos"] and f["safras"] == [2019, 2020, 2021]
+    # 2020: líquido 0,77 − Selic 0,024; bruto 0,772 − pesos iguais 0,54.
+    assert f["excessos"]["selic"][1] == pytest.approx(0.746)
+    assert f["excessos"]["ew_bruto"][1] == pytest.approx(0.232)
+    assert f["ics_por_ano"] == {2016: -0.02, 2017: 0.03, 2018: 0.04,
+                                2019: 0.12, 2020: 0.05, 2021: 0.20}
+    assert f["medicao_ic"]["medido_em"] == "17/11/2026" and f["avisos"] == []
+
+
+def test_ic_gravado_com_outra_versao_nao_entra_e_a_tela_diz_por_que():
+    from views.portfolio_b3_safras import (
+        fontes_medidas_da_expectativa,
+        series_medidas,
+    )
+    m = series_medidas(_medicao_completa(), None)
+    velho = fontes_medidas_da_expectativa(m, _VANTAGEM_B3, "2.34.0")
+    assert velho["ics_por_ano"] is None
+    assert "2.33.0" in velho["avisos"][0] and "2.34.0" in velho["avisos"][0]
+    sem = fontes_medidas_da_expectativa(m, None, "2.33.0")
+    assert sem["ics_por_ano"] is None and sem["avisos"]
+    vazio = fontes_medidas_da_expectativa(series_medidas(None, None), None, None)
+    assert not vazio["excessos_medidos"] and vazio["safras"] == []
+
+
+def test_expectativa_medida_nao_le_os_segmentos_de_hoje():
+    """Com as fontes medidas, nada do Bloco 3 sai dos `ic_pairs` nem da
+    tabela reconstruída: os resultados de hoje podem dizer qualquer coisa."""
+    from views.portfolio_b3_safras import (
+        _expectativa,
+        fontes_medidas_da_expectativa,
+        series_medidas,
+    )
+    f = fontes_medidas_da_expectativa(series_medidas(_medicao_completa(), None),
+                                      _VANTAGEM_B3, "2.33.0")
+    hoje = [{"ic_pairs": [(2020, float(i), -float(i)) for i in range(30)]}]
+    e = _expectativa(hoje, _tabela_vazia(), f)
+    assert e["anos"] == [2016, 2017, 2018, 2019, 2020, 2021]
+    assert e["ic_values"] == [-0.02, 0.03, 0.04, 0.12, 0.05, 0.20]
+    assert e["n_safras_banda"] == 3 and e["liquido"]
+    assert e["banda_medida"] and e["ic_medido"]
+    assert "carteira escolhida naquele abril" in e["fonte"]
+    assert "sem portão e fora da amostra, medido em 17/11/2026" in e["fonte"]
+    assert "6 ano(s) de Rank-IC do universo inteiro, não as 3 safra(s)" in (
+        e["nota_fragilidade"])
+    assert "winsorizados" not in e["ajuda_banda_ew"]
+
+
+def test_expectativa_sem_fontes_segue_na_reconstrucao_e_diz_isso():
+    from views.portfolio_b3_safras import _expectativa
+    e = _expectativa([], _tabela_vazia())
+    assert not e["banda_medida"] and not e["ic_medido"]
+    assert "segmentos que o portão aprova hoje" in e["fonte"]
+
+
+def test_bandas_medidas_reproduzem_o_ic95_gravado():
+    """A banda do Bloco 3 tem de ser a mesma que a medição gravou em
+    `vs_selic` e `vs_equal_weight` -- duas contas do mesmo número que
+    divergem é o defeito do gêmeo esquecido."""
+    from core import b3_oos_carteira as oos
+    from views.portfolio_b3_safras import (
+        _carregar_medidas,
+        _expectativa,
+        fontes_medidas_da_expectativa,
+    )
+    gravado = oos.carregar(oos.CAMINHO_MEDICAO)
+    var = gravado["perfis"]["Equilibrado (padrão)"]["variantes"]["sem_portao"]
+    f = fontes_medidas_da_expectativa(_carregar_medidas(), None, None)
+    e = _expectativa([], _tabela_vazia(), f)
+    assert list(e["banda"]) == pytest.approx(var["vs_selic"]["ic95"])
+    assert list(e["banda_ew"]) == pytest.approx(var["vs_equal_weight"]["ic95"])
+    assert e["n_safras_banda"] == var["vs_selic"]["n_safras"]
+
+
+def test_ic_gravado_do_universo_e_o_da_versao_atual():
+    from core.vantagem_oos import carregar_medicao, versao_corrente
+    from views.portfolio_b3_safras import (
+        _carregar_fontes_expectativa,
+        _carregar_medidas,
+    )
+    f = _carregar_fontes_expectativa(_carregar_medidas())
+    med = carregar_medicao("b3")
+    assert med["versao_metodologia"] == versao_corrente("b3")
+    assert f["ics_por_ano"] is not None and len(f["ics_por_ano"]) == med["n_periodos"]
+
+
+def test_tela_toda_medida_troca_o_aviso_da_reconstrucao():
+    from views.portfolio_b3_safras import (
+        _tela_toda_medida,
+        fontes_medidas_da_expectativa,
+        series_medidas,
+        tabela_medida,
+    )
+    m = series_medidas(_medicao_completa(), None)
+    tm = tabela_medida(m)
+    assert _tela_toda_medida(tm, fontes_medidas_da_expectativa(m, _VANTAGEM_B3, "2.33.0"))
+    assert not _tela_toda_medida(tm, fontes_medidas_da_expectativa(m, None, None))
+    assert not _tela_toda_medida(tabela_medida(series_medidas(None, None)),
+                                 fontes_medidas_da_expectativa(m, _VANTAGEM_B3, "2.33.0"))
+
+
+def test_grau_de_confianca_nomeia_as_fontes_da_expectativa():
+    """O Grau de Confiança mede o que a tela mostra: a nota das safras
+    nomeia a medição do Rank-IC que o Bloco 3 lê."""
+    from core.confianca_secao import nota_medicao_acumulado_safras
+    nota = nota_medicao_acumulado_safras()
+    assert "bandas da expectativa" in nota
+    assert "data/vantagem_oos.json" in nota
+    assert "ainda refaz" not in nota

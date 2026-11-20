@@ -7,8 +7,8 @@ views/portfolio_b3.py ja tem 4.400+ linhas e nao recebe logica nova.
 `_resumo_safras`, `_legenda_resumo`, `_tabela_para_exibicao`,
 `_column_config_retorno`, `_grafico_barras`, `series_medidas`,
 `dados_das_barras_medidas`, `vitorias_sobre_pesos_iguais`,
-`legenda_barras_medidas`, `dados_da_curva_acumulada`, `legenda_medidas` e
-`_expectativa` sao as pecas
+`legenda_barras_medidas`, `dados_da_curva_acumulada`, `legenda_medidas`,
+`fontes_medidas_da_expectativa` e `_expectativa` sao as pecas
 de logica deste modulo, e sao deliberadamente
 puras (sem streamlit, sem banco) para poder ser testadas direto — nesta
 base, teste via Streamlit AppTest vaza atribuicao de modulo e falha só
@@ -817,9 +817,10 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
     """Bloco 1: cartões, tabela e gráfico por safra das carteiras escolhidas
     ano a ano (medições gravadas) contra pesos iguais, Selic e Ibovespa. Sem
     medição da líder, o topo cai para a reconstrução com os segmentos de hoje
-    (`tabela_de_safras`), com a legenda dizendo isso. A reconstrução segue
-    alimentando o Bloco 3 e o aviso de peso sem preço.
-    Ao fim, chama `render_expectativa` (Bloco 3).
+    (`tabela_de_safras`), com a legenda dizendo isso.
+    Ao fim, chama `render_expectativa` (Bloco 3), que lê as mesmas safras
+    medidas e o Rank-IC por ano do universo gravado em `data/vantagem_oos.json`;
+    a reconstrução só entra no que faltar medição, e o bloco diz onde.
 
     `resultados` e a lista JA FILTRADA pelo gate de aprovacao -- e a
     carteira que a tela publica.
@@ -865,17 +866,30 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
     if not completas.empty or not tabela_m.empty:
         _render_grafico_safras(completas, medidas)
 
-    render_expectativa(resultados, tabela)
+    fontes = _carregar_fontes_expectativa(medidas)
+    render_expectativa(resultados, tabela, fontes)
+
+    # Com o topo e o Bloco 3 nas safras medidas, a reconstrução não aparece
+    # mais na tela, e o peso sem preço DELA não descreve nada que se vê. A
+    # medição não grava esse peso, mas aplica a mesma regra: ação sem preço
+    # na janela rende zero. A tela diz a regra e não inventa a fatia.
+    if _tela_toda_medida(tabela_m, fontes):
+        detalhe_tecnico(
+            "Ação sem preço na janela da safra (deslistagem, incorporação ou "
+            "buraco de dado) rende **zero** nas carteiras medidas: não "
+            "inventamos a perda, mas ela também não rende o que as outras "
+            "renderam. A medição gravada não registra quanto do peso ficou "
+            "assim em cada safra.",
+            codigo="portfolio_b3.safras_preco_ausente_medido")
+        return
 
     # Mesma população das outras agregações (as safras medidas): incluir as
     # não mensuráveis infla o aviso, porque nelas "Peso sem preço" vale
     # 100,0 justamente por não ter havido observação nenhuma (achado I-1).
-    # Com a tabela medida no topo, o aviso fala da reconstrução, que é o
-    # que o bloco de expectativa usa.
     ausente = resumo["peso_ausente_max"]
     if ausente > 0:
-        onde = ("Na reconstrução com os segmentos de hoje, usada no bloco "
-                "acima, em pelo menos uma safra"
+        onde = ("Na reconstrução com os segmentos de hoje, usada em parte "
+                "do bloco acima, em pelo menos uma safra"
                 if not tabela_m.empty else "Em pelo menos uma safra medida")
         aviso_lacuna(
             f"{onde}, até {ausente:.1f}% do peso "
@@ -885,6 +899,105 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
             "sobreviventes renderam.",
             codigo="tela.portfolio_b3.safras_peso_sem_preco",
         )
+
+
+def _tela_toda_medida(tabela_m: pd.DataFrame, fontes: dict) -> bool:
+    """True quando nada visível na tela sai da reconstrução: topo medido,
+    bandas e Rank-IC do Bloco 3 medidos."""
+    return bool(not tabela_m.empty
+                and fontes.get("excessos_medidos")
+                and fontes.get("ics_por_ano") is not None)
+
+
+def fontes_medidas_da_expectativa(medidas: dict, vantagem: dict | None,
+                                  versao_atual: str | None) -> dict:
+    """O que o Bloco 3 lê das medições gravadas, sem streamlit.
+
+    ``medidas`` vem de `series_medidas` (`data/oos_carteira_b3.json`): cada
+    safra com a carteira escolhida naquele abril. Os excessos por safra são
+    os MESMOS que `scripts/medir_oos_carteira_b3.py` resume em ``vs_selic``
+    e ``vs_equal_weight`` (líquido − Selic, líquido − pesos iguais), então a
+    banda daqui reproduz o ``ic95`` gravado -- um teste confere.
+
+    ``vantagem`` é a entrada ``b3`` de `data/vantagem_oos.json`: o Rank-IC de
+    cada ano sobre o universo inteiro, sem portão e fora da amostra. É ele
+    que substitui o Rank-IC dos segmentos aprovados hoje, que já conhecem o
+    passado. Gravado com outra versão do score, ele NÃO entra: o Bloco 3 cai
+    para a reconstrução e diz por quê.
+
+    Devolve ``{"excessos_medidos", "excessos", "safras", "ics_por_ano",
+    "medicao_ic", "avisos"}``. ``excessos`` tem listas em fração para
+    ``selic``, ``ew``, ``selic_bruto`` e ``ew_bruto``; ``ics_por_ano`` é
+    ``{ano: ic}`` ou None.
+    """
+    series = medidas.get("series") or {}
+    lider = series.get("concentrada") or {}
+    detalhe = medidas.get("detalhe_lider") or {}
+    excessos: dict[str, list[float]] = {"selic": [], "ew": [],
+                                        "selic_bruto": [], "ew_bruto": []}
+    safras: list[int] = []
+    for safra in sorted(a for a, v in lider.items() if v is not None):
+        liq = lider[safra]
+        bruto = (detalhe.get(safra) or {}).get("bruto")
+        sel = (series.get("selic") or {}).get(safra)
+        ew = (series.get("equal_weight") or {}).get(safra)
+        if sel is not None:
+            safras.append(int(safra))
+            excessos["selic"].append(liq - sel)
+            if bruto is not None:
+                excessos["selic_bruto"].append(bruto - sel)
+        if ew is not None:
+            excessos["ew"].append(liq - ew)
+            if bruto is not None:
+                excessos["ew_bruto"].append(bruto - ew)
+
+    avisos: list[str] = []
+    ics: dict[int, float] | None = None
+    medicao_ic: dict = {}
+    if vantagem:
+        brutos = (vantagem.get("extras") or {}).get("ic_por_ano") or {}
+        lidos: dict[int, float] = {}
+        for ano, valor in brutos.items():
+            v = _fracao(valor)
+            try:
+                a = int(ano)
+            except (TypeError, ValueError):
+                continue
+            if v is not None:
+                lidos[a] = v
+        versao = str(vantagem.get("versao_metodologia") or "")
+        medido_em = str(vantagem.get("medido_em") or "")
+        if len(medido_em) == 10 and medido_em[4] == medido_em[7] == "-":
+            medido_em = f"{medido_em[8:]}/{medido_em[5:7]}/{medido_em[:4]}"
+        medicao_ic = {"medido_em": medido_em, "versao": versao}
+        if not lidos:
+            avisos.append("A medição do Rank-IC do universo não traz o valor "
+                          "de cada ano; Ordena? e Fragilidade usam a "
+                          "reconstrução com os segmentos de hoje.")
+        elif versao_atual and versao != str(versao_atual):
+            avisos.append(f"O Rank-IC do universo foi medido com a versão "
+                          f"{versao or '?'} do score, e a atual é "
+                          f"{versao_atual}; Ordena? e Fragilidade usam a "
+                          "reconstrução com os segmentos de hoje até a "
+                          "medição ser refeita.")
+        else:
+            ics = dict(sorted(lidos.items()))
+    else:
+        avisos.append("Sem medição gravada do Rank-IC do universo; Ordena? e "
+                      "Fragilidade usam a reconstrução com os segmentos de "
+                      "hoje.")
+
+    return {"excessos_medidos": len(excessos["selic"]) > 0,
+            "excessos": excessos, "safras": safras, "ics_por_ano": ics,
+            "medicao_ic": medicao_ic, "avisos": avisos}
+
+
+def _carregar_fontes_expectativa(medidas: dict) -> dict:
+    """Lê o Rank-IC gravado do universo e monta as fontes do Bloco 3."""
+    from core.vantagem_oos import carregar_medicao, versao_corrente
+
+    return fontes_medidas_da_expectativa(medidas, carregar_medicao("b3"),
+                                         versao_corrente("b3"))
 
 
 def _render_topo_reconstruido(resumo: dict, tabela: pd.DataFrame) -> None:
@@ -1085,8 +1198,15 @@ def _frase(*partes: str) -> str:
     return " ".join(p.strip() for p in partes if p and p.strip())
 
 
-def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
+def _expectativa(resultados: list[dict], tabela: pd.DataFrame,
+                 fontes: dict | None = None) -> dict:
     """Tudo que o Bloco 3 publica, derivado das leituras — sem streamlit.
+
+    ``fontes`` (de `fontes_medidas_da_expectativa`) troca a reconstrução com
+    os segmentos de hoje pelas medições gravadas, peça a peça: as bandas
+    leem as safras escolhidas em cada abril, e Ordena?/Fragilidade leem o
+    Rank-IC de cada ano sobre o universo sem portão. O que faltar na
+    medição segue na reconstrução, e ``fonte`` diz qual entrou onde.
 
     Três perguntas distintas, e é de propósito que elas não virem um
     número só: **ordenar não é superar**. Um Rank-IC positivo diz que o
@@ -1134,8 +1254,18 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
         veredito_do_rank_ic,
     )
 
-    pares = _pares_de_ic(resultados)
-    ics_por_ano = _ics_por_ano(resultados, pares)
+    fontes = fontes or {}
+    ic_medido = fontes.get("ics_por_ano") is not None
+    banda_medida = bool(fontes.get("excessos_medidos"))
+
+    if ic_medido:
+        # O Rank-IC gravado já é um por ano (universo inteiro, sem portão):
+        # os pares dos segmentos aprovados hoje não entram.
+        pares: list[tuple] = []
+        ics_por_ano = dict(fontes["ics_por_ano"])
+    else:
+        pares = _pares_de_ic(resultados)
+        ics_por_ano = _ics_por_ano(resultados, pares)
     anos = sorted(ics_por_ano)
     ic_values = [ics_por_ano[ano] for ano in anos]
 
@@ -1149,10 +1279,21 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
     col_ew, _ = _coluna_excesso(tabela, _EXCESSO_EW)
 
     def _excessos(coluna: str) -> list[float]:
+        if banda_medida:
+            # As safras medidas já chegam em fração e só com o que foi
+            # gravado; a coluna da reconstrução nomeia qual lista ler.
+            chave = {col_selic: "selic", col_ew: "ew",
+                     "Excesso s/ Selic (pp)": "selic_bruto",
+                     "Excesso s/ EW (pp)": "ew_bruto"}[coluna]
+            return list(fontes["excessos"].get(chave) or [])
         if completas.empty or coluna not in completas.columns:
             return []
         return [float(v) / 100.0 for v in completas[coluna] if pd.notna(v)]
 
+    if banda_medida:
+        # A medição grava o líquido e o bruto de toda safra.
+        col_selic, col_ew, liquido = ("Excesso líquido s/ Selic (pp)",
+                                      "Excesso líquido s/ EW (pp)", True)
     excessos = _excessos(col_selic)
 
     # F-1: o MESMO criterio que o leave-one-out usa. Antes o card chamava
@@ -1322,12 +1463,54 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
     # lado a lado sem explicação — "Safras medidas: N" (janela fechada com
     # pregão) contra "0 de M anos" (anos com Rank-IC calculável).
     if loo["medido"] and n_banda and n_banda != n_loo:
-        nota_frag = _frase(
-            nota_frag,
-            f"A fragilidade conta os {n_loo} ano(s) com Rank-IC calculável "
-            f"(≥ {MIN_ATIVOS_ANO} ativos no universo), não as {n_banda} "
-            "safra(s) mensurável(is) do bloco acima: são populações "
-            "diferentes.")
+        if ic_medido:
+            nota_frag = _frase(
+                nota_frag,
+                f"A fragilidade conta os {n_loo} ano(s) de Rank-IC do "
+                f"universo inteiro, não as {n_banda} safra(s) da carteira "
+                "escolhida em cada abril: são populações diferentes.")
+        else:
+            nota_frag = _frase(
+                nota_frag,
+                f"A fragilidade conta os {n_loo} ano(s) com Rank-IC "
+                f"calculável (≥ {MIN_ATIVOS_ANO} ativos no universo), não as "
+                f"{n_banda} safra(s) mensurável(is) do bloco acima: são "
+                "populações diferentes.")
+
+    safras_banda = fontes.get("safras") or []
+    if banda_medida:
+        periodo = (f" ({safras_banda[0]}–{safras_banda[-1]})"
+                   if safras_banda else "")
+        fonte_banda = (f"**Supera?** e **Supera o mercado?** usam as {n_banda} "
+                       f"safra(s) medidas{periodo} da líder de cada segmento, "
+                       "cada uma com a carteira escolhida naquele abril.")
+        ajuda_banda = (f"Intervalo de 95% por reamostragem de {n_banda} "
+                       "safra(s), cada uma com a carteira escolhida naquele "
+                       "abril")
+        ajuda_banda_ew = ("Intervalo de 95% do excesso sobre pesos iguais no "
+                          "universo daquele abril, por reamostragem das "
+                          "mesmas safras")
+    else:
+        fonte_banda = ("**Supera?** e **Supera o mercado?** refazem cada "
+                       "safra só com os segmentos que o portão aprova hoje, "
+                       "que já conhece o passado: falta a medição gravada "
+                       "da líder de cada segmento.")
+        ajuda_banda = (f"Intervalo de 95% por reamostragem de {n_banda} "
+                       "safra(s) mensurável(is)")
+        ajuda_banda_ew = ("Intervalo de 95% do excesso sobre o equal-weight "
+                          "do universo, com saltos de preço neutralizados e "
+                          "retornos winsorizados a 1%/99% por safra")
+    if ic_medido:
+        med = fontes.get("medicao_ic") or {}
+        quando = f", medido em {med['medido_em']}" if med.get("medido_em") else ""
+        fonte_ic = ("**Ordena?** e **Fragilidade** usam o Rank-IC de cada "
+                    "ano sobre o universo inteiro, sem portão e fora da "
+                    f"amostra{quando}.")
+    else:
+        fonte_ic = ("**Ordena?** e **Fragilidade** usam o Rank-IC dos "
+                    "segmentos que o portão aprova hoje, que já conhece o "
+                    "passado.")
+    avisos.extend(fontes.get("avisos") or [])
 
     return {
         "ic_values": ic_values,
@@ -1355,10 +1538,16 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
         "loo": loo,
         "avisos": avisos,
         "limitacao_banda": limitacao,
+        "ajuda_banda": ajuda_banda,
+        "ajuda_banda_ew": ajuda_banda_ew,
+        "fonte": _frase(fonte_banda, fonte_ic),
+        "banda_medida": banda_medida,
+        "ic_medido": ic_medido,
     }
 
 
-def render_expectativa(resultados: list[dict], tabela: pd.DataFrame) -> None:
+def render_expectativa(resultados: list[dict], tabela: pd.DataFrame,
+                       fontes: dict | None = None) -> None:
     """Bloco 3: o motor ordena? supera? e quão frágil é a conclusão?
 
     Só renderiza — a medição inteira está em `_expectativa`, que é pura e
@@ -1372,7 +1561,7 @@ def render_expectativa(resultados: list[dict], tabela: pd.DataFrame) -> None:
         unsafe_allow_html=True,
     )
 
-    exp = _expectativa(resultados, tabela)
+    exp = _expectativa(resultados, tabela, fontes)
     veredito = exp["veredito"]
 
     cols = st.columns(4)
@@ -1388,8 +1577,7 @@ def render_expectativa(resultados: list[dict], tabela: pd.DataFrame) -> None:
         qual = "líquido" if exp["liquido"] else "bruto"
         card_metrica(f"Supera? (excesso {qual} s/ Selic)", exp["texto_banda"],
                      positivo=(baixo is not None and baixo > 0),
-                     ajuda=(f"Intervalo de 95% por reamostragem de "
-                            f"{exp['n_safras_banda']} safra(s) mensurável(is)"
+                     ajuda=(exp["ajuda_banda"]
                             + (f". Bruto: {exp['texto_banda_bruta']}"
                                if exp["liquido"] else "")))
     with cols[3]:
@@ -1398,9 +1586,7 @@ def render_expectativa(resultados: list[dict], tabela: pd.DataFrame) -> None:
         card_metrica(f"Supera o mercado? ({qual_ew} s/ equal-weight)",
                      exp["texto_banda_ew"],
                      positivo=(baixo_ew is not None and baixo_ew > 0),
-                     ajuda="Intervalo de 95% do excesso sobre o equal-weight "
-                           "do universo, com saltos de preço neutralizados e "
-                           "retornos winsorizados a 1%/99% por safra"
+                     ajuda=exp["ajuda_banda_ew"]
                            + (f". Bruto: {exp['texto_banda_ew_bruta']}"
                               if exp["liquido"] else ""))
     with cols[2]:
@@ -1413,6 +1599,7 @@ def render_expectativa(resultados: list[dict], tabela: pd.DataFrame) -> None:
         "que os retornos delas vieram no ano seguinte (Rank-IC). **Supera?** "
         "responde outra pergunta: se isso virou dinheiro a mais. Ordenar não é "
         "superar.")
+    st.caption(exp["fonte"])
     leitura = leitura_rank_ic(_ic_medio, periodo="no ano seguinte")
     if leitura:
         st.caption(f"🧭 {leitura}")

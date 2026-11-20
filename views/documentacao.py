@@ -392,8 +392,12 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
             "cartões do topo e a tabela leem as mesmas medições: uma linha por "
             "safra com a líder líquida, bruta e com IR, a diferença para a Selic "
             "e para os pesos iguais, giro, custo e as maiores posições. O bloco "
-            "\"O que esperar da safra vigente\" ainda refaz cada safra só com os "
-            "segmentos aprovados hoje (o portão de hoje já conhece o passado).",
+            "\"O que esperar da safra vigente\" lê as mesmas safras medidas para "
+            "as faixas contra a Selic e os pesos iguais, e o Rank-IC de cada ano "
+            "do universo inteiro, sem portão e fora da amostra "
+            "(data/vantagem_oos.json), para \"Ordena?\" e \"Fragilidade\". Sem "
+            "essas medições, ele volta à reconstrução com os segmentos de hoje e "
+            "diz isso na tela.",
             ("load_selic_macro()", "load_selic_mensal()", "load_macro_history()", "Taxa Selic média de fallback"),
             "A comparação contra Selic é essencial porque o investidor brasileiro sempre tem uma alternativa de renda fixa.",
         ),
