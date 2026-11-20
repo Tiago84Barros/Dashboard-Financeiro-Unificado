@@ -82,6 +82,10 @@ def stubs_de_bootstrap(**overrides) -> dict[str, SimpleNamespace]:
             filtrar_menu=_filtrar_menu_real,
             ocultas_da_sessao=lambda: frozenset(),
         ),
+        # A conferência real perguntaria ao armazém (papel ou túnel) depois de
+        # uma reserva; sem reserva, devolve False sem tocar em nada. O duble
+        # é esse caso. Ela tem teste próprio em tests/test_fonte_b3.py.
+        "core.fonte_b3": SimpleNamespace(conferir_volta=lambda: False),
         "design.tema": SimpleNamespace(aplicar_tema=lambda theme="dark": None),
         # Importado com o ``streamlit`` falso em sys.modules, o módulo real
         # guardaria o falso no próprio ``st`` e o vazaria para todos os testes
