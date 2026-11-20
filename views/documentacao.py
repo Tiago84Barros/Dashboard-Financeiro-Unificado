@@ -351,8 +351,9 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
     title="Criação de portfólio B3",
     subtitle=(
         "Subaba Criação de Portfólio de Empresas B3: setores, subsetores e segmentos "
-        "entram no motor; o app encontra líderes, testa desempenho e salva uma "
-        "carteira modelo."
+        "entram no motor; o app testa desempenho e mostra a estratégia escolhida no "
+        "seletor: nota + fatores (padrão) ou a líder de cada segmento, que pode ser "
+        "salva como carteira modelo."
     ),
     tela="Empresas B3",
     abas=("Criação de Portfólio",),
@@ -511,8 +512,12 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
             "Esse registro vira a base da Avaliação de Portfólio e aparece no Dashboard Geral.",
         ),
         "ampla_cp": _node(
-            "ampla_cp", "Carteira ampla: nota + fatores", "Portfólio",
-            "Alternativa medida, abaixo da carteira concentrada. Em vez de escolher o "
+            "ampla_cp", "Nota + fatores (estratégia padrão)", "Portfólio",
+            "Estratégia padrão da aba desde 20/11/2026: o seletor \"Estratégia\", logo "
+            "depois dos testes complementares, abre nela; \"Líder de cada segmento\" "
+            "leva à carteira concentrada, com o portão de LLM e o botão de salvar. A "
+            "rota padrão mostra esta seção, o desempenho safra a safra e a metodologia, "
+            "e não chama LLM. Em vez de escolher o "
             "líder de cada segmento, junta todo nome com nota de hoje, tira os 30% de "
             "pior sinal e divide igualmente entre o resto. O sinal é a média do "
             "percentil da nota com o percentil de três fatores: momento 12-1, baixa "
@@ -520,7 +525,7 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
             "fator fica no meio (50). A carteira é refeita uma vez por ano, em abril; "
             "de janeiro a março a lista sai como prévia. Os três cards mostram a "
             "medição fora da amostra gravada (excesso líquido sobre pesos iguais, com "
-            "intervalo de 95%), a mesma régua só com a nota e a carteira concentrada. "
+            "intervalo de 95%), a mesma régua só com a nota e a líder de cada segmento. "
             "Outros três cards encadeiam R$ 1 pelas mesmas safras (nota + fatores, só "
             "a nota e pesos iguais), com a taxa composta ao ano: é resultado do "
             "período, não prova, que continua sendo o teste ano a ano. A tela avisa "
@@ -529,9 +534,10 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
              "data/oos_nota_fatores_b3.json (scripts/medir_nota_fatores_b3.py)",
              "Sem guarda de entrada, piso de qualidade, portão de LLM nem tetos de setor",
              "Nove safras: efeito pequeno, um ano ruim apaga a vantagem"),
-            "Tirar os piores foi a variante ampla que mais rendeu na B3, fora do zero. "
-            "Ela fica ao lado da concentrada, não no lugar: são perguntas diferentes, e "
-            "a tela mostra as duas na mesma régua.",
+            "Tirar os piores foi a única estratégia com ganho medido fora do zero na B3 "
+            "(+2,5 pp ao ano sobre pesos iguais); a líder de cada segmento tem intervalo "
+            "que cruza o zero. Por isso é a padrão. A concentrada segue no seletor, e a "
+            "tela mostra as duas na mesma régua.",
         ),
     },
 )

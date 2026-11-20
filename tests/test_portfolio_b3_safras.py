@@ -1544,8 +1544,13 @@ def test_tela_b3_passa_os_aprovados():
     `safras_base`, então o Bloco 1 cai em `aprovados`."""
     arvore = ast.parse((RAIZ / "views" / "portfolio_b3.py")
                        .read_text(encoding="utf-8"))
+    # Desde 20/11/2026 há uma segunda chamada, na rota da nota + fatores
+    # (`_rota_nota_fatores`); a da líder é a de `_render_analises_da_carteira`.
+    analises = next(no for no in ast.walk(arvore)
+                    if isinstance(no, ast.FunctionDef)
+                    and no.name == "_render_analises_da_carteira")
     chamada = next(
-        no for no in ast.walk(arvore)
+        no for no in ast.walk(analises)
         if isinstance(no, ast.Call) and isinstance(no.func, ast.Name)
         and no.func.id == "render_safras"
     )

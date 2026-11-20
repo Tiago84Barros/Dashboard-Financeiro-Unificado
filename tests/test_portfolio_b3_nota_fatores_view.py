@@ -111,3 +111,65 @@ def test_acumulado_da_medicao_gravada():
     nf_ = acum["series"]["nota_fatores"]
     esperado = float(np.prod([1 + t["liquido"] for t in dados["nota_fatores"]["safras"]]))
     assert nf_["valor_final"] == pytest.approx(esperado)
+
+
+# ── Estratégia padrão (decisão de 20/11/2026) ────────────────────────────────
+
+def test_nota_fatores_e_a_estrategia_padrao():
+    """O seletor abre na primeira opção (`index=0`); ela tem de ser a nota +
+    fatores, e a líder de cada segmento continua no seletor."""
+    import ast
+    assert list(v.ESTRATEGIAS)[0] == v.ESTRATEGIA_NOTA_FATORES
+    assert v.ESTRATEGIA_LIDER in v.ESTRATEGIAS
+    arvore = ast.parse((ROOT / "views" / "portfolio_b3_nota_fatores.py")
+                       .read_text(encoding="utf-8"))
+    fn = next(no for no in ast.walk(arvore)
+              if isinstance(no, ast.FunctionDef) and no.name == "escolher_estrategia")
+    radio = next(no for no in ast.walk(fn) if isinstance(no, ast.Call)
+                 and isinstance(no.func, ast.Attribute) and no.func.attr == "radio")
+    kws = {kw.arg: kw.value for kw in radio.keywords}
+    assert isinstance(kws["index"], ast.Constant) and kws["index"].value == 0
+    assert isinstance(kws["key"], ast.Name) and kws["key"].id == "CHAVE_ESTRATEGIA"
+    assert v.CHAVE_ESTRATEGIA == "pb3_estrategia"
+
+
+def test_tela_b3_rota_padrao_vem_antes_do_portao_e_retorna():
+    """Na tela, a escolha da nota + fatores desvia para `_rota_nota_fatores`
+    e retorna antes do cabeçalho das líderes -- portanto antes do portão de
+    LLM e do botão de salvar. A líder segue pelo caminho de antes."""
+    import ast
+    fonte = (ROOT / "views" / "portfolio_b3.py").read_text(encoding="utf-8")
+    arvore = ast.parse(fonte)
+    render = next(no for no in arvore.body
+                  if isinstance(no, ast.FunctionDef) and no.name == "render")
+    desvio = [no for no in ast.walk(render) if isinstance(no, ast.If)
+              and "ESTRATEGIA_NOTA_FATORES" in ast.unparse(no.test)]
+    assert len(desvio) == 1, "render deve ter um único desvio de estratégia"
+    corpo = desvio[0].body
+    assert isinstance(corpo[-1], ast.Return)
+    assert any(isinstance(no, ast.Expr) and isinstance(no.value, ast.Call)
+               and isinstance(no.value.func, ast.Name)
+               and no.value.func.id == "_rota_nota_fatores" for no in corpo)
+    assert "escolher_estrategia()" in ast.unparse(desvio[0].test)
+    linhas = fonte.splitlines()
+    cab = next(i for i, l in enumerate(linhas, 1)
+               if "Empresas líderes para o próximo ano" in l and "_sec_hdr" in l)
+    assert desvio[0].lineno < cab
+    portao = next(i for i, l in enumerate(linhas, 1)
+                  if "Gate qualitativo: pré-avalia" in l)
+    assert desvio[0].lineno < portao
+
+
+def test_rota_nota_fatores_mostra_secao_safras_e_metodologia():
+    import ast
+    arvore = ast.parse((ROOT / "views" / "portfolio_b3.py").read_text(encoding="utf-8"))
+    rota = next(no for no in arvore.body
+                if isinstance(no, ast.FunctionDef) and no.name == "_rota_nota_fatores")
+    chamadas = [ast.unparse(no.func) for no in ast.walk(rota) if isinstance(no, ast.Call)]
+    for nome in ("_nota_fatores.render_nota_fatores", "render_safras",
+                 "_render_metodologia_portfolio"):
+        assert nome in chamadas, nome
+    # Sem LLM nem gravação de carteira-modelo nesta rota.
+    texto = ast.unparse(rota)
+    for proibido in ("save_b3_portfolio", "avaliar", "_gate", "intel"):
+        assert proibido not in texto, proibido

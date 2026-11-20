@@ -239,7 +239,7 @@
     {
       "nome": "Criação de Portfólio",
       "resumo": "Monta a carteira sugerida com toda a bolsa",
-      "explicacao": "Aplica o método de seleção a todos os segmentos da bolsa de uma vez, escolhe as empresas líderes dos segmentos aprovados e monta uma carteira com várias áreas da economia. Você escolhe um perfil, clica em \"Rodar Criação de Portfólio\" e, no fim, pode salvar a carteira. Quase tudo só aparece depois de rodar.",
+      "explicacao": "Aplica o método de seleção a todos os segmentos da bolsa de uma vez, escolhe as empresas líderes dos segmentos aprovados e monta uma carteira com várias áreas da economia. Você escolhe um perfil e clica em \"Rodar Criação de Portfólio\". Um seletor escolhe a estratégia: \"Nota + fatores\" abre por padrão; \"Líder de cada segmento\" mostra as empresas líderes e permite salvar a carteira. Quase tudo só aparece depois de rodar.",
       "so_admin": false,
       "fonte": "views/empresas_b3.py:3262 -> views/portfolio_b3.py:2814",
       "filhos": [
@@ -330,6 +330,31 @@
               "explicacao": "Junta todas as empresas para medir se a nota acertou quem rendeu mais no ano seguinte, com cartões de resultado e um selo a favor ou contra.",
               "so_admin": false,
               "fonte": "views/portfolio_b3.py:3941 -> :2544",
+              "filhos": []
+            }
+          ]
+        },
+        {
+          "nome": "Estratégia",
+          "resumo": "Nota + fatores (padrão) ou líder de cada segmento",
+          "explicacao": "Um seletor logo depois dos testes complementares escolhe qual carteira a tela mostra. Abre em \"Nota + fatores\", a estratégia padrão. \"Líder de cada segmento\" mostra a carteira concentrada e tudo o que vem com ela: as empresas líderes, o parecer da IA e o botão de salvar.",
+          "so_admin": false,
+          "fonte": "views/portfolio_b3.py:4061 -> views/portfolio_b3_nota_fatores.py:54",
+          "filhos": [
+            {
+              "nome": "Nota + fatores (padrão)",
+              "resumo": "Estratégia padrão: tira os 30% piores e divide igual no resto",
+              "explicacao": "A estratégia que abre por padrão, desde 20/11/2026, porque foi a única com ganho medido fora do zero: em média, 2,5 pontos ao ano acima de dividir igual entre todas as empresas. É uma carteira ampla feita com a mesma nota. Junta a nota com três dados de mercado (momento, baixa volatilidade e ROE), tira os 30% de pior resultado e divide o dinheiro em partes iguais entre os que ficam. É refeita uma vez por ano, em abril. Três cartões mostram quanto ela rendeu a mais que dividir igual entre todas as empresas nos anos passados, ao lado da nota sozinha e da líder de cada segmento. Outros três mostram quanto R$ 1 teria virado reaplicado a cada abril nesses anos (nota + fatores, a nota sozinha e partes iguais), com a taxa ao ano: é o resultado do período, não a prova. A lista de hoje aparece depois de rodar a aba; entre janeiro e março ela é uma prévia. Logo abaixo vêm o desempenho safra a safra e a metodologia. Ela não passa pelo parecer da IA e não pode ser salva como portfólio padrão.",
+              "so_admin": false,
+              "fonte": "views/portfolio_b3.py:5231 -> views/portfolio_b3_nota_fatores.py:202",
+              "filhos": []
+            },
+            {
+              "nome": "Líder de cada segmento",
+              "resumo": "A carteira concentrada, uma empresa por segmento aprovado",
+              "explicacao": "A outra estratégia do seletor. Ao escolhê-la aparecem as empresas líderes, os ajustes e verificações (com o parecer da IA), o botão de salvar como portfólio padrão e o desempenho. Seu ganho sobre dividir igual não foi provado: a margem de erro cruza o zero. É a única que pode ser salva como portfólio padrão.",
+              "so_admin": false,
+              "fonte": "views/portfolio_b3.py:4061 -> :4068",
               "filhos": []
             }
           ]
@@ -482,14 +507,6 @@
               ]
             }
           ]
-        },
-        {
-          "nome": "Carteira ampla: nota + fatores (alternativa medida)",
-          "resumo": "Tira os 30% piores e divide igual no resto",
-          "explicacao": "Outra carteira, mais ampla, feita com a mesma nota. Junta a nota com três dados de mercado (momento, baixa volatilidade e ROE), tira os 30% de pior resultado e divide o dinheiro em partes iguais entre os que ficam. É refeita uma vez por ano, em abril. Três cartões mostram quanto ela rendeu a mais que dividir igual entre todas as empresas nos anos passados, ao lado da nota sozinha e da carteira concentrada. Outros três mostram quanto R$ 1 teria virado reaplicado a cada abril nesses anos (nota + fatores, a nota sozinha e partes iguais), com a taxa ao ano: é o resultado do período, não a prova. A lista de hoje aparece depois de rodar a aba; entre janeiro e março ela é uma prévia.",
-          "so_admin": false,
-          "fonte": "views/portfolio_b3.py:5197 -> views/portfolio_b3_nota_fatores.py:173",
-          "filhos": []
         },
         {
           "nome": "Como chegamos a estas empresas — metodologia e referências",
