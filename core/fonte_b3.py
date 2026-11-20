@@ -58,6 +58,10 @@ INTERVALO_CONFERE_S = 60
 _trava = threading.Lock()
 _reserva: dict = {"quando": None, "motivo": None, "conferido": None}
 _engine_papel: dict = {}
+#: Sobe cada vez que :func:`conferir_volta` limpa o cache. Os caches de
+#: sessão (:func:`cache_de_sessao`) guardam a geração em que nasceram e se
+#: esvaziam quando ela muda -- o ``st.cache_data.clear()`` não os alcança.
+_geracao = [0]
 
 
 def _agora() -> float:
@@ -203,11 +207,42 @@ def conferir_volta() -> bool:
         return False
     _limpar_caches()
     with _trava:
+        _geracao[0] += 1
         # Reserva nova durante a pergunta: o aviso fica, ela é mais recente.
         if _reserva["quando"] == quando:
             _reserva.update(quando=None, motivo=None, conferido=None)
     logger.info("Armazém respondeu de novo: cache limpo e aviso da reserva retirado.")
     return True
+
+
+def geracao() -> int:
+    """Quantas vezes o cache foi limpo pela volta do armazém neste processo."""
+    with _trava:
+        return _geracao[0]
+
+
+def cache_de_sessao(chave: str) -> dict:
+    """Cache por ativo em ``st.session_state`` que se esvazia na volta do armazém.
+
+    Parecer guardado na sessão (portão da Inteligência dos Ativos, parecer de
+    seleção) pode ter sido feito com a cópia congelada; o
+    ``st.cache_data.clear()`` de :func:`conferir_volta` não chega ao
+    ``session_state``, e gerar a carteira de novo reaproveitaria o parecer
+    velho. Quem guarda parecer por ativo pede o dicionário aqui.
+
+    A geração fica ao lado, em ``<chave>__geracao``; sem ela, o dicionário é
+    tido como da geração atual.
+    """
+    import streamlit as st
+
+    atual = geracao()
+    marca = f"{chave}__geracao"
+    caixa = st.session_state.get(chave)
+    if not isinstance(caixa, dict) or st.session_state.get(marca, atual) != atual:
+        caixa = {}
+        st.session_state[chave] = caixa
+    st.session_state[marca] = atual
+    return caixa
 
 
 class _Resultado:

@@ -1293,7 +1293,8 @@ def _tab_dossie(status: dict) -> None:
 def _intel_avaliar_us(tk: str):
     """Avaliação por regras da Inteligência dos Ativos (EUA), com cache de
     sessão. Falha não é guardada: o portão é fail-open e tenta de novo no rerun."""
-    cache = st.session_state.setdefault("us_intel_cache", {})
+    from core.fonte_b3 import cache_de_sessao
+    cache = cache_de_sessao("us_intel_cache")
     chave = str(tk).upper()
     if chave not in cache:
         cache[chave] = veredito.avaliar_ativo(chave, mercado="us")

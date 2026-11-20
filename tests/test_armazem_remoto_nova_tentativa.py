@@ -82,6 +82,31 @@ def test_tempo_de_leitura_esgotado_nao_repete(rede):
     assert exc.value.fora_do_ar
 
 
+def test_tempo_esgotado_no_meio_do_corpo_tambem_nao_repete(rede):
+    """O requests embrulha o ReadTimeoutError do urllib3 num ConnectionError
+    quando o corpo para de chegar depois do cabeçalho."""
+    from urllib3.exceptions import ReadTimeoutError
+
+    fila, chamadas, esperas = rede
+    embrulhado = requests.ConnectionError(
+        ReadTimeoutError(None, "https://x/sql", "Read timed out."))
+    fila.extend([embrulhado, _Resposta()])
+    with pytest.raises(ar.ArmazemRemotoIndisponivel) as exc:
+        ar._buscar("https://x", "t", "/sql", None, enviar={"sql": "select 1"})
+    assert chamadas == ["post"] and esperas == []
+    assert "tentativas" not in str(exc.value)
+
+
+def test_queda_com_protocolo_embrulhado_ainda_repete(rede):
+    from urllib3.exceptions import ProtocolError
+
+    fila, chamadas, _ = rede
+    fila.extend([requests.ConnectionError(ProtocolError("Connection aborted.")),
+                 _Resposta()])
+    assert ar._buscar("https://x", "t", "/sql", None, enviar={"sql": "s"}) == {"ok": True}
+    assert chamadas == ["post", "post"]
+
+
 def test_duas_quedas_viram_falha_com_o_numero_de_tentativas(rede):
     fila, chamadas, _ = rede
     corte = requests.exceptions.ChunkedEncodingError("cortou")

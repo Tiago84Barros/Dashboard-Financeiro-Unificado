@@ -667,7 +667,8 @@ def _simular_seg_backtest(
 
 def _quali_avaliar_cached(tk: str) -> dict:
     """Parecer de seleção com cache de sessão (o LLM já tem cache diário)."""
-    cache = st.session_state.setdefault("pb3_quali_cache", {})
+    from core.fonte_b3 import cache_de_sessao
+    cache = cache_de_sessao("pb3_quali_cache")
     if tk not in cache:
         try:
             cache[tk] = avaliar_para_selecao(tk)
@@ -699,7 +700,8 @@ def _registrar_aviso_ancoragem(log: dict, tk: str, aval: dict) -> None:
 def _intel_avaliar_cached(tk: str, setor: str | None = None):
     """Avaliação por regras da Inteligência dos Ativos, com cache de sessão.
     Falha não é guardada: o portão é fail-open e tenta de novo no rerun."""
-    cache = st.session_state.setdefault("pb3_intel_cache", {})
+    from core.fonte_b3 import cache_de_sessao
+    cache = cache_de_sessao("pb3_intel_cache")
     chave = str(tk).upper().replace(".SA", "")
     if chave not in cache:
         cache[chave] = veredito.avaliar_acao_b3(chave, None, setor)

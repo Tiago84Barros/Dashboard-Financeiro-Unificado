@@ -519,3 +519,51 @@ def test_resultado_gerado_com_o_armazem_nao_avisa(monkeypatch):
     comp.guardar_fonte_do_resultado_b3("pb3_fonte_reserva")
     comp.aviso_resultado_da_reserva_b3("pb3_fonte_reserva", "gere o portfólio")
     assert estado["pb3_fonte_reserva"] is None and avisos == []
+
+
+@pytest.mark.parametrize("chave, view, funcao, avaliador", [
+    ("pb3_intel_cache", "views.portfolio_b3", "_intel_avaliar_cached", "veredito.avaliar_acao_b3"),
+    ("pb3_quali_cache", "views.portfolio_b3", "_quali_avaliar_cached", "avaliar_para_selecao"),
+    ("fii_intel_cache", "views.fiis", "_intel_avaliar_fii", "veredito.avaliar_ativo"),
+    ("us_intel_cache", "views.empresas_americanas", "_intel_avaliar_us", "veredito.avaliar_ativo"),
+])
+def test_parecer_guardado_na_sessao_e_refeito_quando_o_armazem_volta(
+        volta, remoto, monkeypatch, chave, view, funcao, avaliador):
+    """Achado do Codex no #787: o parecer da sessão feito com a cópia
+    decidia veto e troca da carteira gerada de novo depois da volta."""
+    import importlib
+
+    import streamlit as st
+
+    agora, _ = volta
+    estado: dict = {}
+    monkeypatch.setattr(st, "session_state", estado)
+    mod = importlib.import_module(view)
+    chamadas: list[str] = []
+
+    def _avalia(tk, *a, **k):
+        chamadas.append(tk)
+        return {"classificacao": f"parecer {len(chamadas)}"}
+
+    alvo, _, nome = avaliador.rpartition(".")
+    monkeypatch.setattr(getattr(mod, alvo) if alvo else mod, nome, _avalia)
+
+    primeiro = getattr(mod, funcao)("ABCD3")
+    assert getattr(mod, funcao)("ABCD3") == primeiro and len(chamadas) == 1
+
+    _tunel_responde(remoto, [])
+    agora[0] += fb3.INTERVALO_CONFERE_S
+    assert fb3.conferir_volta() is True
+    segundo = getattr(mod, funcao)("ABCD3")
+    assert len(chamadas) == 2 and segundo != primeiro
+    assert estado[chave] == {"ABCD3": segundo}
+
+
+def test_cache_de_sessao_sem_marca_vale_para_a_geracao_atual(monkeypatch):
+    """Dicionário guardado antes deste PR (ou por teste) é aproveitado."""
+    import streamlit as st
+
+    estado = {"pb3_quali_cache": {"AAAA3": {"classificacao": "vetar"}}}
+    monkeypatch.setattr(st, "session_state", estado)
+    assert fb3.cache_de_sessao("pb3_quali_cache") == {"AAAA3": {"classificacao": "vetar"}}
+    assert estado["pb3_quali_cache__geracao"] == fb3.geracao()

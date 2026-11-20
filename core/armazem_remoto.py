@@ -86,11 +86,35 @@ def _esperar(segundos: float) -> None:
     time.sleep(segundos)
 
 
+def _tempo_de_leitura_esgotado(exc: BaseException) -> bool:
+    """``ReadTimeout`` direto ou embrulhado.
+
+    Quando o servidor manda o cabeçalho e para no meio do corpo, o requests
+    levanta ``ConnectionError`` com o ``ReadTimeoutError`` do urllib3 dentro
+    -- não ``ReadTimeout``. Sem olhar dentro, a segunda tentativa gastaria de
+    novo os 75 s da rota ``/sql``.
+    """
+    import requests
+    from urllib3.exceptions import ReadTimeoutError
+
+    fila, vistos = [exc], set()
+    while fila:
+        atual = fila.pop()
+        if not isinstance(atual, BaseException) or id(atual) in vistos:
+            continue
+        vistos.add(id(atual))
+        if isinstance(atual, (requests.ReadTimeout, ReadTimeoutError)):
+            return True
+        fila.extend(a for a in getattr(atual, "args", ()) if isinstance(a, BaseException))
+        fila.extend((getattr(atual, "reason", None), atual.__cause__, atual.__context__))
+    return False
+
+
 def _vale_repetir(exc: Exception) -> bool:
     """Queda de conexão ou resposta cortada; nunca tempo de leitura esgotado."""
     import requests
 
-    if isinstance(exc, requests.ReadTimeout):
+    if _tempo_de_leitura_esgotado(exc):
         return False
     return isinstance(exc, (requests.ConnectionError,
                             requests.exceptions.ChunkedEncodingError,
