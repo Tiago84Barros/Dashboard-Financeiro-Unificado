@@ -152,11 +152,11 @@ def test_tela_b3_rota_padrao_vem_antes_do_portao_e_retorna():
                and no.value.func.id == "_rota_nota_fatores" for no in corpo)
     assert "escolher_estrategia()" in ast.unparse(desvio[0].test)
     linhas = fonte.splitlines()
-    cab = next(i for i, l in enumerate(linhas, 1)
-               if "Empresas líderes para o próximo ano" in l and "_sec_hdr" in l)
+    cab = next(i for i, linha in enumerate(linhas, 1)
+               if "Empresas líderes para o próximo ano" in linha and "_sec_hdr" in linha)
     assert desvio[0].lineno < cab
-    portao = next(i for i, l in enumerate(linhas, 1)
-                  if "Gate qualitativo: pré-avalia" in l)
+    portao = next(i for i, linha in enumerate(linhas, 1)
+                  if "Gate qualitativo: pré-avalia" in linha)
     assert desvio[0].lineno < portao
 
 
