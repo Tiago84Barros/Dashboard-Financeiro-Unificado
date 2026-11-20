@@ -3012,10 +3012,15 @@ def test_render_safras_usa_a_tabela_medida_e_so_cai_para_a_reconstrucao_sem_ela(
     fonte = (RAIZ / "views" / "portfolio_b3_safras.py").read_text(encoding="utf-8")
     trecho = ast.get_source_segment(fonte, _funcao_da_view("render_safras"))
     assert "tabela_m = tabela_medida(medidas)" in trecho
-    assert trecho.index("_render_topo_medido(medidas, tabela_m)") < trecho.index(
+    assert trecho.index("_render_topo_medido(medidas, tabela_m,") < trecho.index(
         "_render_topo_reconstruido(resumo, tabela)")
     assert "fontes = _carregar_fontes_expectativa(medidas)" in trecho
     assert "render_expectativa(resultados, tabela, fontes)" in trecho
+    # As fontes do Bloco 3 saem antes do topo: a legenda da tabela diz de
+    # onde o bloco tira os números.
+    assert trecho.index("fontes = _carregar_fontes_expectativa(medidas)") < (
+        trecho.index("_render_topo_medido(medidas, tabela_m,"))
+    assert "_tela_toda_medida(tabela_m, fontes)" in trecho
 
 
 def test_medicao_gravada_da_a_tabela_do_topo_de_2017_a_2025():
@@ -3162,3 +3167,17 @@ def test_grau_de_confianca_nomeia_as_fontes_da_expectativa():
     assert "bandas da expectativa" in nota
     assert "data/vantagem_oos.json" in nota
     assert "ainda refaz" not in nota
+
+
+def test_legenda_da_tabela_diz_de_onde_o_bloco3_tira_os_numeros():
+    """A legenda sob a tabela dizia que o Bloco 3 "ainda refaz as safras com
+    os segmentos aprovados hoje" depois que ele passou a ler as carteiras de
+    cada abril. A frase segue a fonte de fato usada."""
+    from views.portfolio_b3_safras import legenda_colunas_medida
+    medido = legenda_colunas_medida(True)
+    assert "carteira escolhida em cada abril" in medido
+    assert "aprovados hoje" not in medido and "ainda" not in medido
+    reconstruido = legenda_colunas_medida(False)
+    assert "reconstrução com os segmentos aprovados hoje" in reconstruido
+    fonte = (RAIZ / "views" / "portfolio_b3_safras.py").read_text(encoding="utf-8")
+    assert "ainda refaz" not in fonte

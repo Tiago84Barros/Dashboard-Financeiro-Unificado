@@ -553,7 +553,24 @@ def _column_config_medida() -> dict:
     return cfg
 
 
-def _render_topo_medido(medidas: dict, tabela_m: pd.DataFrame) -> None:
+def legenda_colunas_medida(bloco3_medido: bool) -> str:
+    """Legenda sob a tabela medida. A última frase diz de onde o Bloco 3
+    ("O que esperar da safra vigente") tira os números: com as fontes
+    medidas ele usa as carteiras de cada abril, e só sem elas volta à
+    reconstrução com os segmentos aprovados hoje."""
+    txt = ("Líder líquida = bruta − custo do giro, sem IR, como no gráfico. "
+           "\"Com IR\" desconta também o imposto da troca de abril. Pesos "
+           "iguais, Selic e Ibovespa seguem brutos.")
+    if bloco3_medido:
+        return txt + (" O bloco \"O que esperar da safra vigente\", mais "
+                      "abaixo, também usa a carteira escolhida em cada abril.")
+    return txt + (" O bloco \"O que esperar da safra vigente\", mais abaixo, "
+                  "ainda usa em parte a reconstrução com os segmentos "
+                  "aprovados hoje, e diz onde.")
+
+
+def _render_topo_medido(medidas: dict, tabela_m: pd.DataFrame,
+                        bloco3_medido: bool) -> None:
     """Legenda, os três cartões e a tabela das safras medidas."""
     resumo = resumo_medido(tabela_m)
     st.caption(legenda_tabela_medida(medidas, resumo))
@@ -581,11 +598,7 @@ def _render_topo_medido(medidas: dict, tabela_m: pd.DataFrame) -> None:
                          ajuda="Contagem, não significância")
     st.dataframe(tabela_m, width="stretch", hide_index=True,
                  column_config=_column_config_medida())
-    st.caption("Líder líquida = bruta − custo do giro, sem IR, como no gráfico. "
-               "\"Com IR\" desconta também o imposto da troca de abril. Pesos "
-               "iguais, Selic e Ibovespa seguem brutos. O bloco \"O que esperar "
-               "da safra vigente\", mais abaixo, ainda refaz as safras com os "
-               "segmentos aprovados hoje.")
+    st.caption(legenda_colunas_medida(bloco3_medido))
     detalhe_tecnico(premissas_medidas(medidas),
                     codigo="portfolio_b3.safras_premissas_medidas")
 
@@ -857,16 +870,17 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
     completas = resumo["completas"]
     medidas = _carregar_medidas()
     tabela_m = tabela_medida(medidas)
+    fontes = _carregar_fontes_expectativa(medidas)
 
     if not tabela_m.empty:
-        _render_topo_medido(medidas, tabela_m)
+        _render_topo_medido(medidas, tabela_m,
+                            _tela_toda_medida(tabela_m, fontes))
     else:
         _render_topo_reconstruido(resumo, tabela)
 
     if not completas.empty or not tabela_m.empty:
         _render_grafico_safras(completas, medidas)
 
-    fontes = _carregar_fontes_expectativa(medidas)
     render_expectativa(resultados, tabela, fontes)
 
     # Com o topo e o Bloco 3 nas safras medidas, a reconstrução não aparece
