@@ -61,6 +61,9 @@ def _warehouse_url() -> str:
 
 
 def main() -> int:
+    from scripts._saida_utf8 import saida_utf8
+
+    saida_utf8()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
