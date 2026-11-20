@@ -341,24 +341,31 @@ def test_render_safras_passa_column_config_ao_st_dataframe():
     `apptest-vaza-atribuicao-de-modulo`)."""
     caminho = RAIZ / "views" / "portfolio_b3_safras.py"
     arvore = ast.parse(caminho.read_text(encoding="utf-8"))
-    render = next(
-        no for no in ast.walk(arvore)
-        if isinstance(no, ast.FunctionDef) and no.name == "render_safras"
-    )
-    chamadas_dataframe = [
-        no for no in ast.walk(render)
-        if isinstance(no, ast.Call)
-        and isinstance(no.func, ast.Attribute)
-        and no.func.attr == "dataframe"
-    ]
-    assert chamadas_dataframe, "render_safras nao chama st.dataframe"
-    kwargs_passados = {
-        kw.arg for chamada in chamadas_dataframe for kw in chamada.keywords
-    }
-    assert "column_config" in kwargs_passados, (
-        "st.dataframe em render_safras nao recebe column_config -- a "
-        "formatacao de 1 casa de _column_config_retorno() nao esta cabeada"
-    )
+    # Desde o PR 784 a tabela sai de um de dois topos chamados por
+    # `render_safras`: o medido (escolhas de cada abril) e o reconstruído.
+    for nome, config in (("_render_topo_medido", "_column_config_medida"),
+                         ("_render_topo_reconstruido", "_column_config_retorno")):
+        render = next(
+            no for no in ast.walk(arvore)
+            if isinstance(no, ast.FunctionDef) and no.name == nome
+        )
+        chamadas_dataframe = [
+            no for no in ast.walk(render)
+            if isinstance(no, ast.Call)
+            and isinstance(no.func, ast.Attribute)
+            and no.func.attr == "dataframe"
+        ]
+        assert chamadas_dataframe, f"{nome} nao chama st.dataframe"
+        configs = {
+            kw.value.func.id for chamada in chamadas_dataframe
+            for kw in chamada.keywords
+            if kw.arg == "column_config" and isinstance(kw.value, ast.Call)
+            and isinstance(kw.value.func, ast.Name)
+        }
+        assert config in configs, (
+            f"st.dataframe em {nome} nao recebe column_config={config}() -- "
+            "a formatacao de 1 casa nao esta cabeada"
+        )
 
 
 def test_colunas_retorno_esta_contida_em_colunas_tabela():
@@ -2842,7 +2849,7 @@ def test_vitorias_sobre_pesos_iguais_conta_so_safras_comuns():
     assert vitorias_sobre_pesos_iguais(m) == {"concentrada": (2, 3), "nota_fatores": (0, 1)}
 
 
-def test_legenda_barras_nomeia_escolha_do_ano_caixa_e_tabela_de_hoje():
+def test_legenda_barras_nomeia_escolha_do_ano_e_caixa():
     from views.portfolio_b3_safras import legenda_barras_medidas
     m = {"perfil": "Equilibrado (padrão)", "em_caixa": [2017, 2030],
          "series": {"concentrada": {2017: 0.08, 2018: 0.2},
@@ -2851,7 +2858,8 @@ def test_legenda_barras_nomeia_escolha_do_ano_caixa_e_tabela_de_hoje():
     assert "escolhida em abril daquele ano" in txt
     assert "1 de 2" in txt and "contagem, não prova" in txt
     assert "Em 2017, a líder" in txt and "2030" not in txt
-    assert "segmentos que o portão aprova hoje" in txt
+    # A tabela do topo agora também é a medida: nada de "segmentos de hoje".
+    assert "aprova hoje" not in txt
 
 
 def test_render_grafico_usa_barras_medidas_e_cai_para_a_tabela():
@@ -2927,3 +2935,98 @@ def test_medicao_gravada_tem_a_selic_pela_meta_de_2025():
     m = _carregar_medidas()
     assert m["selic_pela_meta"].get(2025) == ["2026-02", "2026-03"]
     assert "2026-02 e 2026-03" in frase_selic_pela_meta(m, range(2017, 2026))
+
+
+# ── Tabela e cartões do topo pelas escolhas de cada abril (PR 784) ──
+
+def _medicao_completa():
+    m = _medicao_carteira([(2019, -0.07, -0.074, 0.055, -0.24),
+                           (2020, 0.77, 0.54, 0.024, 0.62),
+                           (2021, 0.065, 0.04, 0.065, 0.03)], em_caixa=[2021])
+    var = m["perfis"]["Equilibrado (padrão)"]["variantes"]["sem_portao"]
+    var["safras_sem_carteira"] = [2015]
+    var["safras"][0].update(bruto=-0.068, liquido_com_ir=-0.079, giro=0.76,
+                            custo=0.002, n_ativos=13, maiores="BRML3 8%")
+    var["safras"][1].update(bruto=0.772, liquido_com_ir=0.77, giro=0.9,
+                            custo=0.002, n_ativos=12, maiores="ITSA3 9%")
+    var["safras"][2].update(bruto=0.065, liquido_com_ir=0.065, giro=0.0,
+                            custo=0.0, n_ativos=0, maiores="caixa a Selic", caixa=True)
+    m["custos"] = {"cobrado": "meia spread na compra e na venda",
+                   "ir": "15% sobre ganho realizado"}
+    return m
+
+
+def test_tabela_medida_le_a_carteira_de_cada_abril():
+    from views.portfolio_b3_safras import series_medidas, tabela_medida
+    m = series_medidas(_medicao_completa(),
+                       _medicao_nf([(2019, -0.04, -0.074), (2020, 0.58, 0.54)]))
+    t = tabela_medida(m)
+    assert list(t["Safra"]) == [2019, 2020, 2021]
+    linha = t.set_index("Safra").loc[2020]
+    assert linha["Líder líquida (%)"] == pytest.approx(77.0)
+    assert linha["Líder − Selic (pp)"] == pytest.approx(74.6)
+    assert linha["Líder − pesos iguais (pp)"] == pytest.approx(23.0)
+    assert linha["Nota + fatores (%)"] == pytest.approx(58.0)
+    assert linha["Líder bruta (%)"] == pytest.approx(77.2)
+    assert linha["Ações"] == 12 and linha["Maiores posições"] == "ITSA3 9%"
+    # Nota + fatores sem a safra 2021: célula vazia, linha mantida.
+    assert pd.isna(t.set_index("Safra").loc[2021, "Nota + fatores (%)"])
+    assert tabela_medida(series_medidas(None, None)).empty
+
+
+def test_resumo_medido_conta_safras_e_excesso_sobre_a_selic():
+    from views.portfolio_b3_safras import resumo_medido, series_medidas, tabela_medida
+    r = resumo_medido(tabela_medida(series_medidas(_medicao_completa(), None)))
+    assert r["n_medidas"] == 3 and (r["safra_min"], r["safra_max"]) == (2019, 2021)
+    # 2019: -12,5; 2020: +74,6; 2021: 0 (caixa empata, não vence).
+    assert r["media_excesso"] == pytest.approx((-12.5 + 74.6 + 0.0) / 3)
+    assert r["venceu"] == 1
+    assert r["media_excesso_bruto"] == pytest.approx((-12.3 + 74.8 + 0.0) / 3)
+    assert r["media_excesso_com_ir"] == pytest.approx((-13.4 + 74.6 + 0.0) / 3)
+    vazio = resumo_medido(tabela_medida({}))
+    assert vazio["n_medidas"] == 0 and vazio["media_excesso"] is None
+
+
+def test_legenda_tabela_medida_nomeia_o_que_ficou_de_fora():
+    from views.portfolio_b3_safras import (
+        legenda_tabela_medida,
+        premissas_medidas,
+        resumo_medido,
+        series_medidas,
+        tabela_medida,
+    )
+    m = series_medidas(_medicao_completa(), None)
+    txt = legenda_tabela_medida(m, resumo_medido(tabela_medida(m)))
+    assert txt.startswith("3 safra(s) medida(s), de 2019 a 2021.")
+    assert "escolhida em abril daquele ano" in txt
+    assert "Em 2015, nenhum segmento passou" in txt
+    assert "Em 2021, a líder de cada segmento" in txt
+    assert "safra vigente ainda não fechou" in txt
+    assert "meia spread" in premissas_medidas(m) and "15%" in premissas_medidas(m)
+    assert "não traz" in premissas_medidas({})
+
+
+def test_render_safras_usa_a_tabela_medida_e_so_cai_para_a_reconstrucao_sem_ela():
+    """Siga a chamada: o topo medido vem antes; a reconstrução só desenha o
+    topo quando não há medição da líder, e segue alimentando o Bloco 3."""
+    fonte = (RAIZ / "views" / "portfolio_b3_safras.py").read_text(encoding="utf-8")
+    trecho = ast.get_source_segment(fonte, _funcao_da_view("render_safras"))
+    assert "tabela_m = tabela_medida(medidas)" in trecho
+    assert trecho.index("_render_topo_medido(medidas, tabela_m)") < trecho.index(
+        "_render_topo_reconstruido(resumo, tabela)")
+    assert "render_expectativa(resultados, tabela)" in trecho
+
+
+def test_medicao_gravada_da_a_tabela_do_topo_de_2017_a_2025():
+    from views.portfolio_b3_safras import (
+        _carregar_medidas,
+        resumo_medido,
+        tabela_medida,
+    )
+    m = _carregar_medidas()
+    t = tabela_medida(m)
+    assert list(t["Safra"]) == list(range(2017, 2026))
+    r = resumo_medido(t)
+    assert r["n_medidas"] == 9
+    assert m["sem_carteira"] == [2015, 2016] and m["em_caixa"] == [2017]
+    assert t["Maiores posições"].str.len().gt(0).all()
