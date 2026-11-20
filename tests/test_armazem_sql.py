@@ -347,3 +347,14 @@ def test_gravar_linha_troca_sem_duplicar(tmp_path):
     papel.gravar_linha(env, "ARMAZEM_SQL_DB_URL", "nova")
     assert env.read_text(encoding="utf-8").splitlines() == [
         "A=1", "B=2", "ARMAZEM_SQL_DB_URL=nova"]
+
+
+def test_espera_do_cliente_cobre_o_corte_do_servidor_e_cabe_no_tunel():
+    """Corte do servidor < espera do cliente < 100 s da Cloudflare.
+
+    Se o cliente espera menos que o corte, desiste antes de receber o erro do
+    servidor; se espera mais que 100 s, o túnel já derrubou a resposta.
+    """
+    corte_s = asql.TIMEOUT_MS / 1000
+    leitura_s = ar.TIMEOUT_SQL[1]
+    assert corte_s < leitura_s < 100
