@@ -3700,9 +3700,9 @@ def render(show_header: bool = True) -> None:
             df_set["ticker"].isin(set(df_set_vivas["ticker"]))
         ].copy()
         st.session_state["pb3_precos_all"] = df_precos_all
-        # Carteira ampla "nota + fatores" (alternativa medida): o histórico de
-        # fundamentos não fica na sessão, então ela se forma aqui, no Rodar.
-        # Falha nela não derruba a carteira principal: a seção diz que falta.
+        # Carteira ampla "nota + fatores" (estratégia padrão desde 20/11/2026):
+        # o histórico de fundamentos não fica na sessão, então ela se forma
+        # aqui, no Rodar. Falha nela não derruba a rodada: a seção diz que falta.
         try:
             from core.b3_portfolio_presets import PRESETS as _PRESETS_NF
             from core.b3_portfolio_presets import identificar_perfil as _perfil_nf
@@ -4051,6 +4051,19 @@ def render(show_header: bool = True) -> None:
 
     # ── EVIDÊNCIA NO UNIVERSO (amplitude real, sem multiplicidade) ───────────
     _render_evidencia_universo(resultados)
+
+    # ── ESTRATÉGIA: nota + fatores é a padrão (decisão de 20/11/2026) ─────────
+    # A escolha vem antes do portão qualitativo: a carteira ampla não passa
+    # por ele, e abrir a aba na padrão não gasta chamada de LLM. A líder de
+    # cada segmento continua inteira atrás da outra opção.
+    st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
+                unsafe_allow_html=True)
+    if _nota_fatores.escolher_estrategia() == _nota_fatores.ESTRATEGIA_NOTA_FATORES:
+        _rota_nota_fatores(
+            aprovados or resultados, df_precos_all,
+            selic_hist=selic_hist, taxa_selic_aa=taxa_selic_aa,
+        )
+        return
 
     # ── EMPRESAS LÍDERES PARA O PRÓXIMO ANO ──────────────────────────────────
     st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
@@ -5185,14 +5198,7 @@ def _render_analises_da_carteira(
     # segmentos que a tela recomenda. Na rota de revisao sem nenhum segmento
     # aprovado, a composicao sai de todos os segmentos analisados
     # (`b3_review`), e as safras seguem esse mesmo conjunto -- dito na tela.
-    # Selic realizada mes a mes (achado D13, 17/11/2026): a meta do fim do
-    # ano nao e o que o caixa rendeu na janela abr->mar. Falha de leitura nao
-    # derruba a tela: `render_safras` cai na meta e a legenda diz isso.
-    try:
-        selic_mensal = _db.load_selic_mensal()
-    except Exception as exc:  # noqa: BLE001 -- fonte opcional, nomeada na legenda
-        logger.warning("Selic mensal indisponivel (%s); safras usam a meta", exc)
-        selic_mensal = {}
+    selic_mensal = _selic_mensal()
     render_safras(
         safras_base if safras_base is not None else aprovados,
         df_precos_all,
@@ -5201,11 +5207,56 @@ def _render_analises_da_carteira(
         selic_mensal=selic_mensal,
     )
 
-    # ── Carteira ampla "nota + fatores" (alternativa medida) ─────────────────
-    _estado_nf = st.session_state.get(_nota_fatores.CHAVE_ESTADO) or {}
-    _nota_fatores.render_nota_fatores(perfil_ativo=_estado_nf.get("perfil"))
+    # A nota + fatores, padrão da aba desde 20/11/2026, tem rota própria
+    # (`_rota_nota_fatores`); aqui só a líder de cada segmento.
 
     # ── Metodologia e referências científicas ────────────────────────────────
+    _render_metodologia_portfolio()
+
+
+def _selic_mensal() -> dict[tuple[int, int], float]:
+    """Selic realizada mês a mês para as safras (achado D13, 17/11/2026).
+
+    A meta do fim do ano não é o que o caixa rendeu na janela abr->mar. Falha
+    de leitura não derruba a tela: `render_safras` cai na meta e a legenda
+    diz isso.
+    """
+    try:
+        return _db.load_selic_mensal()
+    except Exception as exc:  # noqa: BLE001 -- fonte opcional, nomeada na legenda
+        logger.warning("Selic mensal indisponivel (%s); safras usam a meta", exc)
+        return {}
+
+
+def _rota_nota_fatores(
+    base_safras: list[dict],
+    df_precos_all: pd.DataFrame,
+    *,
+    selic_hist: dict[int, float],
+    taxa_selic_aa: float,
+) -> None:
+    """Estratégia padrão da aba: a carteira ampla nota + fatores.
+
+    Mostra a lista de hoje e a medição dela; depois, as safras ano a ano
+    (onde a nota + fatores aparece ao lado da líder, de pesos iguais, da Selic
+    e do Ibovespa) e a metodologia. Não passa pelo portão qualitativo, pela
+    guarda de entrada nem pelos tetos -- a medição também não passou --, e
+    por isso não chama LLM.
+
+    `base_safras` só alimenta a reconstrução de reserva de `render_safras`
+    (quando falta a medição gravada da líder): os segmentos aprovados, ou
+    todos os analisados se nenhum foi aprovado, como na rota de revisão.
+    """
+    _estado_nf = st.session_state.get(_nota_fatores.CHAVE_ESTADO) or {}
+    _nota_fatores.render_nota_fatores(perfil_ativo=_estado_nf.get("perfil"))
+    selic_mensal = _selic_mensal()
+    render_safras(
+        base_safras,
+        df_precos_all,
+        selic_por_ano=selic_hist,
+        taxa_selic_aa=taxa_selic_aa,
+        selic_mensal=selic_mensal,
+    )
     _render_metodologia_portfolio()
 
 

@@ -1,9 +1,9 @@
 """
 views/portfolio_b3_nota_fatores.py — carteira ampla "nota + fatores" na aba B3.
 
-Alternativa medida à carteira concentrada: em vez de escolher o líder de cada
-segmento, tira os 30% de pior sinal do universo comprável e divide igualmente
-entre o resto. A regra mora em `core/b3_nota_fatores.py` (a mesma que a
+Estratégia padrão da aba desde 20/11/2026 (antes, alternativa medida à
+carteira concentrada): em vez de escolher o líder de cada segmento, tira
+os 30% de pior sinal do universo comprável e divide igualmente entre o resto. A regra mora em `core/b3_nota_fatores.py` (a mesma que a
 medição usa); a evidência vem gravada em `data/oos_nota_fatores_b3.json` por
 `scripts/medir_nota_fatores_b3.py`.
 
@@ -37,6 +37,35 @@ CAMINHO_MEDICAO = Path(__file__).resolve().parents[1] / "data" / "oos_nota_fator
 
 #: Chave do estado da sessão onde o "Rodar" da aba guarda a carteira de hoje.
 CHAVE_ESTADO = "pb3_nota_fatores"
+
+#: Estratégia da aba (decisão do usuário de 20/11/2026): a nota + fatores é a
+#: padrão, por ser a única variante da B3 com vantagem medida sobre pesos
+#: iguais cujo IC 95% fica fora do zero; a líder de cada segmento segue como
+#: opção, com o portão, a guarda e o botão de salvar a carteira-modelo.
+ESTRATEGIA_NOTA_FATORES = "nota_fatores"
+ESTRATEGIA_LIDER = "lider"
+ESTRATEGIAS = {
+    ESTRATEGIA_NOTA_FATORES: "🧺 Nota + fatores (padrão)",
+    ESTRATEGIA_LIDER: "🏆 Líder de cada segmento",
+}
+CHAVE_ESTRATEGIA = "pb3_estrategia"
+
+
+def escolher_estrategia() -> str:
+    """Seletor da estratégia; abre na nota + fatores."""
+    escolha = st.radio(
+        "Estratégia",
+        options=list(ESTRATEGIAS),
+        index=0,
+        format_func=ESTRATEGIAS.get,
+        horizontal=True,
+        key=CHAVE_ESTRATEGIA,
+        help="Nota + fatores é a padrão: tira os 30% piores do universo e divide "
+             "igual entre o resto. Líder de cada segmento escolhe uma ou poucas "
+             "empresas por segmento aprovado e é a que pode ser salva como "
+             "carteira-modelo.",
+    )
+    return escolha if escolha in ESTRATEGIAS else ESTRATEGIA_NOTA_FATORES
 
 
 def formar_hoje(resultados: list[dict], precos: pd.DataFrame,
@@ -171,23 +200,26 @@ def _render_acumulado(dados: dict) -> None:
 
 
 def render_nota_fatores(perfil_ativo: str | None = None) -> None:
-    """Seção "Carteira ampla: nota + fatores" da aba de Criação de Portfólio B3."""
+    """Seção "Carteira padrão: nota + fatores" da aba de Criação de Portfólio B3.
+
+    Desenhada logo abaixo do seletor de estratégia (``escolher_estrategia``),
+    que já traz o divisor.
+    """
     import core.b3_oos_carteira as oos
     from core.b3_methodology import SCORE_VERSION
     from core.b3_portfolio_presets import VERSION as PRESETS_VERSION
 
-    st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
-                unsafe_allow_html=True)
     st.markdown(
         '<div style="font-size:0.75rem;font-weight:700;color:var(--app-text);'
-        'margin:18px 0 8px;">🧺 Carteira ampla: nota + fatores (alternativa medida)</div>',
+        'margin:18px 0 8px;">🧺 Carteira padrão: nota + fatores</div>',
         unsafe_allow_html=True)
     st.caption(
-        "Outra forma de usar a mesma nota. Em vez de escolher o líder de cada "
+        "A estratégia padrão desta aba. Em vez de escolher o líder de cada "
         "segmento, a carteira **tira os 30% piores** do universo e divide "
         "igualmente entre o resto. O sinal junta a nota do motor com três "
         "fatores de mercado: momento, baixa volatilidade e ROE. A carteira é "
-        "refeita uma vez por ano, em abril.")
+        "refeita uma vez por ano, em abril. A líder de cada segmento continua "
+        "no seletor acima.")
 
     dados = oos.carregar(CAMINHO_MEDICAO)
     motivos = oos.vencida(dados, SCORE_VERSION, PRESETS_VERSION,
@@ -215,8 +247,8 @@ def render_nota_fatores(perfil_ativo: str | None = None) -> None:
             card_metrica("Só a nota, tirando 30%", _fmt_pp(so_nota.get("media")),
                          ajuda="Mesma régua, com o sinal só da nota do motor.")
         with c3:
-            card_metrica("Carteira concentrada da aba", _fmt_pp(concentrada.get("media")),
-                         ajuda="A carteira de líderes por segmento, sem o portão de "
+            card_metrica("Líder de cada segmento", _fmt_pp(concentrada.get("media")),
+                         ajuda="A outra estratégia da aba, sem o portão de "
                                "LLM, na mesma rodada e na mesma régua.")
         st.caption(oos.leitura_honesta(resumo))
         _render_acumulado(dados)
@@ -224,7 +256,7 @@ def render_nota_fatores(perfil_ativo: str | None = None) -> None:
             f"Medido em {len(dados.get('safras') or [])} safras "
             f"({html.escape(str(dados.get('janela') or '—'))}). É pouco ano e o "
             "efeito é pequeno: um ano ruim pode apagar a vantagem. Use como "
-            "alternativa ampla, não como promessa.")
+            "ponto de partida, não como promessa.")
         detalhe_tecnico(
             "Fora da regra medida: " + "; ".join(dados.get("fora_da_regra") or [])
             + ". Custos: " + str((dados.get("custos") or {}).get("cobrado") or "—")
