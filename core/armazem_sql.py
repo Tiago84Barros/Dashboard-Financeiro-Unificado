@@ -40,7 +40,12 @@ LINHAS_MAX = 400_000
 SQL_MAX_CARACTERES = 20_000
 PARAMS_MAX = 50
 LISTA_MAX = 5_000
-TIMEOUT_MS = 20_000
+#: Corte de cada SELECT. Era 20 s; o giro diário da B3 leva ~14 s com o banco
+#: frio, perto demais do corte -- estourar vira "armazém não respondeu" na tela
+#: e a cópia congelada do Supabase por até 12 h. O cliente
+#: (``armazem_remoto.TIMEOUT_SQL``) espera mais que isto, e o túnel da
+#: Cloudflare derruba a resposta aos 100 s: TIMEOUT_MS < espera < 100 s.
+TIMEOUT_MS = 45_000
 
 # Parênteses na frente valem: `(SELECT … LIMIT 1) UNION ALL (SELECT …)` é a
 # forma do dossiê para o preço de hoje e o de um ano atrás.

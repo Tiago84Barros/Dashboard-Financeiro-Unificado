@@ -33,9 +33,11 @@ import threading
 import time
 
 TIMEOUT = (3.05, 10)
-#: A rota /sql roda SELECTs de até ``armazem_sql.TIMEOUT_MS`` (20 s) e devolve
-#: dezenas de milhares de linhas: a leitura espera mais que nas rotas prontas.
-TIMEOUT_SQL = (3.05, 45)
+#: A rota /sql roda SELECTs de até ``armazem_sql.TIMEOUT_MS`` (45 s) e devolve
+#: dezenas de milhares de linhas: a leitura espera mais que nas rotas prontas,
+#: e mais que o corte do servidor (senão o cliente desiste antes do erro dele).
+#: Abaixo dos 100 s em que o túnel da Cloudflare derruba a resposta.
+TIMEOUT_SQL = (3.05, 75)
 VALIDADE_S = 300
 PAUSA_APOS_FALHA_S = 60
 
