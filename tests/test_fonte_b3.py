@@ -367,3 +367,203 @@ def test_aviso_unico_serve_empresas_b3_e_o_roteador(monkeypatch):
     monkeypatch.setattr(fb, "aviso_reserva", lambda: None)
     componentes.aviso_fonte_reserva_b3(_Slot())
     assert escritos == []
+
+
+# ── O armazém voltou: cache limpo e aviso retirado (20/11/2026) ──────────────
+
+@pytest.fixture
+def volta(remoto):
+    """Relógio dublê, cache dublê e uma reserva registrada no instante 0."""
+    agora = [1_000_000.0]
+    limpezas: list[int] = []
+    remoto.setattr(fb3, "_agora", lambda: agora[0])
+    remoto.setattr(fb3, "_limpar_caches", lambda: limpezas.append(1))
+
+    def _cai(sql, params):
+        raise ArmazemRemotoIndisponivel("sem resposta (ChunkedEncodingError)")
+
+    remoto.setattr(fb3, "_consultar_tunel", _cai)
+    fb3.consultar(SQL, None, ler_direto=_Leitor())
+    assert fb3.aviso_reserva() is not None
+    return agora, limpezas
+
+
+def _tunel_responde(remoto, perguntas: list):
+    def _ok(sql, params):
+        perguntas.append(sql)
+        return pd.DataFrame({"ok": [1]})
+
+    remoto.setattr(fb3, "_consultar_tunel", _ok)
+
+
+def test_sem_reserva_nao_pergunta_nada(remoto):
+    perguntas: list = []
+    _tunel_responde(remoto, perguntas)
+    assert fb3.conferir_volta() is False
+    assert perguntas == []
+
+
+def test_reserva_recente_espera_o_intervalo_antes_de_perguntar(volta, remoto):
+    agora, limpezas = volta
+    perguntas: list = []
+    _tunel_responde(remoto, perguntas)
+    agora[0] += fb3.INTERVALO_CONFERE_S - 1
+    assert fb3.conferir_volta() is False
+    assert perguntas == [] and limpezas == []
+
+
+def test_armazem_que_voltou_limpa_o_cache_e_tira_o_aviso(volta, remoto):
+    agora, limpezas = volta
+    perguntas: list = []
+    _tunel_responde(remoto, perguntas)
+    agora[0] += fb3.INTERVALO_CONFERE_S
+    assert fb3.conferir_volta() is True
+    assert perguntas == ["SELECT 1 AS ok"] and limpezas == [1]
+    assert fb3.aviso_reserva() is None
+    # Sem reserva nova, nada mais a conferir.
+    agora[0] += 10 * fb3.INTERVALO_CONFERE_S
+    assert fb3.conferir_volta() is False and perguntas == ["SELECT 1 AS ok"]
+
+
+def test_armazem_ainda_fora_mantem_o_aviso_e_pergunta_de_minuto_em_minuto(volta, remoto):
+    agora, limpezas = volta
+    perguntas: list = []
+
+    def _cai(sql, params):
+        perguntas.append(sql)
+        raise ArmazemRemotoIndisponivel("HTTP 530")
+
+    remoto.setattr(fb3, "_consultar_tunel", _cai)
+    agora[0] += fb3.INTERVALO_CONFERE_S
+    assert fb3.conferir_volta() is False
+    assert fb3.conferir_volta() is False  # mesmo minuto: não pergunta de novo
+    assert len(perguntas) == 1 and limpezas == []
+    assert fb3.aviso_reserva() is not None
+    agora[0] += fb3.INTERVALO_CONFERE_S
+    assert fb3.conferir_volta() is False and len(perguntas) == 2
+
+
+def test_reserva_nova_durante_a_pergunta_mantem_o_aviso(volta, remoto):
+    agora, limpezas = volta
+
+    def _ok_mas_outra_caiu(sql, params):
+        fb3._registrar_reserva("outra leitura caiu agora")
+        return pd.DataFrame({"ok": [1]})
+
+    remoto.setattr(fb3, "_consultar_tunel", _ok_mas_outra_caiu)
+    agora[0] += fb3.INTERVALO_CONFERE_S
+    assert fb3.conferir_volta() is True and limpezas == [1]
+    assert fb3.aviso_reserva() == "outra leitura caiu agora"
+
+
+def test_papel_local_que_voltou_tambem_conta(volta, remoto):
+    agora, _ = volta
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, sql):
+            return None
+
+    class _Engine:
+        def connect(self):
+            return _Conn()
+
+    remoto.setattr(fb3, "_url_papel", lambda: "postgresql://app4_leitura@localhost/db")
+    remoto.setattr(fb3, "_engine_do_papel", lambda url: _Engine())
+    agora[0] += fb3.INTERVALO_CONFERE_S
+    assert fb3.conferir_volta() is True and fb3.aviso_reserva() is None
+
+
+def test_roteador_confere_a_volta_antes_de_desenhar_a_tela():
+    """Depois do desenho seria tarde: a tela mostraria a cópia sem o aviso."""
+    from pathlib import Path
+
+    fonte = Path(__file__).resolve().parents[1].joinpath("app.py").read_text(encoding="utf-8")
+    assert fonte.index("conferir_volta()") < fonte.index("modulo.render()")
+
+
+def test_resultado_guardado_com_a_reserva_avisa_quando_o_armazem_volta(monkeypatch):
+    import design.componentes as comp
+
+    estado: dict = {}
+    avisos: list[str] = []
+    monkeypatch.setattr(comp.st, "session_state", estado)
+    monkeypatch.setattr(comp.st, "warning", avisos.append)
+    monkeypatch.setattr(comp, "detalhe_tecnico", lambda *a, **k: None)
+
+    monkeypatch.setattr(fb3, "aviso_reserva", lambda: "túnel caiu")
+    comp.guardar_fonte_do_resultado_b3("pb3_fonte_reserva")
+    assert estado["pb3_fonte_reserva"] == "túnel caiu"
+    # Armazém ainda fora: o aviso do topo cobre, este fica calado.
+    comp.aviso_resultado_da_reserva_b3("pb3_fonte_reserva", "gere o portfólio")
+    assert avisos == []
+    # Armazém voltou: o resultado guardado continua velho e a tela diz.
+    monkeypatch.setattr(fb3, "aviso_reserva", lambda: None)
+    comp.aviso_resultado_da_reserva_b3("pb3_fonte_reserva", "gere o portfólio")
+    assert len(avisos) == 1 and "gere o portfólio de novo" in avisos[0]
+
+
+def test_resultado_gerado_com_o_armazem_nao_avisa(monkeypatch):
+    import design.componentes as comp
+
+    estado: dict = {}
+    avisos: list[str] = []
+    monkeypatch.setattr(comp.st, "session_state", estado)
+    monkeypatch.setattr(comp.st, "warning", avisos.append)
+    monkeypatch.setattr(fb3, "aviso_reserva", lambda: None)
+    comp.guardar_fonte_do_resultado_b3("pb3_fonte_reserva")
+    comp.aviso_resultado_da_reserva_b3("pb3_fonte_reserva", "gere o portfólio")
+    assert estado["pb3_fonte_reserva"] is None and avisos == []
+
+
+@pytest.mark.parametrize("chave, view, funcao, avaliador", [
+    ("pb3_intel_cache", "views.portfolio_b3", "_intel_avaliar_cached", "veredito.avaliar_acao_b3"),
+    ("pb3_quali_cache", "views.portfolio_b3", "_quali_avaliar_cached", "avaliar_para_selecao"),
+    ("fii_intel_cache", "views.fiis", "_intel_avaliar_fii", "veredito.avaliar_ativo"),
+    ("us_intel_cache", "views.empresas_americanas", "_intel_avaliar_us", "veredito.avaliar_ativo"),
+])
+def test_parecer_guardado_na_sessao_e_refeito_quando_o_armazem_volta(
+        volta, remoto, monkeypatch, chave, view, funcao, avaliador):
+    """Achado do Codex no #787: o parecer da sessão feito com a cópia
+    decidia veto e troca da carteira gerada de novo depois da volta."""
+    import importlib
+
+    import streamlit as st
+
+    agora, _ = volta
+    estado: dict = {}
+    monkeypatch.setattr(st, "session_state", estado)
+    mod = importlib.import_module(view)
+    chamadas: list[str] = []
+
+    def _avalia(tk, *a, **k):
+        chamadas.append(tk)
+        return {"classificacao": f"parecer {len(chamadas)}"}
+
+    alvo, _, nome = avaliador.rpartition(".")
+    monkeypatch.setattr(getattr(mod, alvo) if alvo else mod, nome, _avalia)
+
+    primeiro = getattr(mod, funcao)("ABCD3")
+    assert getattr(mod, funcao)("ABCD3") == primeiro and len(chamadas) == 1
+
+    _tunel_responde(remoto, [])
+    agora[0] += fb3.INTERVALO_CONFERE_S
+    assert fb3.conferir_volta() is True
+    segundo = getattr(mod, funcao)("ABCD3")
+    assert len(chamadas) == 2 and segundo != primeiro
+    assert estado[chave] == {"ABCD3": segundo}
+
+
+def test_cache_de_sessao_sem_marca_vale_para_a_geracao_atual(monkeypatch):
+    """Dicionário guardado antes deste PR (ou por teste) é aproveitado."""
+    import streamlit as st
+
+    estado = {"pb3_quali_cache": {"AAAA3": {"classificacao": "vetar"}}}
+    monkeypatch.setattr(st, "session_state", estado)
+    assert fb3.cache_de_sessao("pb3_quali_cache") == {"AAAA3": {"classificacao": "vetar"}}
+    assert estado["pb3_quali_cache__geracao"] == fb3.geracao()

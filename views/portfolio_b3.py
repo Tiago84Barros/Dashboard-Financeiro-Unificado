@@ -667,7 +667,8 @@ def _simular_seg_backtest(
 
 def _quali_avaliar_cached(tk: str) -> dict:
     """Parecer de seleção com cache de sessão (o LLM já tem cache diário)."""
-    cache = st.session_state.setdefault("pb3_quali_cache", {})
+    from core.fonte_b3 import cache_de_sessao
+    cache = cache_de_sessao("pb3_quali_cache")
     if tk not in cache:
         try:
             cache[tk] = avaliar_para_selecao(tk)
@@ -699,7 +700,8 @@ def _registrar_aviso_ancoragem(log: dict, tk: str, aval: dict) -> None:
 def _intel_avaliar_cached(tk: str, setor: str | None = None):
     """Avaliação por regras da Inteligência dos Ativos, com cache de sessão.
     Falha não é guardada: o portão é fail-open e tenta de novo no rerun."""
-    cache = st.session_state.setdefault("pb3_intel_cache", {})
+    from core.fonte_b3 import cache_de_sessao
+    cache = cache_de_sessao("pb3_intel_cache")
     chave = str(tk).upper().replace(".SA", "")
     if chave not in cache:
         cache[chave] = veredito.avaliar_acao_b3(chave, None, setor)
@@ -3691,6 +3693,9 @@ def render(show_header: bool = True) -> None:
 
         prog.empty()
         st.session_state["pb3_resultados"] = resultados
+        from design.componentes import guardar_fonte_do_resultado_b3
+
+        guardar_fonte_do_resultado_b3("pb3_fonte_reserva")
         st.session_state["pb3_df_set"]     = df_set[
             df_set["ticker"].isin(set(df_set_vivas["ticker"]))
         ].copy()
@@ -3793,6 +3798,7 @@ def render(show_header: bool = True) -> None:
             "pb3_resultados", "pb3_df_set", "pb3_precos_all",
             "pb3_quality_summary", "pb3_quality_audit", "pb3_hist_audit",
             "pb3_entry_guard", "pb3_entry_guard_df", "pb3_nota_fatores",
+            "pb3_fonte_reserva",
         ):
             st.session_state.pop(_k, None)
         st.info(
@@ -3809,6 +3815,9 @@ def render(show_header: bool = True) -> None:
                      codigo="tela.portfolio_b3.nenhum_segmento_com_dados")
         return
 
+    from design.componentes import aviso_resultado_da_reserva_b3
+
+    aviso_resultado_da_reserva_b3("pb3_fonte_reserva", "gere o portfólio")
     _registrar_qualidade_dos_fundamentos(quality_summary, hist_audit)
     # A guarda de entrada filtra as recomendações abaixo; se o score ou o
     # risco dela saiu degradado, a tela precisa dizer — antes ficava só no log.

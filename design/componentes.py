@@ -1012,6 +1012,38 @@ def score_saude(score: int, label: str = "Saúde Financeira") -> None:
     )
 
 
+def guardar_fonte_do_resultado_b3(chave_estado: str) -> None:
+    """Anota na sessão se o resultado que acabou de ser gerado pode ter lido a reserva.
+
+    Resultado que fica no ``st.session_state`` (portfólio gerado, análise)
+    não sai com a limpeza do cache de ``core.fonte_b3.conferir_volta``: o
+    aviso do topo some quando o armazém volta, e o resultado velho fica. Esta
+    marca deixa :func:`aviso_resultado_da_reserva_b3` dizer isso ao lado dele.
+    """
+    from core.fonte_b3 import aviso_reserva
+
+    st.session_state[chave_estado] = aviso_reserva()
+
+
+def aviso_resultado_da_reserva_b3(chave_estado: str, acao: str) -> None:
+    """Avisa que o resultado guardado foi feito com a reserva, se o armazém já voltou.
+
+    Enquanto o armazém não responde, o aviso do topo
+    (:func:`aviso_fonte_reserva_b3`) já cobre a tela; repetir seria ruído.
+    """
+    from core.fonte_b3 import aviso_reserva
+
+    motivo = st.session_state.get(chave_estado)
+    if not motivo or aviso_reserva():
+        return
+    st.warning(
+        "Este resultado foi gerado quando o armazém de dados não respondia e "
+        "pode usar a cópia guardada em 15/11/2026. O armazém já voltou: "
+        f"{acao} de novo para usar os dados atuais.")
+    detalhe_tecnico(f"Resultado gerado com a B3 da cópia congelada: {motivo}.",
+                    codigo="b3.resultado_da_reserva")
+
+
 def aviso_fonte_reserva_b3(slot) -> None:
     """Preenche ``slot`` com o aviso se alguma leitura da B3 caiu na cópia congelada.
 

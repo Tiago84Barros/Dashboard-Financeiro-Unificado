@@ -218,6 +218,15 @@ if modulo_nome:
     _nome_do_modulo = f"views.{module_for_route(modulo_nome)}"
     _import_frio = _nome_do_modulo not in sys.modules
     _concluiu = False
+    # Antes de desenhar: se a B3 caiu na cópia congelada e o armazém já
+    # voltou, limpa o cache e o aviso agora, para a tela já reler do armazém.
+    # Depois do desenho seria tarde: a tela mostraria a cópia sem o aviso.
+    try:
+        from core.fonte_b3 import conferir_volta
+
+        conferir_volta()
+    except Exception:  # noqa: BLE001 - conferência é extra, nunca requisito
+        logger.exception("falha ao conferir se o armazém voltou")
     # Sempre criado nessas rotas (vazio quando não há aviso): elemento que só
     # existisse em alguns runs deslocaria os ``st.tabs`` da view.
     _slot_fonte_b3 = st.empty() if modulo_nome in _ROTAS_QUE_LEEM_B3 else None

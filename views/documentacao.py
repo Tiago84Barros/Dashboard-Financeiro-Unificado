@@ -2620,7 +2620,17 @@ FLOW_EMPRESAS_B3_TELAS = FlowSpec(
                 "core.fonte_b3.consultar(): banco do app local → papel só-leitura "
                 "app4_leitura (ARMAZEM_SQL_DB_URL) → rota POST /sql do túnel → cópia congelada",
                 "O degrau que falha não tenta o seguinte: a reserva é uma só e tem motivo",
-                "O aviso vale por 12 h, o maior cache dos loaders da B3",
+                "Resposta cortada ou conexão caída no túnel tenta mais uma vez "
+                "(core.armazem_remoto._buscar); tempo de leitura esgotado não repete, "
+                "nem quando chega embrulhado num ConnectionError",
+                "O aviso vale por até 12 h, o maior cache dos loaders da B3. Antes de cada "
+                "tela, core.fonte_b3.conferir_volta() pergunta ao armazém, no máximo uma vez "
+                "por minuto, se ele voltou: voltou, limpa o st.cache_data e tira o aviso",
+                "Resultado guardado na sessão (Criação de Portfólio, Análise de Portfólio) "
+                "gerado com a cópia avisa, depois da volta, que precisa ser gerado de novo",
+                "Parecer por ativo guardado na sessão (portão da Inteligência dos Ativos e "
+                "parecer de seleção; também em FIIs e EUA) usa core.fonte_b3.cache_de_sessao, "
+                "que se esvazia na volta: gerar de novo refaz o parecer com o armazém",
                 "O aviso é decidido depois que a subaba carrega: pega também a leitura "
                 "que caiu na reserva no meio dela",
                 "Motivo da reserva: Configurações → Restrições (detalhe.b3.fonte_reserva)",

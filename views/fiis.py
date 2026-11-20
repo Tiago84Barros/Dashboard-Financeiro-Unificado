@@ -2137,7 +2137,8 @@ def _chave_da_montagem(preferences: dict, portfolio_policy, eligible_rows: list,
 def _intel_avaliar_fii(tk: str):
     """Avaliação por regras da Inteligência dos Ativos (FII), com cache de
     sessão. Falha não é guardada: o portão é fail-open e tenta de novo no rerun."""
-    cache = st.session_state.setdefault("fii_intel_cache", {})
+    from core.fonte_b3 import cache_de_sessao
+    cache = cache_de_sessao("fii_intel_cache")
     chave = str(tk).upper()
     if chave not in cache:
         cache[chave] = veredito.avaliar_ativo(chave, mercado="fii")
