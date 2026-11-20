@@ -2661,3 +2661,89 @@ def test_d13_tela_passa_a_selic_mensal_para_as_safras():
     assert "selic_mensal=selic_mensal" in fonte_tela
     fonte = (RAIZ / "views" / "portfolio_b3_safras.py").read_text(encoding="utf-8")
     assert "st.caption(_legenda_selic(tabela))" in fonte
+
+
+# ── Acumulado (R$ 1 encadeado) ao lado do ano a ano ──
+
+def test_series_do_acumulado_le_as_safras_medidas_em_fracao():
+    from views.portfolio_b3_safras import series_do_acumulado
+    tabela = _tabela(
+        [_linha(2020, completa=True, mensuravel=True, estrategia=10.0, arrasto=1.0),
+         _linha(2021, completa=True, mensuravel=False),
+         _linha(2022, completa=False, mensuravel=True)],
+        safras_completas=[2020, 2021],
+    )
+    series, liquida = series_do_acumulado(_resumo_safras(tabela)["completas"])
+    assert liquida is True
+    assert set(series) == {"estrategia", "equal_weight", "selic"}
+    assert series["estrategia"][2020] == pytest.approx(0.09)     # líquida
+    assert series["equal_weight"][2020] == pytest.approx(0.08)
+    assert series["estrategia"][2021] is None                    # não mensurável
+    assert 2022 not in series["selic"]                           # não medida
+
+
+def test_series_do_acumulado_quadro_antigo_cai_no_bruto():
+    from views.portfolio_b3_safras import series_do_acumulado
+    tabela = _tabela([_linha(2020, completa=True, mensuravel=True, liquido=False)],
+                     safras_completas=[2020])
+    series, liquida = series_do_acumulado(_resumo_safras(tabela)["completas"])
+    assert liquida is False and series["estrategia"][2020] == pytest.approx(0.10)
+    assert series_do_acumulado(pd.DataFrame()) == ({}, False)
+
+
+def test_render_safras_mostra_o_acumulado():
+    caminho = RAIZ / "views" / "portfolio_b3_safras.py"
+    arvore = ast.parse(caminho.read_text(encoding="utf-8"))
+    render = next(no for no in ast.walk(arvore)
+                  if isinstance(no, ast.FunctionDef) and no.name == "render_safras")
+    nomes = {no.func.id for no in ast.walk(render)
+             if isinstance(no, ast.Call) and isinstance(no.func, ast.Name)}
+    assert "_render_grafico_safras" in nomes
+    grafico = next(no for no in ast.walk(arvore)
+                   if isinstance(no, ast.FunctionDef) and no.name == "_render_grafico_safras")
+    chamadas = {no.func.id for no in ast.walk(grafico)
+                if isinstance(no, ast.Call) and isinstance(no.func, ast.Name)}
+    # As duas visões no mesmo lugar, e os cartões nas duas.
+    assert {"_grafico_barras", "_grafico_acumulado", "_render_acumulado"} <= chamadas
+
+
+def test_curva_acumulada_comeca_em_1_e_termina_no_cartao():
+    from core.b3_safras import acumulado_das_safras
+    from views.portfolio_b3_safras import dados_da_curva_acumulada
+
+    acum = acumulado_das_safras({
+        "estrategia": {2020: 0.10, 2021: -0.20, 2022: 0.30},
+        "equal_weight": {2020: 0.05, 2021: 0.00, 2022: 0.10},
+    })
+    pontos = dados_da_curva_acumulada(acum, liquida=True)
+    est = pontos[pontos["Série"] == "Estratégia líquida"]
+    assert list(est["Data"]) == ["abr/2020", "mar/2021", "mar/2022", "mar/2023"]
+    assert list(est["Valor de R$ 1"]) == pytest.approx([1.0, 1.10, 0.88, 1.144])
+    assert est["Valor de R$ 1"].iloc[-1] == pytest.approx(
+        acum["series"]["estrategia"]["valor_final"])
+    ew = pontos[pontos["Série"] == "Equal-weight"]
+    assert ew["Valor de R$ 1"].iloc[-1] == pytest.approx(1.05 * 1.10)
+    bruta = dados_da_curva_acumulada(acum, liquida=False)
+    assert "Estratégia bruta" in set(bruta["Série"])
+
+
+def test_curva_acumulada_vazia_sem_safras():
+    from core.b3_safras import acumulado_das_safras
+    from views.portfolio_b3_safras import dados_da_curva_acumulada
+
+    pontos = dados_da_curva_acumulada(acumulado_das_safras({}), liquida=True)
+    assert pontos.empty and list(pontos.columns) == ["Data", "Série", "Valor de R$ 1"]
+
+
+def test_grafico_acumulado_desenha_uma_linha_por_serie():
+    from core.b3_safras import acumulado_das_safras
+    from views.portfolio_b3_safras import _grafico_acumulado
+
+    acum = acumulado_das_safras({
+        "estrategia": {2020: 0.10, 2021: 0.05},
+        "equal_weight": {2020: 0.02, 2021: 0.03},
+        "selic": {2020: 0.04, 2021: 0.09},
+    })
+    fig = _grafico_acumulado(acum, liquida=True)
+    assert [t.name for t in fig.data] == ["Estratégia líquida", "Equal-weight", "Selic"]
+    assert all(len(t.y) == 3 for t in fig.data)

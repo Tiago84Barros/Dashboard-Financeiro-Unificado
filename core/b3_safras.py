@@ -782,6 +782,7 @@ def tabela_de_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
     completas: list[int] = []
     selic_estimados_por_safra: dict[int, list[int]] = {}
     meses_pela_meta_por_safra: dict[int, list[str]] = {}
+    janelas_curtas: dict[int, tuple[pd.Timestamp, pd.Timestamp]] = {}
     carteiras = carteiras_por_safra(resultados, hoje=hoje)
     todas_metricas = [retorno_da_safra(c, df_precos,
                                        selic_por_ano=selic_por_ano,
@@ -843,6 +844,9 @@ def tabela_de_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
         # a janela tambem precisa ter sido medida para entrar em media.
         if carteira.completa and metricas["mensuravel"]:
             completas.append(carteira.safra)
+            curta = janela_observada_curta(df_precos, carteira.inicio, carteira.fim)
+            if curta is not None:
+                janelas_curtas[carteira.safra] = curta
         selic_estimados_por_safra[carteira.safra] = metricas["selic_anos_estimados"]
         meses_pela_meta_por_safra[carteira.safra] = metricas["selic_meses_pela_meta"]
 
@@ -853,6 +857,9 @@ def tabela_de_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
     # serie mensal entrou; os meses que cairam na meta ficam listados.
     tabela.attrs["selic_fonte"] = "realizada" if selic_mensal else "meta"
     tabela.attrs["selic_meses_pela_meta_por_safra"] = meses_pela_meta_por_safra
+    # Safras medidas cujo preço não cobre a janela civil: o acumulado conta o
+    # tempo observado nelas (`acumulado_das_safras(janelas_curtas=...)`).
+    tabela.attrs["janelas_curtas_por_safra"] = janelas_curtas
     return tabela
 
 
@@ -881,6 +888,173 @@ def bootstrap_excesso(excessos: list[float], *,
                         replace=True).mean(axis=1)
     return (float(np.percentile(medias, 2.5)),
             float(np.percentile(medias, 97.5)))
+
+
+_MESES = ("janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho",
+          "agosto", "setembro", "outubro", "novembro", "dezembro")
+
+
+def _mes_ano(data, *, extenso: bool = False) -> str:
+    """``Timestamp('2024-05-31')`` -> ``"mai/2024"`` (``"maio/2024"`` por extenso)."""
+    d = pd.Timestamp(data)
+    mes = _MESES[d.month - 1]
+    return f"{mes if extenso else mes[:3]}/{d.year}"
+
+
+def janela_observada_curta(df_precos: pd.DataFrame, inicio: pd.Timestamp,
+                           fim: pd.Timestamp
+                           ) -> tuple[pd.Timestamp, pd.Timestamp] | None:
+    """Pontas de mercado da safra quando o preço não cobre a janela civil.
+
+    Usa as mesmas pontas de ``retorno_da_safra`` (``_janela_de_mercado``).
+    Devolve ``(inicio_mercado, corte)`` quando uma das pontas fica a mais de
+    ``TOLERANCIA_DIAS`` da ponta civil -- feed que começa atrasado ou
+    termina cedo -- e ``None`` quando a safra foi observada no ano todo.
+    O acumulado precisa disso para não chamar de "ao ano" o retorno de
+    poucos meses.
+    """
+    if df_precos is None or df_precos.empty:
+        return None
+    inicio_mercado, corte = _janela_de_mercado(df_precos, inicio, fim)
+    tolerancia = pd.Timedelta(days=TOLERANCIA_DIAS)
+    if (inicio_mercado - inicio) > tolerancia or (fim - corte) > tolerancia:
+        return pd.Timestamp(inicio_mercado), pd.Timestamp(corte)
+    return None
+
+
+def rotulos_do_caminho(acum: dict, *, extenso: bool = False) -> list[str]:
+    """Rótulo de cada ponto da curva acumulada: o início da primeira safra e
+    o fim de cada safra usada (``abr/N`` e ``mar/N+1``), ou as pontas de
+    mercado quando a safra está em ``curtas``."""
+    safras = acum.get("safras") or []
+    if not safras:
+        return []
+    curtas = acum.get("curtas") or {}
+
+    def _civil(mes: int, ano: int) -> str:
+        return _mes_ano(pd.Timestamp(year=ano, month=mes, day=1), extenso=extenso)
+
+    primeiro = (_mes_ano(curtas[safras[0]][0], extenso=extenso) if safras[0] in curtas
+                else _civil(4, safras[0]))
+    return [primeiro] + [_mes_ano(curtas[s][1], extenso=extenso) if s in curtas
+                         else _civil(3, s + 1) for s in safras]
+
+
+def acumulado_das_safras(retornos: dict[str, dict[int, float | None]], *,
+                         janelas_curtas: dict[int, tuple] | None = None) -> dict:
+    """R$ 1 encadeado pelas safras (abril/N a março/N+1), série a série.
+
+    ``retornos`` mapeia o nome da série para ``{safra: retorno}`` em fração.
+    Só entram as safras em que TODAS as séries têm retorno finito: R$ 1 da
+    carteira em nove anos contra R$ 1 do benchmark em oito mede tempos
+    diferentes. Safra sem retorno em alguma série fica de fora: ``pulados``
+    lista as que caem entre a primeira e a última safra usadas (ali o
+    produto pula um ano e a cadeia não é contínua) e ``fora`` as das pontas.
+    A tela tem de dizer as duas.
+
+    ``caminho`` é o valor de R$ 1 ao fim de cada safra usada, na ordem de
+    ``safras`` -- o último é ``valor_final``. É o que o gráfico acumulado
+    desenha, para que a curva e o cartão saiam da mesma conta.
+
+    Perda de 100% ou mais numa safra zera o dinheiro: o fator da safra é
+    ``max(1 + r, 0)`` e o caminho fica em zero dali em diante. Sem isso, duas
+    perdas abaixo de -100% (possíveis no líquido, que tira custo e IR de
+    forma aditiva) se multiplicariam num valor positivo.
+
+    ``anual`` é a taxa composta, ``valor_final ** (1/anos) - 1``. Cada safra
+    conta um ano, salvo as de ``janelas_curtas`` (``{safra: (inicio, fim)}``
+    das pontas de mercado, de ``janela_observada_curta``): essas contam o
+    tempo observado, em dias / 365,25. ``curtas`` devolve as que entraram,
+    para a legenda e o gráfico nomeá-las. Com o dinheiro zerado, a taxa não
+    existe e sai ``None``.
+
+    É resultado, não prova. O mesmo produto sai de nove anos parecidos ou de
+    um ano muito bom carregando os outros; a evidência é a distribuição ano
+    a ano (``bootstrap_excesso``, ``fragilidade_leave_one_out``).
+    """
+    vazio = {"safras": [], "n": 0, "anos": 0.0, "pulados": [], "fora": [],
+             "curtas": {}, "series": {}}
+    series = {str(k): dict(v or {}) for k, v in (retornos or {}).items()}
+    if not series:
+        return vazio
+
+    def _ok(v) -> bool:
+        try:
+            return v is not None and bool(np.isfinite(float(v)))
+        except (TypeError, ValueError):
+            return False
+
+    validas = {nome: {int(s): float(v) for s, v in r.items() if _ok(v)}
+               for nome, r in series.items()}
+    safras = sorted(set.intersection(*[set(r) for r in validas.values()]))
+    todas = sorted({int(s) for r in series.values() for s in r})
+    if not safras:
+        return {**vazio, "fora": todas}
+    pulados = [s for s in range(safras[0], safras[-1] + 1) if s not in safras]
+    fora = [s for s in todas if s not in safras and s not in pulados]
+    curtas = {int(s): (pd.Timestamp(j[0]), pd.Timestamp(j[1]))
+              for s, j in (janelas_curtas or {}).items() if int(s) in safras}
+    anos = float(sum((curtas[s][1] - curtas[s][0]).days / 365.25
+                     if s in curtas else 1.0 for s in safras))
+    out = {}
+    for nome, r in validas.items():
+        fatores = [max(1.0 + r[s], 0.0) for s in safras]
+        caminho = [float(c) for c in np.cumprod(fatores)]
+        valor = caminho[-1]
+        out[nome] = {"valor_final": valor, "caminho": caminho,
+                     "anual": (valor ** (1.0 / anos) - 1.0)
+                     if valor > 0 and anos > 0 else None}
+    return {"safras": safras, "n": len(safras), "anos": anos, "pulados": pulados,
+            "fora": fora, "curtas": curtas, "series": out}
+
+
+def fmt_reais(valor: float | None) -> str:
+    """``3.5184`` -> ``"R$ 3,52"``; ``None`` -> ``"—"``."""
+    if valor is None:
+        return "—"
+    return "R$ " + f"{valor:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
+
+
+def fmt_ao_ano(anual: float | None) -> str:
+    """``0.15`` -> ``"+15,0% ao ano"``; ``None`` -> ``"—"``."""
+    return "—" if anual is None else f"{anual * 100:+.1f}% ao ano".replace(".", ",")
+
+
+def legenda_acumulado(acum: dict, *, base: str) -> str:
+    """Frase que acompanha os cartões do acumulado (de `acumulado_das_safras`).
+
+    ``base`` diz o que cada série desconta, por exemplo "a estratégia já
+    líquida de custo e IR". A frase nomeia a janela encadeada, as safras que
+    ficaram de fora e repete que o acumulado é resultado, não prova.
+    """
+    safras = acum.get("safras") or []
+    if not safras:
+        return "Nenhuma safra tem retorno em todas as séries; não há o que encadear."
+    n = len(safras)
+    rot = rotulos_do_caminho(acum, extenso=True)
+    txt = (f"R$ 1 aplicado em {rot[0]} e reaplicado a cada abril até "
+           f"{rot[-1]}: {n} safra{'s' if n > 1 else ''} "
+           f"encadeada{'s' if n > 1 else ''}, {base}.")
+    curtas = acum.get("curtas") or {}
+    if curtas:
+        txt += (" O preço não cobre o ano todo "
+                + ("na safra " if len(curtas) == 1 else "nas safras ")
+                + ", ".join(f"{s} (de {i:%d/%m/%Y} a {f:%d/%m/%Y})"
+                            for s, (i, f) in sorted(curtas.items()))
+                + "; a taxa ao ano conta o tempo observado.")
+    pulados = acum.get("pulados") or []
+    if pulados:
+        txt += (" No meio, ficaram de fora as safras "
+                + ", ".join(str(s) for s in pulados)
+                + " (falta retorno em alguma série); a taxa ao ano conta só as "
+                  "safras encadeadas.")
+    fora = acum.get("fora") or []
+    if fora:
+        txt += (" Fora da janela: " + ", ".join(str(s) for s in fora)
+                + " (falta retorno em alguma série).")
+    txt += (" É o resultado do período, não a prova: um ano muito bom pode "
+            "carregar os outros. A prova é o teste ano a ano.")
+    return txt
 
 
 def _ic_limpos(ic_values: list[float] | None) -> list[float]:

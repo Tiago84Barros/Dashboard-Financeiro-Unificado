@@ -1332,3 +1332,109 @@ def test_d13_oos_usa_a_mesma_janela_da_tabela():
     assert por_ticker["AAAA3"] == pytest.approx(out["retorno_estrategia"])
     assert por_ticker["AAAA3"] == pytest.approx(0.5)
     assert oos.retorno_benchmark(df["BBBB3"], df, 2024) == pytest.approx(0.5)
+
+
+# ── Acumulado das safras (R$ 1 encadeado): resultado, não prova ──
+
+def test_acumulado_usa_so_safras_com_todas_as_series():
+    from core.b3_safras import acumulado_das_safras
+    acum = acumulado_das_safras({
+        "a": {2017: 0.10, 2018: 0.20, 2019: -0.10, 2020: 0.05},
+        "b": {2017: 0.05, 2018: None, 2019: 0.00, 2020: float("nan")},
+    })
+    assert acum["safras"] == [2017, 2019] and acum["n"] == 2
+    assert acum["pulados"] == [2018] and acum["fora"] == [2020]
+    a = acum["series"]["a"]
+    assert a["caminho"] == pytest.approx([1.10, 1.10 * 0.90])
+    assert a["valor_final"] == pytest.approx(1.10 * 0.90)
+    assert a["anual"] == pytest.approx((1.10 * 0.90) ** 0.5 - 1)
+    assert acum["series"]["b"]["valor_final"] == pytest.approx(1.05)
+
+
+def test_acumulado_perda_total_nao_tem_taxa_e_vazio_nao_quebra():
+    from core.b3_safras import acumulado_das_safras
+    acum = acumulado_das_safras({"a": {2020: -1.0, 2021: 0.5}})
+    assert acum["series"]["a"]["valor_final"] == 0.0
+    assert acum["series"]["a"]["anual"] is None
+    assert acum_vazio_ok(acumulado_das_safras({}))
+    assert acum_vazio_ok(acumulado_das_safras(None))
+    sem = acumulado_das_safras({"a": {2020: 0.1}, "b": {2021: 0.1}})
+    assert sem["n"] == 0 and sem["fora"] == [2020, 2021]
+
+
+def acum_vazio_ok(acum):
+    return acum["n"] == 0 and acum["series"] == {} and acum["safras"] == []
+
+
+def test_fmt_e_legenda_do_acumulado():
+    from core.b3_safras import (
+        acumulado_das_safras,
+        fmt_ao_ano,
+        fmt_reais,
+        legenda_acumulado,
+    )
+    assert fmt_reais(3.5184) == "R$ 3,52"
+    assert fmt_reais(1234.5) == "R$ 1.234,50"
+    assert fmt_reais(None) == "—"
+    assert fmt_ao_ano(0.15) == "+15,0% ao ano"
+    assert fmt_ao_ano(-0.031) == "-3,1% ao ano"
+    assert fmt_ao_ano(None) == "—"
+    acum = acumulado_das_safras({"a": {2017: 0.1, 2018: None, 2019: 0.1, 2020: None}})
+    txt = legenda_acumulado(acum, base="tudo bruto")
+    assert "abril/2017" in txt and "março/2020" in txt and "2 safras" in txt
+    assert "2018" in txt and "2020" in txt and "tudo bruto" in txt
+    assert "não a prova" in txt
+    assert "não há o que encadear" in legenda_acumulado(acumulado_das_safras({}), base="x")
+
+
+def test_acumulado_duas_perdas_acima_de_100_nao_viram_lucro():
+    """Achado do Codex no #781: -150% e -150% davam 0,25 positivo. O fator
+    da safra é max(1 + r, 0): perdeu tudo, fica em zero."""
+    from core.b3_safras import acumulado_das_safras
+    acum = acumulado_das_safras({"a": {2020: -1.5, 2021: -1.5, 2022: 0.3}})
+    a = acum["series"]["a"]
+    assert a["caminho"] == [0.0, 0.0, 0.0]
+    assert a["valor_final"] == 0.0 and a["anual"] is None
+
+
+def test_acumulado_safra_curta_anualiza_pelo_tempo_observado():
+    """Achado do Codex no #781: safra de 31/05/2024 a 31/03/2025 não é um
+    ano. A taxa ao ano usa os dias observados; as outras contam um ano."""
+    from core.b3_safras import (
+        acumulado_das_safras,
+        legenda_acumulado,
+        rotulos_do_caminho,
+    )
+    ini, fim = pd.Timestamp("2024-05-31"), pd.Timestamp("2025-03-31")
+    acum = acumulado_das_safras({"a": {2023: 0.10, 2024: 0.75}},
+                                janelas_curtas={2024: (ini, fim), 2019: (ini, fim)})
+    anos = 1.0 + (fim - ini).days / 365.25
+    assert acum["anos"] == pytest.approx(anos)
+    assert list(acum["curtas"]) == [2024]  # 2019 não foi encadeada
+    assert acum["series"]["a"]["anual"] == pytest.approx((1.10 * 1.75) ** (1 / anos) - 1)
+    assert rotulos_do_caminho(acum) == ["abr/2023", "mar/2024", "mar/2025"]
+    txt = legenda_acumulado(acum, base="bruto")
+    assert "2024 (de 31/05/2024 a 31/03/2025)" in txt and "tempo observado" in txt
+    # Começo curto na primeira safra: o rótulo inicial é o mês observado.
+    so = acumulado_das_safras({"a": {2024: 0.75}}, janelas_curtas={2024: (ini, fim)})
+    assert rotulos_do_caminho(so) == ["mai/2024", "mar/2025"]
+    assert "maio/2024" in legenda_acumulado(so, base="bruto")
+    # Sem janela curta, nada muda: cada safra é um ano.
+    cheio = acumulado_das_safras({"a": {2023: 0.10, 2024: 0.75}})
+    assert cheio["anos"] == 2.0 and cheio["curtas"] == {}
+
+
+def test_tabela_marca_safra_com_preco_que_comeca_atrasado():
+    """O feed só começa em 31/05/2024: a safra 2024 é medida, mas cobre 10
+    meses. A tabela entrega as pontas para o acumulado não chamar de ano."""
+    from core.b3_safras import janela_observada_curta
+    res = [_resultado("A", {2024: ["AAAA3"]}, {2024: {"AAAA3": 1.0}}, ["AAAA3"])]
+    df = _precos(["2024-05-31", "2025-03-31"], {"AAAA3": [10.0, 17.5]})
+    tabela = tabela_de_safras(res, df, selic_por_ano={}, taxa_selic_aa=0.0, hoje=HOJE)
+    assert tabela.attrs["safras_completas"] == [2024]
+    assert tabela.attrs["janelas_curtas_por_safra"] == {
+        2024: (pd.Timestamp("2024-05-31"), pd.Timestamp("2025-03-31"))}
+    # Ano coberto (compra no fechamento de 31/03): não é curta.
+    cheio = _precos(["2024-03-28", "2025-03-31"], {"AAAA3": [10.0, 17.5]})
+    assert janela_observada_curta(cheio, pd.Timestamp("2024-04-01"),
+                                  pd.Timestamp("2025-03-31")) is None
