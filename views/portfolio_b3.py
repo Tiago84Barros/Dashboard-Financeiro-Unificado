@@ -3691,6 +3691,9 @@ def render(show_header: bool = True) -> None:
 
         prog.empty()
         st.session_state["pb3_resultados"] = resultados
+        from design.componentes import guardar_fonte_do_resultado_b3
+
+        guardar_fonte_do_resultado_b3("pb3_fonte_reserva")
         st.session_state["pb3_df_set"]     = df_set[
             df_set["ticker"].isin(set(df_set_vivas["ticker"]))
         ].copy()
@@ -3793,6 +3796,7 @@ def render(show_header: bool = True) -> None:
             "pb3_resultados", "pb3_df_set", "pb3_precos_all",
             "pb3_quality_summary", "pb3_quality_audit", "pb3_hist_audit",
             "pb3_entry_guard", "pb3_entry_guard_df", "pb3_nota_fatores",
+            "pb3_fonte_reserva",
         ):
             st.session_state.pop(_k, None)
         st.info(
@@ -3809,6 +3813,9 @@ def render(show_header: bool = True) -> None:
                      codigo="tela.portfolio_b3.nenhum_segmento_com_dados")
         return
 
+    from design.componentes import aviso_resultado_da_reserva_b3
+
+    aviso_resultado_da_reserva_b3("pb3_fonte_reserva", "gere o portfólio")
     _registrar_qualidade_dos_fundamentos(quality_summary, hist_audit)
     # A guarda de entrada filtra as recomendações abaixo; se o score ou o
     # risco dela saiu degradado, a tela precisa dizer — antes ficava só no log.

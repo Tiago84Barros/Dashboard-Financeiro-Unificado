@@ -21,6 +21,12 @@ o PR #755 a ingestão grava só no armazém; o que ficou no Supabase é uma cóp
    ``st.cache_data`` dos loaders guarda o quadro velho por até 12 h, e uma
    tela que mostra a cópia congelada sem dizer engana quem confia nela.
 
+**Quando o armazém volta**, :func:`conferir_volta` (chamada pelo roteador do
+``app.py`` antes de cada tela) percebe, limpa o ``st.cache_data`` e apaga o
+registro: os loaders releem do armazém e o aviso sai. Sem isso, um corte de
+um minuto deixava a cópia congelada no cache e o aviso na tela por 12 h
+(20/11/2026). Enquanto o armazém não responde, o aviso fica.
+
 O degrau que falha **não** tenta o seguinte (túnel depois de papel local):
 a reserva é uma só, e é nomeada. O quadro devolvido carrega
 ``attrs["fonte_b3"]`` (``armazem`` | ``armazem_tunel`` | ``supabase_congelado``).
@@ -43,9 +49,14 @@ FONTE_RESERVA = "supabase_congelado"
 #: maior TTL dos loaders da B3 em ``core.market_read`` (43200 s): até lá, um
 #: quadro lido da cópia congelada ainda pode estar no cache.
 JANELA_AVISO_S = 43_200
+#: Depois de uma leitura de reserva, de quanto em quanto tempo
+#: :func:`conferir_volta` pergunta ao armazém se ele voltou. Igual à pausa do
+#: cliente do túnel (``armazem_remoto.PAUSA_APOS_FALHA_S``): antes dela a
+#: pergunta nem sairia.
+INTERVALO_CONFERE_S = 60
 
 _trava = threading.Lock()
-_reserva: dict = {"quando": None, "motivo": None}
+_reserva: dict = {"quando": None, "motivo": None, "conferido": None}
 _engine_papel: dict = {}
 
 
@@ -91,7 +102,7 @@ def _registrar_reserva(motivo: str) -> None:
 def _limpar_estado() -> None:
     """Para testes."""
     with _trava:
-        _reserva.update(quando=None, motivo=None)
+        _reserva.update(quando=None, motivo=None, conferido=None)
         _engine_papel.clear()
 
 
@@ -142,6 +153,61 @@ def aviso_reserva() -> str | None:
     if quando is None or _agora() - quando > JANELA_AVISO_S:
         return None
     return motivo
+
+
+def _armazem_responde() -> bool:
+    """O degrau que a produção usa (papel ou túnel) respondeu a um SELECT 1?"""
+    url = _url_papel()
+    if url:
+        try:
+            from sqlalchemy import text
+
+            with _engine_do_papel(url).connect() as conn:
+                conn.execute(text("SELECT 1"))
+            return True
+        except Exception:  # noqa: BLE001 - qualquer falha é "ainda não voltou"
+            return False
+    from core.armazem_remoto import ArmazemRemotoIndisponivel
+
+    try:
+        return _consultar_tunel("SELECT 1 AS ok", None) is not None
+    except ArmazemRemotoIndisponivel:
+        return False
+
+
+def _limpar_caches() -> None:
+    """Esquece os quadros guardados: os da reserva estão entre eles."""
+    import streamlit as st
+
+    st.cache_data.clear()
+
+
+def conferir_volta() -> bool:
+    """Se houve reserva e o armazém voltou, limpa o cache e tira o aviso.
+
+    Pergunta no máximo uma vez a cada :data:`INTERVALO_CONFERE_S`, e só
+    depois de uma leitura de reserva -- sem reserva, não custa nada. Limpa
+    o ``st.cache_data`` inteiro: os loaders da B3 estão espalhados por vários
+    módulos, e um que ficasse de fora mostraria a cópia congelada sem aviso.
+    Devolve ``True`` quando limpou.
+    """
+    agora = _agora()
+    with _trava:
+        quando, conferido = _reserva["quando"], _reserva["conferido"]
+        if quando is None or agora - quando < INTERVALO_CONFERE_S:
+            return False
+        if conferido is not None and agora - conferido < INTERVALO_CONFERE_S:
+            return False
+        _reserva["conferido"] = agora
+    if not _armazem_responde():
+        return False
+    _limpar_caches()
+    with _trava:
+        # Reserva nova durante a pergunta: o aviso fica, ela é mais recente.
+        if _reserva["quando"] == quando:
+            _reserva.update(quando=None, motivo=None, conferido=None)
+    logger.info("Armazém respondeu de novo: cache limpo e aviso da reserva retirado.")
+    return True
 
 
 class _Resultado:

@@ -1623,6 +1623,7 @@ def render(show_header: bool = True) -> None:
     with col_reset:
         if st.button("🗑️ Limpar", width="stretch", key="apb3_reset"):
             st.session_state.pop("apb3_state", None)
+            st.session_state.pop("apb3_fonte_reserva", None)
             st.rerun()
 
     # ── Executa análise ───────────────────────────────────────────────────────
@@ -1649,10 +1650,16 @@ def render(show_header: bool = True) -> None:
             web_sinal=web_sinal,
         )
         st.session_state["apb3_state"] = result
+        from design.componentes import guardar_fonte_do_resultado_b3
+
+        guardar_fonte_do_resultado_b3("apb3_fonte_reserva")
         st.rerun()
 
     # ── Exibe resultados (se a análise qualitativa já foi executada) ──────────
     if state:
+        from design.componentes import aviso_resultado_da_reserva_b3
+
+        aviso_resultado_da_reserva_b3("apb3_fonte_reserva", "rode a análise")
         items_an    = state["items_analisados"]
         port_an     = state["port_analise"]
         pesos_novos = state["pesos_novos"]

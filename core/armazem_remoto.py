@@ -25,6 +25,13 @@ monta o contexto N+1 vezes em poucos minutos:
   desligado custava um timeout por empresa; com ela, custa um por relatório, e
   as chamadas seguintes levantam na hora com o mesmo motivo e a idade dele.
   Erro 4xx não entra: é defeito do pedido, não sinal de que o serviço caiu.
+
+E uma segunda chance: **resposta cortada no caminho tenta de novo uma vez**
+(``TENTATIVAS_REDE``). Em 20/11/2026 uma resposta da ``/sql`` chegou cortada
+(``ChunkedEncodingError``) com o PC, o armazém e o túnel de pé; sem a segunda
+tentativa, um corte só punha a B3 inteira na cópia congelada por 60 s e o
+aviso na tela por horas. Tempo de leitura esgotado **não** tenta de novo: o
+servidor já gastou a espera inteira, e repetir dobraria a espera da tela.
 """
 from __future__ import annotations
 
@@ -40,6 +47,10 @@ TIMEOUT = (3.05, 10)
 TIMEOUT_SQL = (3.05, 75)
 VALIDADE_S = 300
 PAUSA_APOS_FALHA_S = 60
+#: Quantas vezes um pedido vai ao túnel quando a conexão cai ou a resposta
+#: chega cortada. Os pedidos são todos de leitura: repetir não muda nada.
+TENTATIVAS_REDE = 2
+ESPERA_ENTRE_TENTATIVAS_S = 0.5
 
 _trava = threading.Lock()
 _respostas: dict[tuple, tuple[float, dict]] = {}
@@ -69,6 +80,21 @@ class OrdemIgnorada(ArmazemRemotoIndisponivel):
 
 def _relogio() -> float:
     return time.monotonic()
+
+
+def _esperar(segundos: float) -> None:
+    time.sleep(segundos)
+
+
+def _vale_repetir(exc: Exception) -> bool:
+    """Queda de conexão ou resposta cortada; nunca tempo de leitura esgotado."""
+    import requests
+
+    if isinstance(exc, requests.ReadTimeout):
+        return False
+    return isinstance(exc, (requests.ConnectionError,
+                            requests.exceptions.ChunkedEncodingError,
+                            requests.exceptions.ContentDecodingError))
 
 
 def _limpar_memoria() -> None:
@@ -133,16 +159,25 @@ def _buscar(url: str, token: str, caminho: str, params: dict | None, *,
     import requests
 
     cabecalho = {"Authorization": f"Bearer {token}"}
-    try:
-        if enviar is None:
-            resp = requests.get(f"{url}{caminho}", params=params or {},
-                                headers=cabecalho, timeout=TIMEOUT)
-        else:
-            resp = requests.post(f"{url}{caminho}", json=enviar,
-                                 headers=cabecalho, timeout=TIMEOUT_SQL)
-    except requests.RequestException as exc:
-        raise ArmazemRemotoIndisponivel(
-            f"sem resposta ({type(exc).__name__}) — PC ou túnel desligado?") from exc
+    tentativa = 1
+    while True:
+        try:
+            if enviar is None:
+                resp = requests.get(f"{url}{caminho}", params=params or {},
+                                    headers=cabecalho, timeout=TIMEOUT)
+            else:
+                resp = requests.post(f"{url}{caminho}", json=enviar,
+                                     headers=cabecalho, timeout=TIMEOUT_SQL)
+        except requests.RequestException as exc:
+            if tentativa < TENTATIVAS_REDE and _vale_repetir(exc):
+                tentativa += 1
+                _esperar(ESPERA_ENTRE_TENTATIVAS_S)
+                continue
+            vezes = f", {tentativa} tentativas" if tentativa > 1 else ""
+            raise ArmazemRemotoIndisponivel(
+                f"sem resposta ({type(exc).__name__}{vezes}) — PC ou túnel "
+                "desligado?") from exc
+        break
     if resp.status_code != 200:
         try:
             motivo = str(resp.json().get("erro") or "")
