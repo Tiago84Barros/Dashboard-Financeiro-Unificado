@@ -2802,3 +2802,128 @@ def test_legenda_medidas_nomeia_a_escolha_ano_a_ano_e_o_caixa():
     txt = legenda_medidas(acum, {"perfil": "Equilibrado (padrão)", "em_caixa": [2017, 2030]})
     assert "escolhida em abril daquele ano" in txt
     assert "Em 2017, a líder" in txt and "2030" not in txt
+
+
+# ── Barras do ano a ano pelas carteiras escolhidas ano a ano ──
+
+def test_barras_medidas_uma_por_safra_e_serie():
+    from views.portfolio_b3_safras import dados_das_barras_medidas
+    m = {"series": {"concentrada": {2020: 0.30, 2021: None},
+                    "equal_weight": {2020: 0.10, 2021: 0.04}}}
+    b = dados_das_barras_medidas(m)
+    assert list(b.columns) == ["Safra", "Série", "Retorno da safra (%)"]
+    assert len(b) == 3                                   # 2021 sem a líder
+    lider = b[b["Série"] == "Líder de cada segmento"]
+    assert list(lider["Safra"]) == [2020]
+    assert lider["Retorno da safra (%)"].iloc[0] == pytest.approx(30.0)
+
+
+def test_barras_medidas_vazias_sem_medicao():
+    from views.portfolio_b3_safras import dados_das_barras_medidas
+    assert dados_das_barras_medidas({"series": {}}).empty
+    assert dados_das_barras_medidas({}).empty
+
+
+def test_grafico_barras_medidas_segue_a_ordem_das_series():
+    from views.portfolio_b3_safras import _grafico_barras_medidas
+    m = {"series": {"ibovespa": {2020: 0.01}, "concentrada": {2020: 0.10},
+                    "selic": {2020: 0.04}, "equal_weight": {2020: 0.02},
+                    "nota_fatores": {2020: 0.08}}}
+    fig = _grafico_barras_medidas(m)
+    assert [t.name for t in fig.data] == ["Líder de cada segmento", "Nota + fatores",
+                                          "Pesos iguais", "Selic", "Ibovespa"]
+
+
+def test_vitorias_sobre_pesos_iguais_conta_so_safras_comuns():
+    from views.portfolio_b3_safras import vitorias_sobre_pesos_iguais
+    m = {"series": {"concentrada": {2019: -0.073, 2020: 0.2, 2021: 0.01, 2022: None},
+                    "nota_fatores": {2020: 0.05},
+                    "equal_weight": {2019: -0.074, 2020: 0.1, 2021: 0.02, 2022: 0.0}}}
+    assert vitorias_sobre_pesos_iguais(m) == {"concentrada": (2, 3), "nota_fatores": (0, 1)}
+
+
+def test_legenda_barras_nomeia_escolha_do_ano_caixa_e_tabela_de_hoje():
+    from views.portfolio_b3_safras import legenda_barras_medidas
+    m = {"perfil": "Equilibrado (padrão)", "em_caixa": [2017, 2030],
+         "series": {"concentrada": {2017: 0.08, 2018: 0.2},
+                    "equal_weight": {2017: 0.25, 2018: 0.15}}}
+    txt = legenda_barras_medidas(m)
+    assert "escolhida em abril daquele ano" in txt
+    assert "1 de 2" in txt and "contagem, não prova" in txt
+    assert "Em 2017, a líder" in txt and "2030" not in txt
+    assert "segmentos que o portão aprova hoje" in txt
+
+
+def test_render_grafico_usa_barras_medidas_e_cai_para_a_tabela():
+    """Siga a chamada: o ano a ano sai das medições; a tabela de hoje só
+    desenha as barras quando não há medição."""
+    caminho = RAIZ / "views" / "portfolio_b3_safras.py"
+    fonte = caminho.read_text(encoding="utf-8")
+    arvore = ast.parse(fonte)
+    grafico = next(no for no in ast.walk(arvore)
+                   if isinstance(no, ast.FunctionDef) and no.name == "_render_grafico_safras")
+    trecho = ast.get_source_segment(fonte, grafico)
+    assert trecho.index("_grafico_barras_medidas(medidas)") < trecho.index(
+        "_grafico_barras(completas)")
+    assert "elif barras_medidas:" in trecho
+
+
+def test_medicoes_gravadas_dao_as_barras_de_todas_as_safras():
+    from views.portfolio_b3_safras import _carregar_medidas, dados_das_barras_medidas
+    b = dados_das_barras_medidas(_carregar_medidas())
+    por_serie = b.groupby("Série")["Safra"].apply(set)
+    assert por_serie["Líder de cada segmento"] >= set(range(2017, 2026))
+    assert por_serie["Nota + fatores"] >= set(range(2017, 2026))
+
+
+# ── Selic pela meta nas medições gravadas (achado do Codex no PR 784) ──
+#
+# A medição grava os meses em que a Selic usou a meta do ano por falta do
+# dado mensal; o gráfico das carteiras escolhidas ano a ano tem de nomeá-los.
+
+def _medicao_com_selic_pela_meta():
+    m = _medicao_carteira([(2024, 0.06, -0.07, 0.11, 0.02),
+                           (2025, 0.34, 0.34, 0.15, 0.45)])
+    linhas = m["perfis"]["Equilibrado (padrão)"]["variantes"]["sem_portao"]["safras"]
+    linhas[0]["selic_meses_pela_meta"] = []
+    linhas[1]["selic_meses_pela_meta"] = ["2026-03", "2026-02"]
+    return m
+
+
+def test_series_medidas_guarda_os_meses_da_selic_pela_meta():
+    from views.portfolio_b3_safras import series_medidas
+    m = series_medidas(_medicao_com_selic_pela_meta(), None)
+    assert m["selic_pela_meta"] == {2025: ["2026-02", "2026-03"]}
+    assert series_medidas(None, None)["selic_pela_meta"] == {}
+
+
+def test_legendas_nomeiam_a_selic_pela_meta_so_nas_safras_mostradas():
+    from views.portfolio_b3_safras import (
+        frase_selic_pela_meta,
+        legenda_barras_medidas,
+        series_medidas,
+    )
+    m = series_medidas(_medicao_com_selic_pela_meta(), None)
+    frase = frase_selic_pela_meta(m, [2024, 2025])
+    assert "meta do ano" in frase and "safra 2025, 2026-02 e 2026-03" in frase
+    assert frase_selic_pela_meta(m, [2024]) == ""
+    assert frase in legenda_barras_medidas(m)
+
+
+def test_legenda_do_acumulado_nomeia_a_selic_pela_meta():
+    import inspect
+
+    from core.b3_safras import acumulado_das_safras
+    from views import portfolio_b3_safras as v
+    m = v.series_medidas(_medicao_com_selic_pela_meta(), None)
+    acum = acumulado_das_safras(m["series"])
+    assert "safra 2025, 2026-02 e 2026-03" in v.legenda_medidas(acum, m)
+    assert "frase_selic_pela_meta(" in inspect.getsource(v._render_acumulado)
+    assert "meta do ano" in v._AJUDA_ACUMULADO["selic"]
+
+
+def test_medicao_gravada_tem_a_selic_pela_meta_de_2025():
+    from views.portfolio_b3_safras import _carregar_medidas, frase_selic_pela_meta
+    m = _carregar_medidas()
+    assert m["selic_pela_meta"].get(2025) == ["2026-02", "2026-03"]
+    assert "2026-02 e 2026-03" in frase_selic_pela_meta(m, range(2017, 2026))

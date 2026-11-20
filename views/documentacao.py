@@ -381,15 +381,17 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
             "macro_cp", "Cenário macro", "Dados",
             "Carrega Selic e demais variáveis macro para simular benchmark e ajustar o score. "
             "O desempenho safra a safra usa a Selic realizada mês a mês; a meta do ano só "
-            "cobre mês sem dado, e esses meses aparecem nomeados. O gráfico tem duas "
-            "visões. Ano a ano: barras com cada safra sozinha, refeita só com os "
-            "segmentos aprovados hoje (o portão de hoje já conhece o passado, então "
-            "elas saem melhores que uma escolha feita na época). Acumulado: linha do "
-            "R$ 1 encadeado pelas carteiras escolhidas em abril de cada ano, lidas "
-            "das medições gravadas (líder de cada segmento e nota + fatores, as duas "
+            "cobre mês sem dado, e esses meses aparecem nomeados. As duas visões do "
+            "gráfico usam as carteiras escolhidas em abril de cada ano, lidas das "
+            "medições gravadas (líder de cada segmento e nota + fatores, as duas "
             "líquidas do custo do giro, ao lado de pesos iguais, Selic e Ibovespa). "
-            "Abaixo da linha, um card por série com o R$ 1 final e a taxa ao ano "
-            "mostra o resultado do período; a prova segue o teste ano a ano.",
+            "Ano a ano: uma barra por safra e a contagem de safras em que cada "
+            "carteira rendeu mais que os pesos iguais. Acumulado: linha do R$ 1 "
+            "encadeado, com um card por série com o R$ 1 final e a taxa ao ano; "
+            "é o resultado do período, a prova segue o teste ano a ano. A tabela "
+            "acima do gráfico refaz cada safra só com os segmentos aprovados hoje "
+            "(o portão de hoje já conhece o passado, então ela sai melhor que uma "
+            "escolha feita na época).",
             ("load_selic_macro()", "load_selic_mensal()", "load_macro_history()", "Taxa Selic média de fallback"),
             "A comparação contra Selic é essencial porque o investidor brasileiro sempre tem uma alternativa de renda fixa.",
         ),
