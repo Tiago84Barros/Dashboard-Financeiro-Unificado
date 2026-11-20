@@ -1,7 +1,7 @@
 {
   "nome": "Dashboard Financeiro Unificado",
   "explicacao": "Junta num lugar só suas contas do dia a dia, seus investimentos e a análise de empresas do Brasil e dos EUA. Abaixo estão as 8 telas do menu lateral e, por último, o que funciona por trás delas.",
-  "data_mapa": "19/11/2026",
+  "data_mapa": "20/11/2026",
   "filhos": [
     {
       "nome": "Dashboard Geral",
@@ -1966,7 +1966,7 @@
                 {
                   "nome": "Desempenho safra a safra",
                   "resumo": "Resultado de cada carteira anual passada",
-                  "explicacao": "Cartões, tabela e gráfico com o resultado da carteira de cada ano contra a Selic e contra as ações em partes iguais, já descontando custos e imposto. O gráfico tem duas visões, à escolha: \"Ano a ano\", com uma barra por safra, e \"Acumulado (R$ 1)\", com a linha de quanto R$ 1 vale ao fim de cada safra. Abaixo do gráfico, três cartões mostram quanto R$ 1 teria virado reaplicado a cada abril em todas essas safras, na carteira, nas ações em partes iguais e na Selic, com a taxa ao ano. Safra em que o preço não cobre o ano inteiro é nomeada, e a taxa ao ano conta só o tempo coberto. É o resultado do período, não a prova: a prova é o teste ano a ano.",
+                  "explicacao": "Cartões, tabela e gráfico com o resultado da carteira de cada ano contra a Selic e contra as ações em partes iguais. Os três usam a carteira escolhida em abril de cada ano, com os dados daquele ano: a líder de cada segmento e a carteira nota + fatores, as duas já descontando o custo de trocar ações, ao lado das ações em partes iguais, da Selic e do Ibovespa. Ele tem duas visões, à escolha. \"Ano a ano\" mostra uma barra por safra e conta em quantas safras cada carteira rendeu mais que as partes iguais. \"Acumulado (R$ 1)\" mostra quanto R$ 1 vale ao fim de cada safra, com um cartão por linha que diz quanto R$ 1 teria virado e a taxa ao ano. É o resultado do período, não a prova: a prova é o teste ano a ano. Os cartões do topo contam as safras medidas, a média da diferença para a Selic e em quantas safras a líder de cada segmento ficou acima dela. A tabela mostra, por safra, a líder antes e depois do custo e do imposto, as réguas, o giro e as maiores posições. O bloco \"O que esperar da safra vigente\" ainda refaz cada safra só com os segmentos aprovados hoje; como a aprovação de hoje já conhece o passado, ele sai melhor do que uma escolha feita na época.",
                   "so_admin": false,
                   "filhos": [
                     {

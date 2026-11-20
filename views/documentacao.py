@@ -381,12 +381,19 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
             "macro_cp", "Cenário macro", "Dados",
             "Carrega Selic e demais variáveis macro para simular benchmark e ajustar o score. "
             "O desempenho safra a safra usa a Selic realizada mês a mês; a meta do ano só "
-            "cobre mês sem dado, e esses meses aparecem nomeados. O gráfico tem duas "
-            "visões: ano a ano (barras, cada safra sozinha) e acumulado (linha do R$ 1 "
-            "encadeado pelas safras medidas). Abaixo dele, cards com o R$ 1 final da "
-            "carteira, dos pesos iguais e da Selic, com a taxa ao ano, mostram o "
-            "resultado do período; a prova segue o teste ano a ano. Safra cujo preço "
-            "não cobre o ano inteiro é nomeada, e a taxa ao ano conta só o tempo coberto.",
+            "cobre mês sem dado, e esses meses aparecem nomeados. As duas visões do "
+            "gráfico usam as carteiras escolhidas em abril de cada ano, lidas das "
+            "medições gravadas (líder de cada segmento e nota + fatores, as duas "
+            "líquidas do custo do giro, ao lado de pesos iguais, Selic e Ibovespa). "
+            "Ano a ano: uma barra por safra e a contagem de safras em que cada "
+            "carteira rendeu mais que os pesos iguais. Acumulado: linha do R$ 1 "
+            "encadeado, com um card por série com o R$ 1 final e a taxa ao ano; "
+            "é o resultado do período, a prova segue o teste ano a ano. Os três "
+            "cartões do topo e a tabela leem as mesmas medições: uma linha por "
+            "safra com a líder líquida, bruta e com IR, a diferença para a Selic "
+            "e para os pesos iguais, giro, custo e as maiores posições. O bloco "
+            "\"O que esperar da safra vigente\" ainda refaz cada safra só com os "
+            "segmentos aprovados hoje (o portão de hoje já conhece o passado).",
             ("load_selic_macro()", "load_selic_mensal()", "load_macro_history()", "Taxa Selic média de fallback"),
             "A comparação contra Selic é essencial porque o investidor brasileiro sempre tem uma alternativa de renda fixa.",
         ),

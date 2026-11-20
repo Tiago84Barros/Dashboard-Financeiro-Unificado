@@ -341,24 +341,31 @@ def test_render_safras_passa_column_config_ao_st_dataframe():
     `apptest-vaza-atribuicao-de-modulo`)."""
     caminho = RAIZ / "views" / "portfolio_b3_safras.py"
     arvore = ast.parse(caminho.read_text(encoding="utf-8"))
-    render = next(
-        no for no in ast.walk(arvore)
-        if isinstance(no, ast.FunctionDef) and no.name == "render_safras"
-    )
-    chamadas_dataframe = [
-        no for no in ast.walk(render)
-        if isinstance(no, ast.Call)
-        and isinstance(no.func, ast.Attribute)
-        and no.func.attr == "dataframe"
-    ]
-    assert chamadas_dataframe, "render_safras nao chama st.dataframe"
-    kwargs_passados = {
-        kw.arg for chamada in chamadas_dataframe for kw in chamada.keywords
-    }
-    assert "column_config" in kwargs_passados, (
-        "st.dataframe em render_safras nao recebe column_config -- a "
-        "formatacao de 1 casa de _column_config_retorno() nao esta cabeada"
-    )
+    # Desde o PR 784 a tabela sai de um de dois topos chamados por
+    # `render_safras`: o medido (escolhas de cada abril) e o reconstruído.
+    for nome, config in (("_render_topo_medido", "_column_config_medida"),
+                         ("_render_topo_reconstruido", "_column_config_retorno")):
+        render = next(
+            no for no in ast.walk(arvore)
+            if isinstance(no, ast.FunctionDef) and no.name == nome
+        )
+        chamadas_dataframe = [
+            no for no in ast.walk(render)
+            if isinstance(no, ast.Call)
+            and isinstance(no.func, ast.Attribute)
+            and no.func.attr == "dataframe"
+        ]
+        assert chamadas_dataframe, f"{nome} nao chama st.dataframe"
+        configs = {
+            kw.value.func.id for chamada in chamadas_dataframe
+            for kw in chamada.keywords
+            if kw.arg == "column_config" and isinstance(kw.value, ast.Call)
+            and isinstance(kw.value.func, ast.Name)
+        }
+        assert config in configs, (
+            f"st.dataframe em {nome} nao recebe column_config={config}() -- "
+            "a formatacao de 1 casa nao esta cabeada"
+        )
 
 
 def test_colunas_retorno_esta_contida_em_colunas_tabela():
@@ -2663,48 +2670,91 @@ def test_d13_tela_passa_a_selic_mensal_para_as_safras():
     assert "st.caption(_legenda_selic(tabela))" in fonte
 
 
-# ── Acumulado (R$ 1 encadeado) ao lado do ano a ano ──
+# ── Acumulado (R$ 1) pelas carteiras escolhidas ano a ano ──
+#
+# O acumulado lê as medições gravadas (cada safra com a carteira daquele
+# abril), não a tabela acima, que usa os segmentos aprovados hoje.
 
-def test_series_do_acumulado_le_as_safras_medidas_em_fracao():
-    from views.portfolio_b3_safras import series_do_acumulado
-    tabela = _tabela(
-        [_linha(2020, completa=True, mensuravel=True, estrategia=10.0, arrasto=1.0),
-         _linha(2021, completa=True, mensuravel=False),
-         _linha(2022, completa=False, mensuravel=True)],
-        safras_completas=[2020, 2021],
-    )
-    series, liquida = series_do_acumulado(_resumo_safras(tabela)["completas"])
-    assert liquida is True
-    assert set(series) == {"estrategia", "equal_weight", "selic"}
-    assert series["estrategia"][2020] == pytest.approx(0.09)     # líquida
-    assert series["equal_weight"][2020] == pytest.approx(0.08)
-    assert series["estrategia"][2021] is None                    # não mensurável
-    assert 2022 not in series["selic"]                           # não medida
+def _medicao_carteira(safras, *, perfil="Equilibrado (padrão)", em_caixa=()):
+    return {"perfis": {perfil: {"variantes": {"sem_portao": {
+        "safras_em_caixa": list(em_caixa),
+        "safras": [{"safra": a, "liquido": c, "ew": e, "selic": s, "ibov": b}
+                   for a, c, e, s, b in safras]
+                  + [{"safra": 2015, "n_ativos": 0, "sem_carteira": True}],
+    }}}}}
 
 
-def test_series_do_acumulado_quadro_antigo_cai_no_bruto():
-    from views.portfolio_b3_safras import series_do_acumulado
-    tabela = _tabela([_linha(2020, completa=True, mensuravel=True, liquido=False)],
-                     safras_completas=[2020])
-    series, liquida = series_do_acumulado(_resumo_safras(tabela)["completas"])
-    assert liquida is False and series["estrategia"][2020] == pytest.approx(0.10)
-    assert series_do_acumulado(pd.DataFrame()) == ({}, False)
+def _medicao_nf(safras, *, perfil="Equilibrado (padrão)"):
+    return {"perfil": perfil, "nota_fatores": {"safras": [
+        {"safra": a, "liquido": n, "equal_weight": e} for a, n, e in safras]}}
 
 
-def test_render_safras_mostra_o_acumulado():
+def test_series_medidas_le_as_duas_medicoes_na_mesma_regua():
+    from views.portfolio_b3_safras import series_medidas
+    m = series_medidas(
+        _medicao_carteira([(2020, 0.30, 0.10, 0.02, 0.05),
+                           (2021, 0.065, 0.04, 0.065, -0.01)], em_caixa=[2021]),
+        _medicao_nf([(2020, 0.20, 0.10), (2021, 0.03, 0.04)]))
+    assert set(m["series"]) == {"concentrada", "nota_fatores", "equal_weight",
+                                "selic", "ibovespa"}
+    assert m["series"]["concentrada"] == {2020: 0.30, 2021: 0.065}
+    assert m["series"]["nota_fatores"] == {2020: 0.20, 2021: 0.03}
+    assert m["series"]["ibovespa"][2021] == pytest.approx(-0.01)
+    assert 2015 not in m["series"]["concentrada"]       # safra sem carteira
+    assert m["em_caixa"] == [2021] and m["avisos"] == []
+    assert m["perfil"] == "Equilibrado (padrão)"
+
+
+def test_series_medidas_tira_nota_fatores_se_os_pesos_iguais_divergem():
+    from views.portfolio_b3_safras import series_medidas
+    m = series_medidas(_medicao_carteira([(2020, 0.30, 0.10, 0.02, 0.05)]),
+                       _medicao_nf([(2020, 0.20, 0.11)]))
+    assert "nota_fatores" not in m["series"]
+    assert "concentrada" in m["series"]
+    assert len(m["avisos"]) == 1 and "pesos iguais" in m["avisos"][0]
+
+
+def test_series_medidas_sem_arquivo_e_perfil_ausente():
+    from views.portfolio_b3_safras import series_medidas
+    vazio = series_medidas(None, None)
+    assert vazio["series"] == {} and vazio["perfil"] is None
+    so_nf = series_medidas(None, _medicao_nf([(2020, 0.20, 0.10)]))
+    assert set(so_nf["series"]) == {"nota_fatores", "equal_weight"}
+    outro = series_medidas(_medicao_carteira([(2020, 0.3, 0.1, 0.02, 0.05)],
+                                             perfil="Conservador"), None)
+    assert outro["series"] == {} and "perfil" in outro["avisos"][0]
+
+
+def test_series_medidas_nao_usa_a_tabela_de_hoje():
+    """Siga a chamada: o acumulado sai das medições gravadas, nunca da
+    tabela de safras (que usa os segmentos aprovados hoje)."""
     caminho = RAIZ / "views" / "portfolio_b3_safras.py"
     arvore = ast.parse(caminho.read_text(encoding="utf-8"))
     render = next(no for no in ast.walk(arvore)
                   if isinstance(no, ast.FunctionDef) and no.name == "render_safras")
     nomes = {no.func.id for no in ast.walk(render)
              if isinstance(no, ast.Call) and isinstance(no.func, ast.Name)}
-    assert "_render_grafico_safras" in nomes
+    assert {"_render_grafico_safras", "_carregar_medidas"} <= nomes
     grafico = next(no for no in ast.walk(arvore)
                    if isinstance(no, ast.FunctionDef) and no.name == "_render_grafico_safras")
     chamadas = {no.func.id for no in ast.walk(grafico)
                 if isinstance(no, ast.Call) and isinstance(no.func, ast.Name)}
-    # As duas visões no mesmo lugar, e os cartões nas duas.
-    assert {"_grafico_barras", "_grafico_acumulado", "_render_acumulado"} <= chamadas
+    assert {"_grafico_barras", "_grafico_acumulado", "_render_acumulado",
+            "acumulado_das_safras"} <= chamadas
+    fonte = ast.get_source_segment(caminho.read_text(encoding="utf-8"), grafico)
+    assert "completas" not in fonte.split("acumulado_das_safras(", 1)[1].split(")", 1)[0]
+
+
+def test_medicoes_gravadas_reproduzem_o_acumulado_medido():
+    """As duas medições do repositório, lidas pela tela, dão o R$ 1 da
+    medição (pesos iguais 2,84 nos dois arquivos)."""
+    from core.b3_safras import acumulado_das_safras
+    from views.portfolio_b3_safras import _carregar_medidas
+
+    m = _carregar_medidas()
+    acum = acumulado_das_safras(m["series"])
+    assert acum["n"] >= 9 and "nota_fatores" in acum["series"]
+    assert acum["series"]["equal_weight"]["valor_final"] == pytest.approx(2.84, abs=0.01)
 
 
 def test_curva_acumulada_comeca_em_1_e_termina_no_cartao():
@@ -2712,26 +2762,24 @@ def test_curva_acumulada_comeca_em_1_e_termina_no_cartao():
     from views.portfolio_b3_safras import dados_da_curva_acumulada
 
     acum = acumulado_das_safras({
-        "estrategia": {2020: 0.10, 2021: -0.20, 2022: 0.30},
+        "concentrada": {2020: 0.10, 2021: -0.20, 2022: 0.30},
         "equal_weight": {2020: 0.05, 2021: 0.00, 2022: 0.10},
     })
-    pontos = dados_da_curva_acumulada(acum, liquida=True)
-    est = pontos[pontos["Série"] == "Estratégia líquida"]
+    pontos = dados_da_curva_acumulada(acum)
+    est = pontos[pontos["Série"] == "Líder de cada segmento"]
     assert list(est["Data"]) == ["abr/2020", "mar/2021", "mar/2022", "mar/2023"]
     assert list(est["Valor de R$ 1"]) == pytest.approx([1.0, 1.10, 0.88, 1.144])
     assert est["Valor de R$ 1"].iloc[-1] == pytest.approx(
-        acum["series"]["estrategia"]["valor_final"])
-    ew = pontos[pontos["Série"] == "Equal-weight"]
+        acum["series"]["concentrada"]["valor_final"])
+    ew = pontos[pontos["Série"] == "Pesos iguais"]
     assert ew["Valor de R$ 1"].iloc[-1] == pytest.approx(1.05 * 1.10)
-    bruta = dados_da_curva_acumulada(acum, liquida=False)
-    assert "Estratégia bruta" in set(bruta["Série"])
 
 
 def test_curva_acumulada_vazia_sem_safras():
     from core.b3_safras import acumulado_das_safras
     from views.portfolio_b3_safras import dados_da_curva_acumulada
 
-    pontos = dados_da_curva_acumulada(acumulado_das_safras({}), liquida=True)
+    pontos = dados_da_curva_acumulada(acumulado_das_safras({}))
     assert pontos.empty and list(pontos.columns) == ["Data", "Série", "Valor de R$ 1"]
 
 
@@ -2740,10 +2788,245 @@ def test_grafico_acumulado_desenha_uma_linha_por_serie():
     from views.portfolio_b3_safras import _grafico_acumulado
 
     acum = acumulado_das_safras({
-        "estrategia": {2020: 0.10, 2021: 0.05},
+        "ibovespa": {2020: 0.01, 2021: 0.02},
+        "concentrada": {2020: 0.10, 2021: 0.05},
+        "nota_fatores": {2020: 0.08, 2021: 0.04},
         "equal_weight": {2020: 0.02, 2021: 0.03},
         "selic": {2020: 0.04, 2021: 0.09},
     })
-    fig = _grafico_acumulado(acum, liquida=True)
-    assert [t.name for t in fig.data] == ["Estratégia líquida", "Equal-weight", "Selic"]
+    fig = _grafico_acumulado(acum)
+    assert [t.name for t in fig.data] == ["Líder de cada segmento", "Nota + fatores",
+                                          "Pesos iguais", "Selic", "Ibovespa"]
     assert all(len(t.y) == 3 for t in fig.data)
+
+
+def test_legenda_medidas_nomeia_a_escolha_ano_a_ano_e_o_caixa():
+    from core.b3_safras import acumulado_das_safras
+    from views.portfolio_b3_safras import legenda_medidas
+
+    acum = acumulado_das_safras({"concentrada": {2017: 0.08, 2018: 0.07},
+                                 "equal_weight": {2017: 0.25, 2018: 0.15}})
+    txt = legenda_medidas(acum, {"perfil": "Equilibrado (padrão)", "em_caixa": [2017, 2030]})
+    assert "escolhida em abril daquele ano" in txt
+    assert "Em 2017, a líder" in txt and "2030" not in txt
+
+
+# ── Barras do ano a ano pelas carteiras escolhidas ano a ano ──
+
+def test_barras_medidas_uma_por_safra_e_serie():
+    from views.portfolio_b3_safras import dados_das_barras_medidas
+    m = {"series": {"concentrada": {2020: 0.30, 2021: None},
+                    "equal_weight": {2020: 0.10, 2021: 0.04}}}
+    b = dados_das_barras_medidas(m)
+    assert list(b.columns) == ["Safra", "Série", "Retorno da safra (%)"]
+    assert len(b) == 3                                   # 2021 sem a líder
+    lider = b[b["Série"] == "Líder de cada segmento"]
+    assert list(lider["Safra"]) == [2020]
+    assert lider["Retorno da safra (%)"].iloc[0] == pytest.approx(30.0)
+
+
+def test_barras_medidas_vazias_sem_medicao():
+    from views.portfolio_b3_safras import dados_das_barras_medidas
+    assert dados_das_barras_medidas({"series": {}}).empty
+    assert dados_das_barras_medidas({}).empty
+
+
+def test_grafico_barras_medidas_segue_a_ordem_das_series():
+    from views.portfolio_b3_safras import _grafico_barras_medidas
+    m = {"series": {"ibovespa": {2020: 0.01}, "concentrada": {2020: 0.10},
+                    "selic": {2020: 0.04}, "equal_weight": {2020: 0.02},
+                    "nota_fatores": {2020: 0.08}}}
+    fig = _grafico_barras_medidas(m)
+    assert [t.name for t in fig.data] == ["Líder de cada segmento", "Nota + fatores",
+                                          "Pesos iguais", "Selic", "Ibovespa"]
+
+
+def test_vitorias_sobre_pesos_iguais_conta_so_safras_comuns():
+    from views.portfolio_b3_safras import vitorias_sobre_pesos_iguais
+    m = {"series": {"concentrada": {2019: -0.073, 2020: 0.2, 2021: 0.01, 2022: None},
+                    "nota_fatores": {2020: 0.05},
+                    "equal_weight": {2019: -0.074, 2020: 0.1, 2021: 0.02, 2022: 0.0}}}
+    assert vitorias_sobre_pesos_iguais(m) == {"concentrada": (2, 3), "nota_fatores": (0, 1)}
+
+
+def test_legenda_barras_nomeia_escolha_do_ano_e_caixa():
+    from views.portfolio_b3_safras import legenda_barras_medidas
+    m = {"perfil": "Equilibrado (padrão)", "em_caixa": [2017, 2030],
+         "series": {"concentrada": {2017: 0.08, 2018: 0.2},
+                    "equal_weight": {2017: 0.25, 2018: 0.15}}}
+    txt = legenda_barras_medidas(m)
+    assert "escolhida em abril daquele ano" in txt
+    assert "1 de 2" in txt and "contagem, não prova" in txt
+    assert "Em 2017, a líder" in txt and "2030" not in txt
+    # A tabela do topo agora também é a medida: nada de "segmentos de hoje".
+    assert "aprova hoje" not in txt
+
+
+def test_render_grafico_usa_barras_medidas_e_cai_para_a_tabela():
+    """Siga a chamada: o ano a ano sai das medições; a tabela de hoje só
+    desenha as barras quando não há medição."""
+    caminho = RAIZ / "views" / "portfolio_b3_safras.py"
+    fonte = caminho.read_text(encoding="utf-8")
+    arvore = ast.parse(fonte)
+    grafico = next(no for no in ast.walk(arvore)
+                   if isinstance(no, ast.FunctionDef) and no.name == "_render_grafico_safras")
+    trecho = ast.get_source_segment(fonte, grafico)
+    assert trecho.index("_grafico_barras_medidas(medidas)") < trecho.index(
+        "_grafico_barras(completas)")
+    assert "elif barras_medidas:" in trecho
+
+
+def test_medicoes_gravadas_dao_as_barras_de_todas_as_safras():
+    from views.portfolio_b3_safras import _carregar_medidas, dados_das_barras_medidas
+    b = dados_das_barras_medidas(_carregar_medidas())
+    por_serie = b.groupby("Série")["Safra"].apply(set)
+    assert por_serie["Líder de cada segmento"] >= set(range(2017, 2026))
+    assert por_serie["Nota + fatores"] >= set(range(2017, 2026))
+
+
+# ── Selic pela meta nas medições gravadas (achado do Codex no PR 784) ──
+#
+# A medição grava os meses em que a Selic usou a meta do ano por falta do
+# dado mensal; o gráfico das carteiras escolhidas ano a ano tem de nomeá-los.
+
+def _medicao_com_selic_pela_meta():
+    m = _medicao_carteira([(2024, 0.06, -0.07, 0.11, 0.02),
+                           (2025, 0.34, 0.34, 0.15, 0.45)])
+    linhas = m["perfis"]["Equilibrado (padrão)"]["variantes"]["sem_portao"]["safras"]
+    linhas[0]["selic_meses_pela_meta"] = []
+    linhas[1]["selic_meses_pela_meta"] = ["2026-03", "2026-02"]
+    return m
+
+
+def test_series_medidas_guarda_os_meses_da_selic_pela_meta():
+    from views.portfolio_b3_safras import series_medidas
+    m = series_medidas(_medicao_com_selic_pela_meta(), None)
+    assert m["selic_pela_meta"] == {2025: ["2026-02", "2026-03"]}
+    assert series_medidas(None, None)["selic_pela_meta"] == {}
+
+
+def test_legendas_nomeiam_a_selic_pela_meta_so_nas_safras_mostradas():
+    from views.portfolio_b3_safras import (
+        frase_selic_pela_meta,
+        legenda_barras_medidas,
+        series_medidas,
+    )
+    m = series_medidas(_medicao_com_selic_pela_meta(), None)
+    frase = frase_selic_pela_meta(m, [2024, 2025])
+    assert "meta do ano" in frase and "safra 2025, 2026-02 e 2026-03" in frase
+    assert frase_selic_pela_meta(m, [2024]) == ""
+    assert frase in legenda_barras_medidas(m)
+
+
+def test_legenda_do_acumulado_nomeia_a_selic_pela_meta():
+    import inspect
+
+    from core.b3_safras import acumulado_das_safras
+    from views import portfolio_b3_safras as v
+    m = v.series_medidas(_medicao_com_selic_pela_meta(), None)
+    acum = acumulado_das_safras(m["series"])
+    assert "safra 2025, 2026-02 e 2026-03" in v.legenda_medidas(acum, m)
+    assert "frase_selic_pela_meta(" in inspect.getsource(v._render_acumulado)
+    assert "meta do ano" in v._AJUDA_ACUMULADO["selic"]
+
+
+def test_medicao_gravada_tem_a_selic_pela_meta_de_2025():
+    from views.portfolio_b3_safras import _carregar_medidas, frase_selic_pela_meta
+    m = _carregar_medidas()
+    assert m["selic_pela_meta"].get(2025) == ["2026-02", "2026-03"]
+    assert "2026-02 e 2026-03" in frase_selic_pela_meta(m, range(2017, 2026))
+
+
+# ── Tabela e cartões do topo pelas escolhas de cada abril (PR 784) ──
+
+def _medicao_completa():
+    m = _medicao_carteira([(2019, -0.07, -0.074, 0.055, -0.24),
+                           (2020, 0.77, 0.54, 0.024, 0.62),
+                           (2021, 0.065, 0.04, 0.065, 0.03)], em_caixa=[2021])
+    var = m["perfis"]["Equilibrado (padrão)"]["variantes"]["sem_portao"]
+    var["safras_sem_carteira"] = [2015]
+    var["safras"][0].update(bruto=-0.068, liquido_com_ir=-0.079, giro=0.76,
+                            custo=0.002, n_ativos=13, maiores="BRML3 8%")
+    var["safras"][1].update(bruto=0.772, liquido_com_ir=0.77, giro=0.9,
+                            custo=0.002, n_ativos=12, maiores="ITSA3 9%")
+    var["safras"][2].update(bruto=0.065, liquido_com_ir=0.065, giro=0.0,
+                            custo=0.0, n_ativos=0, maiores="caixa a Selic", caixa=True)
+    m["custos"] = {"cobrado": "meia spread na compra e na venda",
+                   "ir": "15% sobre ganho realizado"}
+    return m
+
+
+def test_tabela_medida_le_a_carteira_de_cada_abril():
+    from views.portfolio_b3_safras import series_medidas, tabela_medida
+    m = series_medidas(_medicao_completa(),
+                       _medicao_nf([(2019, -0.04, -0.074), (2020, 0.58, 0.54)]))
+    t = tabela_medida(m)
+    assert list(t["Safra"]) == [2019, 2020, 2021]
+    linha = t.set_index("Safra").loc[2020]
+    assert linha["Líder líquida (%)"] == pytest.approx(77.0)
+    assert linha["Líder − Selic (pp)"] == pytest.approx(74.6)
+    assert linha["Líder − pesos iguais (pp)"] == pytest.approx(23.0)
+    assert linha["Nota + fatores (%)"] == pytest.approx(58.0)
+    assert linha["Líder bruta (%)"] == pytest.approx(77.2)
+    assert linha["Ações"] == 12 and linha["Maiores posições"] == "ITSA3 9%"
+    # Nota + fatores sem a safra 2021: célula vazia, linha mantida.
+    assert pd.isna(t.set_index("Safra").loc[2021, "Nota + fatores (%)"])
+    assert tabela_medida(series_medidas(None, None)).empty
+
+
+def test_resumo_medido_conta_safras_e_excesso_sobre_a_selic():
+    from views.portfolio_b3_safras import resumo_medido, series_medidas, tabela_medida
+    r = resumo_medido(tabela_medida(series_medidas(_medicao_completa(), None)))
+    assert r["n_medidas"] == 3 and (r["safra_min"], r["safra_max"]) == (2019, 2021)
+    # 2019: -12,5; 2020: +74,6; 2021: 0 (caixa empata, não vence).
+    assert r["media_excesso"] == pytest.approx((-12.5 + 74.6 + 0.0) / 3)
+    assert r["venceu"] == 1
+    assert r["media_excesso_bruto"] == pytest.approx((-12.3 + 74.8 + 0.0) / 3)
+    assert r["media_excesso_com_ir"] == pytest.approx((-13.4 + 74.6 + 0.0) / 3)
+    vazio = resumo_medido(tabela_medida({}))
+    assert vazio["n_medidas"] == 0 and vazio["media_excesso"] is None
+
+
+def test_legenda_tabela_medida_nomeia_o_que_ficou_de_fora():
+    from views.portfolio_b3_safras import (
+        legenda_tabela_medida,
+        premissas_medidas,
+        resumo_medido,
+        series_medidas,
+        tabela_medida,
+    )
+    m = series_medidas(_medicao_completa(), None)
+    txt = legenda_tabela_medida(m, resumo_medido(tabela_medida(m)))
+    assert txt.startswith("3 safra(s) medida(s), de 2019 a 2021.")
+    assert "escolhida em abril daquele ano" in txt
+    assert "Em 2015, nenhum segmento passou" in txt
+    assert "Em 2021, a líder de cada segmento" in txt
+    assert "safra vigente ainda não fechou" in txt
+    assert "meia spread" in premissas_medidas(m) and "15%" in premissas_medidas(m)
+    assert "não traz" in premissas_medidas({})
+
+
+def test_render_safras_usa_a_tabela_medida_e_so_cai_para_a_reconstrucao_sem_ela():
+    """Siga a chamada: o topo medido vem antes; a reconstrução só desenha o
+    topo quando não há medição da líder, e segue alimentando o Bloco 3."""
+    fonte = (RAIZ / "views" / "portfolio_b3_safras.py").read_text(encoding="utf-8")
+    trecho = ast.get_source_segment(fonte, _funcao_da_view("render_safras"))
+    assert "tabela_m = tabela_medida(medidas)" in trecho
+    assert trecho.index("_render_topo_medido(medidas, tabela_m)") < trecho.index(
+        "_render_topo_reconstruido(resumo, tabela)")
+    assert "render_expectativa(resultados, tabela)" in trecho
+
+
+def test_medicao_gravada_da_a_tabela_do_topo_de_2017_a_2025():
+    from views.portfolio_b3_safras import (
+        _carregar_medidas,
+        resumo_medido,
+        tabela_medida,
+    )
+    m = _carregar_medidas()
+    t = tabela_medida(m)
+    assert list(t["Safra"]) == list(range(2017, 2026))
+    r = resumo_medido(t)
+    assert r["n_medidas"] == 9
+    assert m["sem_carteira"] == [2015, 2016] and m["em_caixa"] == [2017]
+    assert t["Maiores posições"].str.len().gt(0).all()
