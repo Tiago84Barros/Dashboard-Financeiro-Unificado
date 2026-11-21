@@ -17,6 +17,17 @@ OTHER = "22222222-2222-2222-2222-222222222222"
 PASSWORD = "Test#8Ab"
 
 
+def _kpis_logados(app):
+    """(rótulo, valor) dos cards KPI de "Usuários logados agora".
+
+    A seção trocou ``st.metric`` pelos cards CSS de ``card_metrica`` em
+    15/11/2026; o número passou a morar no HTML do card.
+    """
+    import re
+    padrao = re.compile(r'app-kpi-label">([^<]*)</div><div class="app-kpi-value">([^<]*)<')
+    return [m.groups() for el in app.markdown for m in padrao.finditer(el.value)]
+
+
 @pytest.fixture
 def user_state(monkeypatch):
     state = {}
@@ -320,14 +331,16 @@ ui.render_delete_user()
     app.run(timeout=20)
     assert not app.exception
     assert not any(item.label == "Cadastrar usuário" for item in app.button)
-    assert len(app.metric) == 0
+    assert _kpis_logados(app) == []
     assert len(app.selectbox) == 0
 
     app.session_state['_app4_user'] = {'id': ADMIN, 'expires_at': time.time() + 100}
     app.run(timeout=20)
     assert not app.exception
     assert not any(item.label == "Cadastrar usuário" for item in app.button)
-    assert [m.value for m in app.metric] == ["1", "2"]
+    kpis = _kpis_logados(app)
+    assert kpis[:2] == [("Pessoas logadas", "1"), ("Abas abertas", "2")]
+    assert kpis[2][0] == "Última atividade"
     assert len(app.selectbox) == 1
     # A conta do próprio administrador não é oferecida para exclusão.
     assert all("Administrador" not in opcao for opcao in app.selectbox[0].options)

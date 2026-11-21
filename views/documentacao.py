@@ -2381,7 +2381,8 @@ FLOW_CONFIGURACOES = FlowSpec(
         "cfg_logados": _node(
             "cfg_logados", "Usuários logados agora", "Segurança",
             "Mostra quantas pessoas estão com o aplicativo aberto neste momento, quantas abas "
-            "do navegador isso soma e o nome de cada uma. Visível apenas para quem administra.",
+            "do navegador isso soma, a hora da última atividade e o nome de cada uma, em "
+            "cards KPI e numa tabela. Visível apenas para quem administra.",
             (
                 "Aba 🔒 Segurança, bloco 04",
                 "render_logged_users(); core.presenca.usuarios_logados chama require_admin",
