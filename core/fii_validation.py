@@ -382,6 +382,73 @@ def _metricas_da_coorte(bloco: pd.DataFrame) -> dict[str, Any]:
     }
 
 
+def _payload(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return dict(parsed) if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def ultimo_snapshot_na_data(snapshots: pd.DataFrame, decision: pd.Timestamp) -> pd.DataFrame:
+    """Último snapshot de cada fundo público em ``decision``.
+
+    ``snapshots`` com ``reference_date`` normalizada e ``available_at`` sem
+    fuso (o preparo de `robust_optimizer_point_in_time_backtest`): referência
+    e disponibilidade até a data, sem a linha de base da migração.
+    """
+    decision = pd.Timestamp(decision)
+    decision_cutoff = decision + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
+    s = snapshots
+    universe = s[
+        (s["reference_date"] <= decision) & (s["available_at"] <= decision_cutoff)
+    ]
+    if "availability_quality" in universe:
+        universe = universe[
+            universe["availability_quality"] != "migration_baseline"
+        ]
+    return (
+        universe.sort_values(["reference_date", "available_at"])
+        .drop_duplicates("ticker", keep="last")
+    )
+
+
+def preparar_snapshots(snapshots: pd.DataFrame) -> pd.DataFrame:
+    """Datas no formato que `ultimo_snapshot_na_data` compara."""
+    s = snapshots.copy()
+    s["reference_date"] = pd.to_datetime(s["reference_date"]).dt.normalize()
+    s["available_at"] = pd.to_datetime(s["available_at"], utc=True).dt.tz_localize(None)
+    return s
+
+
+def linhas_pit_na_data(latest: pd.DataFrame) -> list[dict[str, Any]]:
+    """Linhas de entrada da elegibilidade a partir de `ultimo_snapshot_na_data`.
+
+    Ponto único: o backtest robusto e a carteira de safras
+    (``scripts/medir_safras_fii.py``) montam as linhas daqui.
+    """
+    rows: list[dict[str, Any]] = []
+    for record in latest.to_dict("records"):
+        row = _payload(record.get("portfolio_input_json"))
+        if not row:
+            continue
+        row.update({
+            "ticker": str(record["ticker"]),
+            "tipo": row.get("tipo") or record.get("fii_type"),
+            "type_score": float(record["score"]),
+            "confidence": float(record["confidence"]),
+            "coverage": float(record.get("coverage") or 0.0),
+            # Neutraliza somente o gate recursivo de validação. Não altera pesos.
+            "publication_status": "validated",
+        })
+        rows.append(row)
+    return rows
+
+
 def robust_optimizer_point_in_time_backtest(
     snapshots: pd.DataFrame, returns: pd.DataFrame, benchmark: pd.Series,
     macro_scenarios: dict[str, dict[str, float]], *,
@@ -450,11 +517,9 @@ def robust_optimizer_point_in_time_backtest(
             "blockers": ["inputs PIT do otimizador robusto ausentes"],
         }
 
-    s = snapshots.copy()
+    s = preparar_snapshots(snapshots)
     r = returns.copy()
     b = benchmark.copy()
-    s["reference_date"] = pd.to_datetime(s["reference_date"]).dt.normalize()
-    s["available_at"] = pd.to_datetime(s["available_at"], utc=True).dt.tz_localize(None)
     r["date"] = pd.to_datetime(r["date"]).dt.normalize()
     b.index = pd.to_datetime(b.index).normalize()
     dates = sorted(set(s["reference_date"]))
@@ -490,17 +555,6 @@ def robust_optimizer_point_in_time_backtest(
     # existe, e caixa ali seria um periodo inventado. Igual nas duas cadeias
     # (com e sem `medir_rascunho`), porque depende so de haver itens.
     comecou = False
-
-    def payload(value: Any) -> dict[str, Any]:
-        if isinstance(value, dict):
-            return dict(value)
-        if isinstance(value, str):
-            try:
-                parsed = json.loads(value)
-                return dict(parsed) if isinstance(parsed, dict) else {}
-            except json.JSONDecodeError:
-                return {}
-        return {}
 
     def _retorno_do_benchmark(inicio: pd.Timestamp, fim: pd.Timestamp | None) -> float:
         periodo = b[b.index >= inicio]
@@ -552,7 +606,6 @@ def robust_optimizer_point_in_time_backtest(
         previous = vazia
 
     for position, decision in enumerate(dates):
-        decision_cutoff = decision + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
         possible_execution = [value for value in return_dates if value > decision]
         if not possible_execution:
             continue
@@ -563,32 +616,8 @@ def robust_optimizer_point_in_time_backtest(
             choices = [value for value in return_dates if value > next_decision]
             next_execution = choices[0] if choices else None
 
-        universe = s[
-            (s["reference_date"] <= decision) & (s["available_at"] <= decision_cutoff)
-        ]
-        if "availability_quality" in universe:
-            universe = universe[
-                universe["availability_quality"] != "migration_baseline"
-            ]
-        latest = (
-            universe.sort_values(["reference_date", "available_at"])
-            .drop_duplicates("ticker", keep="last")
-        )
-        rows: list[dict[str, Any]] = []
-        for record in latest.to_dict("records"):
-            row = payload(record.get("portfolio_input_json"))
-            if not row:
-                continue
-            row.update({
-                "ticker": str(record["ticker"]),
-                "tipo": row.get("tipo") or record.get("fii_type"),
-                "type_score": float(record["score"]),
-                "confidence": float(record["confidence"]),
-                "coverage": float(record.get("coverage") or 0.0),
-                # Neutraliza somente o gate recursivo de validação. Não altera pesos.
-                "publication_status": "validated",
-            })
-            rows.append(row)
+        latest = ultimo_snapshot_na_data(s, decision)
+        rows = linhas_pit_na_data(latest)
         try:
             eligible, eligibility = apply_integrated_eligibility(
                 rows, IntegratedEligibilityPolicy(),

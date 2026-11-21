@@ -259,8 +259,12 @@ def _features_as_of(
 def reconstruct_snapshots(
     prices: pd.DataFrame, dividends: pd.DataFrame, observations: pd.DataFrame,
     exposures: pd.DataFrame, funds: pd.DataFrame, *, start: str | date | None = None,
-    end: str | date | None = None,
+    end: str | date | None = None, decision_dates: list | None = None,
 ) -> list[dict]:
+    """Snapshots PIT de cada fim de mês entre ``start`` e ``end``.
+
+    ``decision_dates`` troca a grade mensal por datas escolhidas (a carteira
+    de safras FII só decide em 31/03); a regra de cada data é a mesma."""
     bundles = _monthly_market_features(prices, dividends)
     if not bundles:
         return []
@@ -277,7 +281,8 @@ def reconstruct_snapshots(
     minimum = pd.Timestamp(start) if start else max(
         min(bundle["monthly"].index.min() for bundle in bundles.values()), pd.Timestamp("2021-01-31"))
     maximum = pd.Timestamp(end) if end else max(bundle["monthly"].index.max() for bundle in bundles.values())
-    dates = pd.date_range(minimum, maximum, freq="ME")
+    dates = (pd.DatetimeIndex(sorted({pd.Timestamp(d).normalize() for d in decision_dates}))
+             if decision_dates is not None else pd.date_range(minimum, maximum, freq="ME"))
     fund_map = {str(row.get("ticker")): row for row in funds.to_dict("records")}
     snapshots: list[dict] = []
     for decision in dates:
@@ -602,6 +607,44 @@ def _persist_snapshot_batch(conn, snapshots: list[dict]) -> int:
     return max(int(result.rowcount or 0), 0)
 
 
+def carregar_benchmark_fii(conn, returns: pd.DataFrame,
+                           end: str | date | None = None) -> tuple[pd.Series, str]:
+    """Retorno mensal do benchmark FII e o nome da fonte usada.
+
+    Preferência: IFIX oficial da B3 (``b3_official_ifix``), depois o ETF
+    XFIX11, e por último a mediana do universo. Ponto único: a validação PIT
+    e a carteira de safras (``scripts/medir_safras_fii.py``) leem daqui.
+    """
+    benchmark_prices = pd.read_sql(text("""
+        SELECT ticker,date,close,adjusted_close,source FROM market.historical_prices
+        WHERE ticker IN ('IFIX','XFIX11') ORDER BY ticker,date
+    """), conn)
+    official_prices = benchmark_prices[
+        (benchmark_prices["ticker"] == "IFIX")
+        & (benchmark_prices["source"] == "b3_official_ifix")
+    ]
+    proxy_prices = benchmark_prices[benchmark_prices["ticker"] == "XFIX11"]
+    if not official_prices.empty:
+        benchmark_prices = official_prices.copy()
+        benchmark_name = "IFIX_official"
+    else:
+        benchmark_prices = proxy_prices.copy()
+        benchmark_name = "XFIX11_proxy"
+    if benchmark_prices.empty:
+        benchmark = returns.groupby("date")["total_return"].median()
+        benchmark.index = pd.to_datetime(benchmark.index)
+        return benchmark, "universe_median_proxy"
+    benchmark_prices["date"] = pd.to_datetime(benchmark_prices["date"])
+    benchmark_prices["value"] = pd.to_numeric(
+        benchmark_prices["adjusted_close"], errors="coerce").fillna(
+            pd.to_numeric(benchmark_prices["close"], errors="coerce"))
+    benchmark = (benchmark_prices.set_index("date")["value"].resample("ME").last()
+                 .pct_change(fill_method=None).dropna())
+    if end is not None:
+        benchmark = benchmark[benchmark.index <= pd.Timestamp(end)]
+    return benchmark, benchmark_name
+
+
 def run_pit_validation(*, years: int = 10, top_n: int = 12) -> dict:
     engine = get_pipeline_engine()
     if engine is None:
@@ -628,32 +671,7 @@ def run_pit_validation(*, years: int = 10, top_n: int = 12) -> dict:
         )
         persisted = _persist_snapshots(conn, snapshots)
         snapshot_frame = pd.DataFrame(snapshots)
-        benchmark_prices = pd.read_sql(text("""
-            SELECT ticker,date,close,adjusted_close,source FROM market.historical_prices
-            WHERE ticker IN ('IFIX','XFIX11') ORDER BY ticker,date
-        """), conn)
-        official_prices = benchmark_prices[
-            (benchmark_prices["ticker"] == "IFIX")
-            & (benchmark_prices["source"] == "b3_official_ifix")
-        ]
-        proxy_prices = benchmark_prices[benchmark_prices["ticker"] == "XFIX11"]
-        if not official_prices.empty:
-            benchmark_prices = official_prices
-            benchmark_name = "IFIX_official"
-        else:
-            benchmark_prices = proxy_prices
-            benchmark_name = "XFIX11_proxy"
-        if benchmark_prices.empty:
-            benchmark = returns.groupby("date")["total_return"].median()
-            benchmark_name = "universe_median_proxy"
-        else:
-            benchmark_prices["date"] = pd.to_datetime(benchmark_prices["date"])
-            benchmark_prices["value"] = pd.to_numeric(
-                benchmark_prices["adjusted_close"], errors="coerce").fillna(
-                    pd.to_numeric(benchmark_prices["close"], errors="coerce"))
-            benchmark = (benchmark_prices.set_index("date")["value"].resample("ME").last()
-                         .pct_change(fill_method=None).dropna())
-            benchmark = benchmark[benchmark.index <= pd.Timestamp(end)]
+        benchmark, benchmark_name = carregar_benchmark_fii(conn, returns, end)
         if snapshot_frame.empty:
             backtest = {"status": "blocked", "blockers": ["nenhum snapshot histórico reconstruível"]}
         else:

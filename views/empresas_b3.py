@@ -31,6 +31,7 @@ import core.b3_company_score as _company_score
 import core.b3_data as _db  # facade de leitura B3 — fonte financeira única: market.* (brapi)
 import core.data_quality as _dq
 import core.market_read as _mr  # séries do market.* (preços mensais ajustados) p/ backtest
+import core.pesos_por_score as _pps
 from core.b3_methodology import SCORE_VERSION
 from core.b3_renda_sustentavel import enrich_decision_universe
 from core.b3_slopes import SLOPE_COLS, compute_slope_log, enrich_com_slopes
@@ -976,39 +977,12 @@ def _resolve_group_col_df(df: pd.DataFrame, prefer: str = "SEGMENTO",
     return prefer
 
 
-def _select_n_heuristica(scores_desc: list[float], eps: float = 0.35) -> int:
-    if len(scores_desc) < 2:
-        return 1
-    gap12 = scores_desc[0] - scores_desc[1]
-    gap23 = scores_desc[1] - scores_desc[2] if len(scores_desc) >= 3 else 1.0
-    if gap12 <= eps and gap23 <= eps:
-        return 3
-    if gap12 <= eps:
-        return 2
-    return 1
-
-
-def _weights_from_scores(tickers: list[str], score_map: dict[str, float],
-                          gamma: float = 0.90) -> dict[str, float]:
-    scores = [score_map.get(tk, 0.0) for tk in tickers]
-    scores = [float(s) if (s is not None and np.isfinite(s)) else 0.0 for s in scores]
-    mn  = min(scores) if scores else 0.0
-    eps = 1e-6
-    raw = [(max(s - mn, 0) + eps) ** gamma for s in scores]
-    tot = sum(raw) or 1.0
-    return {tk: r / tot for tk, r in zip(tickers, raw)}
-
-
-def _apply_cap_soft(weights: dict[str, float],
-                    cap: float = 0.25, soft: float = 0.05) -> dict[str, float]:
-    """Aplica tilt suave e projeta em pesos válidos com cap estrito."""
-    from core.portfolio_constraints import project_capped_simplex
-
-    tilted = {
-        tk: float(v) + (float(v) - soft) * 0.5 if float(v) > soft else float(v)
-        for tk, v in weights.items()
-    }
-    return project_capped_simplex(tilted, cap)
+# Ponto único em core.pesos_por_score (a carteira de safras FII usa as
+# mesmas regras); os nomes antigos seguem para portfolio_b3 e os testes.
+_select_n_heuristica = _pps.select_n_heuristica
+_weights_from_scores = _pps.weights_from_scores
+_apply_cap_soft = _pps.apply_cap_soft
+_apply_decay_penalty = _pps.apply_decay_penalty
 
 
 def _apply_crowding_penalty(
@@ -2284,19 +2258,6 @@ def _score_historico_ano_com_cobertura(
          if pd.notna(s) and np.isfinite(s)},
         degradacoes=_degradacoes(df_sc),
     ), cov
-
-
-def _apply_decay_penalty(
-    score_map: dict[str, float],
-    anos_lideranca: dict[str, int],
-    desconto_aa: float = 0.07,
-    cap: float = 0.30,
-) -> dict[str, float]:
-    """Desconta scores de líderes consecutivos — força rotação de carteira."""
-    return {
-        tk: s * (1.0 - min(anos_lideranca.get(tk, 0) * desconto_aa, cap))
-        for tk, s in score_map.items()
-    }
 
 
 # ══════════════════════════════════════════════════════════════════════════════

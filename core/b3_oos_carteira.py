@@ -945,8 +945,12 @@ def resumir(linhas: list[dict], chave: str) -> dict:
     }
 
 
-def leitura_honesta(resumo: dict, rotulo: str = "pesos iguais") -> str:
-    """Uma frase que não promete mais do que o intervalo sustenta."""
+def leitura_honesta(resumo: dict, rotulo: str = "pesos iguais", *,
+                    alternativa: str = "dividir igualmente entre as empresas") -> str:
+    """Uma frase que não promete mais do que o intervalo sustenta.
+
+    ``alternativa``: o que o intervalo que cruza o zero não distingue da
+    carteira. A carteira de safras FII passa "comprar o IFIX"."""
     n = resumo.get("n_safras") or 0
     media = resumo.get("media")
     lo, hi = (resumo.get("ic95") or [None, None])
@@ -963,7 +967,7 @@ def leitura_honesta(resumo: dict, rotulo: str = "pesos iguais") -> str:
                     f"seria {sem_melhor * 100:+.1f} pp.")
     if lo <= 0 <= hi:
         return base + (" O intervalo cruza o zero: a medição NÃO distingue esta "
-                       "carteira de dividir igualmente entre as empresas.") + robustez
+                       f"carteira de {alternativa}.") + robustez
     if hi < 0:
         return base + " O intervalo está todo abaixo de zero: a carteira perdeu." + robustez
     return base + " O intervalo exclui o zero." + robustez
