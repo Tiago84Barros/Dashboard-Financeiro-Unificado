@@ -1,12 +1,12 @@
 {
   "nome": "Dashboard Financeiro Unificado",
   "explicacao": "Junta num lugar só suas contas do dia a dia, seus investimentos e a análise de empresas do Brasil e dos EUA. Abaixo estão as 8 telas do menu lateral e, por último, o que funciona por trás delas.",
-  "data_mapa": "13/11/2026",
+  "data_mapa": "20/11/2026",
   "filhos": [
     {
       "nome": "Dashboard Geral",
       "resumo": "Resumo do seu dinheiro e dos investimentos numa página",
-      "explicacao": "É a primeira tela do app: uma página única, de rolar, que junta o mês atual (quanto entrou, quanto saiu, quanto sobrou), o histórico, a carteira que você tem investida e as carteiras sugeridas pelo app. Ela se monta com as seções que você mantém no menu (Configurações → Geral → Seções do aplicativo): o bloco de uma seção desligada não aparece, e o que sobra continua na mesma ordem. Aqui você só consulta: nada é digitado nem salvo. Para lançar ou corrigir valores, use os outros itens do menu.",
+      "explicacao": "É a primeira tela do app: uma página única, de rolar, que junta o mês atual (quanto entrou, quanto saiu, quanto sobrou), o histórico, a carteira que você tem investida e as carteiras sugeridas pelo app. Ela se monta com as seções que você mantém no menu (Configurações → Geral → Seções do aplicativo): o bloco de uma seção desligada não aparece, e o que sobra continua na mesma ordem. Aqui você só consulta: nada é digitado nem salvo. Para lançar ou corrigir valores, use os outros itens do menu. Os preços da bolsa brasileira usados aqui vêm do armazém local; se ele não responder, um aviso amarelo no topo diz que podem ser a cópia guardada em 15/11/2026.",
       "so_admin": false,
       "filhos": [
         {
@@ -86,7 +86,7 @@
             {
               "nome": "Empresas B3",
               "resumo": "Resumo da carteira de ações brasileiras sugerida",
-              "explicacao": "Resumo da carteira de ações brasileiras que você salvou na tela Empresas B3: quantas empresas, a nota média e o ano de compra. A etiqueta diz 'Ativa', 'Revisar' (feita com um método antigo) ou 'Sem carteira'. Leva o selo 'Carteira recomendada pelo app'.",
+              "explicacao": "Resumo da carteira de ações brasileiras que você salvou na tela Empresas B3: quantas empresas, a nota média (\"—\" quando nenhuma nota compara a empresa com um par do segmento) e o ano de compra. A etiqueta diz 'Ativa', 'Revisar' (feita com um método antigo) ou 'Sem carteira'. Leva o selo 'Carteira recomendada pelo app'.",
               "so_admin": false
             },
             {
@@ -1369,7 +1369,7 @@
             {
               "nome": "Reserva de emergência · Renda fixa",
               "resumo": "Lista dos títulos com valor e peso",
-              "explicacao": "Para esses dois grupos a tela mostra só uma lista simples de cada título, com valor e porcentagem da carteira; o cabeçalho traz o alvo da renda fixa e a meta da reserva.",
+              "explicacao": "Para esses dois grupos a tela mostra um cartão por título, com o nome, o valor, a porcentagem da carteira e uma barra com a parte do título dentro do grupo; o cabeçalho traz o alvo da renda fixa e a meta da reserva.",
               "so_admin": false
             },
             {
@@ -1598,7 +1598,7 @@
     {
       "nome": "Empresas B3",
       "resumo": "Estudar ações brasileiras e montar carteiras",
-      "explicacao": "É a área do app dedicada às ações de empresas brasileiras negociadas na bolsa (B3). No topo há cinco abas, em forma de botões: navegar pelas empresas, estudar uma empresa, montar uma carteira, avaliá-la e acompanhar a Carteira 20. Serve para ir da pesquisa de uma empresa até uma carteira montada e acompanhada.",
+      "explicacao": "É a área do app dedicada às ações de empresas brasileiras negociadas na bolsa (B3). No topo há cinco abas, em forma de botões: navegar pelas empresas, estudar uma empresa, montar uma carteira, avaliá-la e acompanhar a Carteira 20. Serve para ir da pesquisa de uma empresa até uma carteira montada e acompanhada. Os números da bolsa vêm do armazém local, o banco grande que fica no computador do dono do app e é atualizado todo dia. Se ele não responder, um aviso amarelo no topo diz que os dados mostrados são a cópia guardada em 15/11/2026.",
       "so_admin": false,
       "filhos": [
         {
@@ -1786,7 +1786,7 @@
         {
           "nome": "Criação de Portfólio",
           "resumo": "Monta a carteira sugerida com toda a bolsa",
-          "explicacao": "Aplica o método de seleção a todos os segmentos da bolsa de uma vez, escolhe as empresas líderes dos segmentos aprovados e monta uma carteira com várias áreas da economia. Você escolhe um perfil, clica em \"Rodar Criação de Portfólio\" e, no fim, pode salvar a carteira. Quase tudo só aparece depois de rodar.",
+          "explicacao": "Aplica o método de seleção a todos os segmentos da bolsa de uma vez, escolhe as empresas líderes dos segmentos aprovados e monta uma carteira com várias áreas da economia. Você escolhe um perfil e clica em \"Rodar Criação de Portfólio\". Um seletor escolhe a estratégia: \"Nota + fatores\" abre por padrão; \"Líder de cada segmento\" mostra as empresas líderes e permite salvar a carteira. Quase tudo só aparece depois de rodar.",
           "so_admin": false,
           "filhos": [
             {
@@ -1862,6 +1862,26 @@
               ]
             },
             {
+              "nome": "Estratégia",
+              "resumo": "Nota + fatores (padrão) ou líder de cada segmento",
+              "explicacao": "Um seletor logo depois dos testes complementares escolhe qual carteira a tela mostra. Abre em \"Nota + fatores\", a estratégia padrão. \"Líder de cada segmento\" mostra a carteira concentrada e tudo o que vem com ela: as empresas líderes, o parecer da IA e o botão de salvar.",
+              "so_admin": false,
+              "filhos": [
+                {
+                  "nome": "Nota + fatores (padrão)",
+                  "resumo": "Estratégia padrão: tira os 30% piores e divide igual no resto",
+                  "explicacao": "A estratégia que abre por padrão, desde 20/11/2026, porque foi a única com ganho medido fora do zero: em média, 2,5 pontos ao ano acima de dividir igual entre todas as empresas. É uma carteira ampla feita com a mesma nota. Junta a nota com três dados de mercado (momento, baixa volatilidade e ROE), tira os 30% de pior resultado e divide o dinheiro em partes iguais entre os que ficam. É refeita uma vez por ano, em abril. Três cartões mostram quanto ela rendeu a mais que dividir igual entre todas as empresas nos anos passados, ao lado da nota sozinha e da líder de cada segmento. Outros três mostram quanto R$ 1 teria virado reaplicado a cada abril nesses anos (nota + fatores, a nota sozinha e partes iguais), com a taxa ao ano: é o resultado do período, não a prova. A lista de hoje aparece depois de rodar a aba; entre janeiro e março ela é uma prévia. Logo abaixo vêm o desempenho safra a safra e a metodologia. Ela não passa pelo parecer da IA e não pode ser salva como portfólio padrão.",
+                  "so_admin": false
+                },
+                {
+                  "nome": "Líder de cada segmento",
+                  "resumo": "A carteira concentrada, uma empresa por segmento aprovado",
+                  "explicacao": "A outra estratégia do seletor. Ao escolhê-la aparecem as empresas líderes, os ajustes e verificações (com o parecer da IA), o botão de salvar como portfólio padrão e o desempenho. Seu ganho sobre dividir igual não foi provado: a margem de erro cruza o zero. É a única que pode ser salva como portfólio padrão.",
+                  "so_admin": false
+                }
+              ]
+            },
+            {
               "nome": "Empresas líderes para o próximo ano",
               "resumo": "A carteira sugerida para comprar este ano",
               "explicacao": "Lista as empresas escolhidas, só de segmentos aprovados, para comprar no ano corrente. É o resultado principal da aba.",
@@ -1876,7 +1896,7 @@
                 {
                   "nome": "Composição possível com proteção ao investidor",
                   "resumo": "Proposta parcial quando a carteira não fecha",
-                  "explicacao": "Aparece no lugar da carteira sugerida (macro, saúde, salvar e distribuição setorial) quando não há empresas suficientes para respeitar os limites de concentração. Mostra uma proposta parcial, quanto do dinheiro ficaria sem aplicar e o botão \"Baixar composição para revisão\". Depois dela seguem os mesmos painéis da carteira normal: Patches 1 a 5, desempenho da safra vigente, desempenho safra a safra contra Selic e Pesos Iguais e a metodologia.",
+                  "explicacao": "Aparece no lugar da carteira sugerida (macro, saúde e salvar) só quando nenhum segmento deixa líder para a carteira. Quando há líderes mas eles não fecham nos limites de concentração, a tela fica na carteira normal, com um aviso que diz quais limites ficaram de fora (desde 16/11/2026). Cada segmento analisado entra com uma só empresa, a de maior nota dentro do próprio segmento (a mesma nota da carteira normal); notas de segmentos diferentes nunca são comparadas entre si. Os segmentos aprovados no backtest vêm primeiro e os demais seguem pela menor distância até a aprovação. Nota de entrada, Inteligência dos Ativos e risco crítico só tiram empresas: quem é barrado cede a vaga à próxima do mesmo segmento. Cada card diz se o segmento foi aprovado no backtest e, se não foi, por quanto ficou de fora. A nota compara a empresa com as outras compráveis do segmento; quando ela é a única, o card diz \"sem par comparável\" em vez de 0,0 e essa nota fica fora do score médio. Mostra uma proposta parcial, quanto do dinheiro ficaria sem aplicar e o botão \"Baixar composição para revisão\". Depois dela seguem os mesmos painéis da carteira normal: a distribuição setorial, Patches 1 a 5, desempenho da safra vigente, desempenho safra a safra contra Selic e Pesos Iguais e a metodologia.",
                   "so_admin": false
                 },
                 {
@@ -1922,7 +1942,7 @@
             {
               "nome": "Salvar como portfólio padrão",
               "resumo": "Guarda a carteira como a oficial",
-              "explicacao": "Torna esta carteira a sua carteira-modelo, que aparece resumida no Dashboard Geral e é a usada na aba Avaliação de Portfólio. Ao lado ficam cartões com número de empresas, segmentos aprovados e nota média.",
+              "explicacao": "Torna esta carteira a sua carteira-modelo, que aparece resumida no Dashboard Geral e é a usada na aba Avaliação de Portfólio. Ao lado ficam cartões com número de empresas, segmentos aprovados e nota média; a média deixa de fora a nota de quem é a única comprável do segmento (\"sem par comparável\") e mostra \"—\" se não sobrar nenhuma. Quando os líderes não fecham nos limites de concentração (poucos ativos para o limite por ativo, ou tetos de setor e ciclo que não cabem juntos), a carteira normal continua na tela com um aviso, os pesos passam do limite, a camada macro não é aplicada e o botão de salvar fica desligado; por isso a medição fora da amostra conta essas safras (as duas causas) como caixa a Selic, não com esses pesos, que só entram numa sensibilidade à parte. É a mesma regra da Seleção de FIIs.",
               "so_admin": false,
               "filhos": [
                 {
@@ -1942,7 +1962,7 @@
             {
               "nome": "Distribuição Setorial do Portfólio Sugerido",
               "resumo": "Pizza com o peso de cada setor",
-              "explicacao": "Gráfico de pizza que mostra quanto da carteira sugerida está em cada setor da economia.",
+              "explicacao": "Gráfico de pizza que mostra quanto da carteira sugerida está em cada setor da economia. Aparece também depois da composição para revisão; o dinheiro que ela deixa sem aplicar vira a fatia \"Não alocado\", em vez de os setores serem esticados até 100%.",
               "so_admin": false
             },
             {
@@ -1966,13 +1986,13 @@
                 {
                   "nome": "Desempenho safra a safra",
                   "resumo": "Resultado de cada carteira anual passada",
-                  "explicacao": "Cartões, tabela e gráfico de barras com o resultado da carteira de cada ano contra a Selic e contra as ações em partes iguais, já descontando custos e imposto.",
+                  "explicacao": "Cartões, tabela e gráfico com o resultado da carteira de cada ano contra a Selic e contra as ações em partes iguais. Os três usam a carteira escolhida em abril de cada ano, com os dados daquele ano: a líder de cada segmento e a carteira nota + fatores, as duas já descontando o custo de trocar ações, ao lado das ações em partes iguais, da Selic e do Ibovespa. Ele tem duas visões, à escolha. \"Ano a ano\" mostra uma barra por safra e conta em quantas safras cada carteira rendeu mais que as partes iguais. \"Acumulado (R$ 1)\" mostra quanto R$ 1 vale ao fim de cada safra, com um cartão por linha que diz quanto R$ 1 teria virado e a taxa ao ano. É o resultado do período, não a prova: a prova é o teste ano a ano. Os cartões do topo contam as safras medidas, a média da diferença para a Selic e em quantas safras a líder de cada segmento ficou acima dela. A tabela mostra, por safra, a líder antes e depois do custo e do imposto, as réguas, o giro e as maiores posições. O bloco \"O que esperar da safra vigente\" também usa a carteira escolhida em cada abril.",
                   "so_admin": false,
                   "filhos": [
                     {
                       "nome": "O que esperar da safra vigente",
                       "resumo": "Expectativa e fragilidade da carteira atual",
-                      "explicacao": "Quatro cartões: se a nota ordena bem as empresas, se a carteira tende a superar a Selic e o mercado, e quão frágil é essa conclusão.",
+                      "explicacao": "Quatro cartões: se a nota ordena bem as empresas, se a carteira tende a superar a Selic e o mercado, e quão frágil é essa conclusão. As faixas contra a Selic e contra as partes iguais usam as carteiras escolhidas em cada abril, já descontando o custo de trocar ações. \"Ordena?\" e \"Fragilidade\" usam, para cada ano, quanto a nota acertou a ordem de todas as empresas, medido fora da amostra. Se faltar uma dessas medições, o bloco volta a refazer as safras com os segmentos aprovados hoje e avisa na tela.",
                       "so_admin": false
                     }
                   ]
@@ -2311,6 +2331,12 @@
               "so_admin": false
             },
             {
+              "nome": "Composição possível com proteção ao investidor",
+              "resumo": "Proposta parcial quando a carteira não fecha",
+              "explicacao": "Aparece no lugar da carteira quando nenhuma indústria é aprovada ou os tetos não fecham. Traz os líderes de cada indústria pela mesma regra da carteira normal, quanto do dinheiro ficaria sem aplicar e o botão \"Baixar composição para revisão\". Logo abaixo vêm os mesmos dois gráficos da carteira normal, Alocação por ativo e Alocação por setor, com o dinheiro sem aplicar como \"Não alocado\".",
+              "so_admin": false
+            },
+            {
               "nome": "Composição de Entrada — Mercado Americano",
               "resumo": "Quantas empresas e indústrias foram aprovadas",
               "explicacao": "Aparece depois de rodar. Cartões com empresas elegíveis, indústrias aprovadas, em observação e excluídas. Abaixo há uma seção que abre ao clicar com a qualidade dos dados e a Auditoria por Indústria.",
@@ -2349,7 +2375,7 @@
                 {
                   "nome": "Alocação por ativo e Alocação por setor",
                   "resumo": "Gráficos de pizza e barras dos pesos",
-                  "explicacao": "Dois gráficos lado a lado: quanto cada ação pesa na carteira e quanto cada setor pesa.",
+                  "explicacao": "Dois gráficos lado a lado: quanto cada ação pesa na carteira e quanto cada setor pesa. São os mesmos que aparecem depois da composição para revisão; dinheiro sem aplicar aparece como \"Não alocado\".",
                   "so_admin": false
                 },
                 {
@@ -2490,7 +2516,7 @@
     {
       "nome": "Seleção de FIIs",
       "resumo": "Fundos imobiliários: explorar, estudar e montar carteira",
-      "explicacao": "Área dos fundos imobiliários (FIIs), fundos que investem em imóveis ou em títulos ligados a imóveis e repassam renda mensal. O cabeçalho mostra se o método já foi validado e quanto ele rendeu acima do IFIX (o índice dos FIIs). Quatro botões no topo funcionam como abas: ver os fundos, estudar um fundo, montar a carteira e ver o desempenho passado.",
+      "explicacao": "Área dos fundos imobiliários (FIIs), fundos que investem em imóveis ou em títulos ligados a imóveis e repassam renda mensal. O cabeçalho mostra se o método já foi validado e quanto ele rendeu acima do IFIX (o índice dos FIIs). Quatro botões no topo funcionam como abas: ver os fundos, estudar um fundo, montar a carteira e ver o desempenho passado. Os preços da bolsa brasileira usados aqui vêm do armazém local; se ele não responder, um aviso amarelo no topo diz que podem ser a cópia guardada em 15/11/2026.",
       "so_admin": false,
       "filhos": [
         {
@@ -2680,7 +2706,7 @@
             {
               "nome": "Validação point-in-time da metodologia",
               "resumo": "Situação e números do teste histórico",
-              "explicacao": "Cartões com a situação do teste (aprovada, bloqueada ou não executada), número de períodos, dados verificados e a faixa provável do ganho sobre o IFIX. Abaixo, aviso de validação bloqueada ou aprovada, lembrando quando o ganho não é estatisticamente confiável.",
+              "explicacao": "Cartões com a situação do teste (aprovada, bloqueada ou não executada), número de períodos, dados verificados e a faixa provável do ganho sobre o IFIX. Abaixo, aviso de validação bloqueada ou aprovada. Só aprova o método que ganhou do IFIX na média, depois de custos; quando o ganho não é estatisticamente confiável, a tela avisa.",
               "so_admin": false
             },
             {
@@ -2693,6 +2719,12 @@
               "nome": "Padrão da casa × carteiras de exceção",
               "resumo": "Regra padrão contra casos especiais",
               "explicacao": "Compara o desempenho das carteiras montadas pela regra padrão com o das carteiras em que a regra precisou ser afrouxada.",
+              "so_admin": false
+            },
+            {
+              "nome": "Carteira publicável × caixa a Selic",
+              "resumo": "Meses com e sem carteira publicável, lado a lado",
+              "explicacao": "Só aparece quando houve mês sem carteira publicável: a publicação foi recusada (a tela mostra o rascunho, mas não deixa publicá-lo) ou o otimizador não montou carteira. O teste histórico conta esses meses como caixa a Selic, a mesma regra da Empresas B3, e este bloco separa o desempenho deles do das carteiras publicáveis. O rascunho medido com os próprios pesos fica numa sensibilidade à parte. Medições gravadas antes de 18/11/2026 ainda mostram o rascunho medido.",
               "so_admin": false
             },
             {
@@ -2711,7 +2743,7 @@
     {
       "nome": "Portfólio Global",
       "resumo": "As três carteiras somadas num patrimônio só",
-      "explicacao": "Junta as carteiras-modelo de Empresas B3, Empresas Americanas e FIIs como se fossem um único patrimônio. Mostra concentração, risco, papel de cada ativo, sugestões de ajuste, um plano de aporte e um chat com a inteligência artificial. Não tem abas: é uma página longa, dividida em seções, que só aparece por completo depois de definir a alocação-alvo.",
+      "explicacao": "Junta as carteiras-modelo de Empresas B3, Empresas Americanas e FIIs como se fossem um único patrimônio. Mostra concentração, risco, papel de cada ativo, sugestões de ajuste, um plano de aporte e um chat com a inteligência artificial. Não tem abas: é uma página longa, dividida em seções, que só aparece por completo depois de definir a alocação-alvo. Os preços da bolsa brasileira usados aqui vêm do armazém local; se ele não responder, um aviso amarelo no topo diz que podem ser a cópia guardada em 15/11/2026.",
       "so_admin": false,
       "filhos": [
         {
@@ -2882,7 +2914,7 @@
     {
       "nome": "Configurações",
       "resumo": "Ajustes, envio de arquivos e saúde do app",
-      "explicacao": "A tela se chama Central de Configurações e tem nove abas. Nela você ajusta sua conta, envia os arquivos do cartão, do banco e das corretoras, acompanha se os dados de mercado estão em dia, cuida da segurança, abre este mapa e consulta o guia do app. Desde 12/10/2026 todas as abas aparecem para todas as pessoas; só dois blocos da aba Segurança são exclusivos do administrador.",
+      "explicacao": "A tela se chama Central de Configurações e tem nove abas. Nela você ajusta sua conta, envia os arquivos do cartão, do banco e das corretoras, acompanha se os dados de mercado estão em dia, cuida da segurança, abre este mapa e consulta o guia do app. Desde 12/10/2026 todas as abas aparecem para todas as pessoas; só três blocos da aba Segurança são exclusivos do administrador: a lista de usuários cadastrados, quem está logado agora e a exclusão de conta. Criar conta não é daqui: desde 14/11/2026 qualquer pessoa cria a própria conta na tela de login.",
       "so_admin": false,
       "filhos": [
         {
@@ -2900,7 +2932,7 @@
             {
               "nome": "Seções do aplicativo",
               "resumo": "Escolher quais telas aparecem no menu",
-              "explicacao": "Um interruptor para cada seção que pode sair do menu lateral: Controle Financeiro, Investimentos, Empresas B3, Empresas Americanas, Seleção de FIIs e Portfólio Global. Dashboard Geral e Configurações ficam sempre, e uma linha acima dos interruptores diz isso. Desligue o que você não usa e clique em 'Salvar seções'; antes do clique aparecem quantas estão ligadas e o que sai ou volta ao menu. A escolha fica na sua conta e não muda o menu de outras pessoas. Tirar do menu não apaga nada: dados, carteiras salvas e conversas continuam guardados, e a seção volta inteira quando você liga o interruptor de novo. O Dashboard Geral passa a mostrar só os blocos das seções ligadas.",
+              "explicacao": "Um interruptor para cada seção que pode sair do menu lateral: Controle Financeiro, Controle CNPJ, Investimentos, Empresas B3, Empresas Americanas, Seleção de FIIs e Portfólio Global. Dashboard Geral e Configurações ficam sempre, e uma linha acima dos interruptores diz isso. Uma conta criada desde 15/11/2026 começa só com Controle Financeiro e Investimentos ligados; as outras cinco ficam desligadas até você ligá-las aqui. As contas que já existiam não perderam nenhuma seção. Desligue o que você não usa e clique em 'Salvar seções'; antes do clique aparecem quantas estão ligadas e o que sai ou volta ao menu. A escolha fica na sua conta e não muda o menu de outras pessoas. Tirar do menu não apaga nada: dados, carteiras salvas e conversas continuam guardados, e a seção volta inteira quando você liga o interruptor de novo. O Dashboard Geral passa a mostrar só os blocos das seções ligadas.",
               "so_admin": false
             },
             {
@@ -3157,8 +3189,8 @@
         },
         {
           "nome": "Segurança",
-          "resumo": "Senha, sessão e quem tem acesso",
-          "explicacao": "Cuida do acesso ao app: trocar a sua senha, encerrar a sessão e gerar a senha protegida do app. O cadastro de pessoas e a lista de usuários só funcionam para o administrador; os demais veem um aviso no lugar.",
+          "resumo": "Senha, sessão, quem tem acesso e quem está logado",
+          "explicacao": "Cuida do acesso ao app: trocar a sua senha, encerrar a sessão e gerar a senha protegida do app. Três blocos são só do administrador: a lista de usuários cadastrados, quem está logado agora e a exclusão de uma conta com todos os dados dela; os demais veem um aviso no lugar. Criar conta saiu daqui em 14/11/2026: qualquer pessoa cria a própria conta na aba 'Criar conta' da tela de login, e a conta nova fica num segundo Supabase, porque o primeiro está cheio. Ela começa com o menu enxuto: Dashboard Geral, Controle Financeiro, Investimentos e Configurações; o resto se liga na aba Geral, em Seções do aplicativo.",
           "so_admin": false,
           "filhos": [
             {
@@ -3166,12 +3198,6 @@
               "resumo": "Trocar a própria senha",
               "explicacao": "Mostra o seu e-mail. Preencha a senha atual, a nova senha (8 caracteres) e a confirmação, e clique em 'Alterar minha senha'. Depois da troca o app encerra a sessão para você entrar de novo.",
               "so_admin": false
-            },
-            {
-              "nome": "Cadastrar usuário",
-              "resumo": "Criar conta para outra pessoa",
-              "explicacao": "Formulário com nome, e-mail, senha inicial e confirmação, e o botão 'Cadastrar usuário'. Cada pessoa cadastrada tem seus próprios dados e conversas. Quem não é administrador vê só um aviso dizendo que essa ação é de quem administra o app.",
-              "so_admin": true
             },
             {
               "nome": "Proteção e sessão",
@@ -3188,7 +3214,19 @@
             {
               "nome": "Usuários cadastrados",
               "resumo": "Lista de quem tem acesso",
-              "explicacao": "Tabela com nome, e-mail, data de cadastro, situação (ativo ou inativo) e perfil. Só o administrador vê a lista; os demais veem um aviso explicando que ela é restrita.",
+              "explicacao": "Tabela com nome, e-mail, data de cadastro, situação (ativo ou inativo), perfil e o banco onde a conta mora: o Supabase principal, para as contas antigas, ou o das contas novas. Só o administrador vê a lista; os demais veem um aviso explicando que ela é restrita.",
+              "so_admin": true
+            },
+            {
+              "nome": "Usuários logados agora",
+              "resumo": "Quantas pessoas e quem está com o app aberto",
+              "explicacao": "Mostra, em três cards, o número de pessoas logadas neste momento, quantas abas do navegador isso soma e a hora da atividade mais recente, e abaixo uma tabela com o nome de cada pessoa, a hora em que entrou, a última atividade e o banco da conta. Uma pessoa conta enquanto a aba está aberta e o login não expirou. Só o administrador vê; os demais veem um aviso.",
+              "so_admin": true
+            },
+            {
+              "nome": "Excluir conta",
+              "resumo": "Apagar uma conta e todos os dados dela",
+              "explicacao": "Escolha a conta, leia o aviso e digite o e-mail dela para confirmar. O botão 'Excluir conta e todos os dados' apaga lançamentos, contas, cartões, carteiras, importações, preferências e memória das conversas da pessoa. Não tem volta. A conta do administrador não aparece na lista. Só o administrador vê; os demais veem um aviso.",
               "so_admin": true
             }
           ]
@@ -3202,9 +3240,15 @@
         {
           "nome": "Documentação",
           "resumo": "Guia ilustrado de como o app funciona",
-          "explicacao": "Fluxogramas clicáveis que explicam, passo a passo, as partes mais complexas do app: você clica numa etapa e a explicação aparece ao lado. Era um item do menu até 24/09/2026 e tem 15 sub-abas, na ordem do menu lateral.",
+          "explicacao": "Um diagrama do app inteiro e fluxogramas clicáveis que explicam, passo a passo, as partes mais complexas do app: você clica numa etapa e a explicação aparece ao lado. A primeira sub-aba, Visão geral do app, é um diagrama de como o app inteiro se encaixa: de onde o dado vem, onde mora, que tela lê o quê e as regras que valem para todas. Era um item do menu até 24/09/2026 e tem 16 sub-abas: a Visão geral e, depois dela, uma por tela na ordem do menu lateral.",
           "so_admin": false,
           "filhos": [
+            {
+              "nome": "Visão geral do app",
+              "resumo": "O app inteiro num diagrama só",
+              "explicacao": "Diagrama de como o app se encaixa: as fontes que alimentam o app, as rotinas que rodam nos bastidores, os dois bancos (o Supabase na nuvem e o armazém local), as telas e de que dado cada uma depende, as regras que valem para todas e o caminho de um dado num dia comum. Acompanha o tema claro ou escuro escolhido na aba Geral.",
+              "so_admin": false
+            },
             {
               "nome": "Dashboard Geral",
               "resumo": "Fatos do período primeiro, referências depois",
@@ -3323,7 +3367,7 @@
             {
               "nome": "brapi (empresas da B3)",
               "resumo": "Balanços, cotações e setores das empresas",
-              "explicacao": "Serviço pago que entrega balanços, cotações e setores das empresas da B3. Atualização diária, mais uma revisão semanal dos balanços. Telas que dependem: Empresas B3, Investimentos → Inteligência dos Ativos e Portfólio Global.",
+              "explicacao": "Serviço pago que entrega balanços, cotações e setores das empresas da B3. Atualização diária, mais uma revisão semanal dos balanços, gravadas só na base do computador: desde 15/11/2026 nada disso vai para o Supabase. Telas que dependem: Empresas B3, Investimentos → Inteligência dos Ativos e Portfólio Global.",
               "so_admin": false
             },
             {
@@ -3373,7 +3417,7 @@
             {
               "nome": "Ações e empresas da B3",
               "resumo": "Pregão, balanços, documentos e indicadores B3",
-              "explicacao": "Todo dia: preço do pregão (o fechamento do COTAHIST vale como cotação quando é mais novo que a brapi), documentos da CVM, a poda do cache bruto da brapi (arquiva, regrava as demonstrações e compacta) e, logo depois dela, os dados da brapi. Toda semana: indicadores das empresas, histórico de notas, fechamento mensal de preços e a origem de cada balanço. Telas que dependem: Empresas B3, Investimentos e Portfólio Global.",
+              "explicacao": "Todo dia: preço do pregão (o fechamento do COTAHIST vale como cotação quando é mais novo que a brapi), documentos da CVM, a poda do cache bruto da brapi (arquiva, regrava as demonstrações e compacta) e, logo depois dela, os dados da brapi. Toda semana: revisão completa dos balanços pela brapi, histórico de múltiplos, fechamento mensal de preços e a origem de cada balanço. Cotação, balanços e indicadores ficam na base do computador; desde 15/11/2026 a rotina não publica mais a B3 no Supabase. Telas que dependem: Empresas B3, Investimentos e Portfólio Global.",
               "so_admin": false
             },
             {

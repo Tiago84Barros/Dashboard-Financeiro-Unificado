@@ -303,6 +303,22 @@ def _segmentos_por_safra(resultados, precos, params, decisao, cost_cfg, hoje):
     return contexto, saida
 
 
+def _selic_mensal() -> dict:
+    """Selic realizada mês a mês (achado D13): a mesma série que a tela usa.
+
+    Vazia derruba a medição. Cair em silêncio na meta do fim do ano gravaria
+    no JSON um "vs Selic" e um caixa (D1) medidos com outra régua, que em ano
+    de ciclo erra por pontos percentuais.
+    """
+    from core.b3_data import load_selic_mensal
+
+    serie = load_selic_mensal()
+    if not serie:
+        raise SystemExit("Selic mensal (public.info_economica_mensal) vazia: "
+                         "a medição não cai na meta anual em silêncio")
+    return serie
+
+
 def _medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje, portao=None):
     """Mede as variantes de `oos.VARIANTES` e, com ``portao``, a do portão real.
 
@@ -325,6 +341,7 @@ def _medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje, por
     cap = contexto["cap"]
     selic_macro = contexto["selic_macro"]
     taxa_selic_aa = contexto["taxa_selic_aa"]
+    selic_mensal = _selic_mensal()
     safras = [p["safra"] for p in por_safra]
     variantes = oos.VARIANTES + ((oos.PORTAO_LLM_MEDIDO,) if portao else ())
 
@@ -339,7 +356,15 @@ def _medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje, por
                  "teto_ciclico": params["teto_ciclico"]}
 
         inicio, fim = janela_de_vigencia(safra)
-        brutos: dict[str, float] = {}
+        # A Selic da vigência não depende dos pesos: é o caixa da safra que
+        # não monta (D1), e a banda escolhe o veto já com essa conversão.
+        caixa = retorno_da_safra(
+            SafraCarteira(safra=safra, ano_base=ano_base_do_score(safra),
+                          inicio=inicio, fim=fim, completa=True, pesos={},
+                          universo=tuple(universo), segmentos=0, saidas=saidas),
+            precos, selic_por_ano=selic_macro, taxa_selic_aa=taxa_selic_aa,
+            selic_mensal=selic_mensal)["retorno_selic"]
+        contados: dict[str, float] = {}
         portao_log = None
         for variante in variantes:
             veto = None
@@ -358,7 +383,7 @@ def _medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje, por
                 # Banda: o veto ÚNICO da safra que mais derruba (adversário)
                 # ou mais sobe (favorável) a carteira -- ver PORTAO_LLM.
                 esc = oos.escolher_veto(
-                    segmentos, rets, **tetos, exclui=exclui,
+                    segmentos, rets, **tetos, exclui=exclui, caixa=caixa,
                     veta="melhor" if variante == oos.PORTAO_VETA_O_MELHOR else "pior")
                 itens, cart = esc["itens"], esc["carteira"]
                 if esc["vetado"] is not None:
@@ -370,7 +395,8 @@ def _medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje, por
                               inicio=inicio, fim=fim, completa=True,
                               pesos=pesos_fin, universo=tuple(universo),
                               segmentos=len(itens), saidas=saidas),
-                precos, selic_por_ano=selic_macro, taxa_selic_aa=taxa_selic_aa)
+                precos, selic_por_ano=selic_macro, taxa_selic_aa=taxa_selic_aa,
+                selic_mensal=selic_mensal)
             rets_cart = oos.retornos_por_ticker(list(pesos_fin), universo, precos,
                                                 safra, saidas)
             bruto = sum(w * float(rets_cart[tk] or 0.0) for tk, w in pesos_fin.items())
@@ -381,7 +407,9 @@ def _medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje, por
             if variante in (oos.PORTAO_VETA_O_MELHOR, oos.PORTAO_VETA_O_PIOR):
                 # O veto foi escolhido com os mesmos retornos que a carteira mede.
                 assert abs(bruto - esc["bruto"]) < 1e-9, (safra, variante)
-            brutos[variante] = bruto
+            contados[variante] = oos.rendimento_contado(cart, bruto, caixa)
+            if variante in (oos.PORTAO_VETA_O_MELHOR, oos.PORTAO_VETA_O_PIOR):
+                assert abs(contados[variante] - esc["efetivo"]) < 1e-9, (safra, variante)
             linhas_por_variante[variante].append({
                 "safra": safra,
                 "pesos": pesos_fin,
@@ -398,29 +426,58 @@ def _medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje, por
                 "exige_revisao": bool(cart["exige_revisao"]),
                 "ew": base["retorno_equal_weight"],
                 "selic": base["retorno_selic"],
+                # D13: mês sem Selic realizada caiu na meta -- nomeado no JSON.
+                "selic_meses_pela_meta": list(base.get("selic_meses_pela_meta") or []),
                 "ibov": oos.retorno_benchmark(ibov, precos, safra),
                 "mensuravel": bool(base["mensuravel"]),
                 "veto": veto,
             })
-        # "Não vetar" é opção das duas pontas: no bruto a banda contém o sem-portão.
-        assert (brutos[oos.PORTAO_VETA_O_MELHOR] - 1e-9 <= brutos[oos.SEM_PORTAO]
-                <= brutos[oos.PORTAO_VETA_O_PIOR] + 1e-9), (safra, brutos)
+        # "Não vetar" é opção das duas pontas: no rendimento contado -- depois
+        # da conversão em caixa (D1) -- a banda contém o sem-portão.
+        assert (contados[oos.PORTAO_VETA_O_MELHOR] - 1e-9 <= contados[oos.SEM_PORTAO]
+                <= contados[oos.PORTAO_VETA_O_PIOR] + 1e-9), (safra, contados)
 
     perfis_var = {}
+    # O aquecimento é da estratégia, não do veto: todas as variantes começam
+    # onde o sem-portão começa.
+    comeca_em = oos.primeira_resposta(linhas_por_variante[oos.SEM_PORTAO])
     for variante, linhas in linhas_por_variante.items():
-        cadeia = oos.simular_custos(
-            [{"safra": r["safra"], "pesos": r["pesos"] if r["mensuravel"] else {},
-              "retornos": r["retornos"]} for r in linhas], cost_cfg)
+        # Achado D1 (2.4.0, tetos desde a 2.6.0): depois do aquecimento, safra
+        # sem carteira salvável -- inviável no cap, tetos que não fecham ou sem
+        # segmento -- vira caixa a Selic e conta na média; a não mensurável e
+        # as de aquecimento ficam de fora.
+        cadeia = oos.simular_custos(oos.itens_da_cadeia(linhas, comeca_em=comeca_em),
+                                    cost_cfg)
+        # Sensibilidade: os pesos relaxados que a tela mostra com o salvar
+        # desligado, medidos como se fossem a estratégia. Nunca a manchete.
+        cadeia_tela = oos.simular_custos(
+            oos.itens_da_cadeia(linhas, comeca_em=comeca_em, pesos_da_tela=True),
+            cost_cfg)
+        sens_tabela = [
+            {"safra": r["safra"],
+             "excesso_ew": (c["liquido"] - r["ew"]
+                            if c.get("medida") and r["ew"] is not None else None)}
+            for r, c in zip(linhas, cadeia_tela)]
+        sensibilidade = {
+            "vs_equal_weight": oos.resumir(sens_tabela, "excesso_ew"),
+            "safras_com_pesos_relaxados": [
+                r["safra"] for r, c, ct in zip(linhas, cadeia, cadeia_tela)
+                if c.get("caixa") and not ct.get("caixa") and ct.get("medida")],
+        }
         tabela = []
         for r, c in zip(linhas, cadeia):
             linha = {k: r[k] for k in ("safra", "n_ativos", "segmentos_avaliados",
                                        "segmentos_aprovados", "reprovacoes",
                                        "piso_reprovados", "piso_substituicoes",
                                        "vagas_perdidas_piso", "excluidos_guarda",
-                                       "inviavel_no_cap", "exige_revisao", "veto")}
+                                       "inviavel_no_cap", "exige_revisao", "veto",
+                                       "selic_meses_pela_meta")}
             linha["maiores"] = ", ".join(
                 f"{tk} {w:.0%}" for tk, w in sorted(r["pesos"].items(),
                                                     key=lambda kv: (-kv[1], kv[0]))[:5])
+            if c.get("caixa"):
+                linha.update({"caixa": True, "n_ativos": 0,
+                              "maiores": "caixa a Selic (sem carteira-modelo salvável)"})
             if c.get("medida"):
                 liq = c["liquido"]
                 linha.update({
@@ -451,6 +508,8 @@ def _medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje, por
             "safras_inviaveis_no_cap": [t["safra"] for t in tabela if t["inviavel_no_cap"]],
             "safras_com_revisao": [t["safra"] for t in tabela if t["exige_revisao"]],
             "safras_sem_carteira": [t["safra"] for t in tabela if t.get("sem_carteira")],
+            "safras_em_caixa": [t["safra"] for t in tabela if t.get("caixa")],
+            "sensibilidade_pesos_da_tela": sensibilidade,
             "safras": tabela,
         }
     principal = perfis_var[oos.SEM_PORTAO]["vs_equal_weight"]

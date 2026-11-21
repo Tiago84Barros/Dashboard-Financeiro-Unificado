@@ -11,6 +11,23 @@ Aplicação Streamlit unificada para:
 - indicadores econômicos;
 - inteligência artificial aplicada.
 
+## Como responder ao usuário: curto, simples, sem jargão
+
+Pedido do usuário de 17/11/2026: as respostas estavam longas, complexas e
+cheias de siglas. No chat, vale o espírito do ASD-STE100 (inglês técnico
+simplificado):
+
+- Resposta curta por padrão. O resultado vem primeiro, em 1–2 frases.
+- Frases curtas (até uns 20 palavras), uma ideia por frase, voz ativa.
+- Palavras do dia a dia. Sigla ou termo técnico só com explicação curta na
+  primeira vez (ex.: "CI, o teste automático do GitHub").
+- Sem nome de arquivo, função ou número de PR, a menos que o usuário precise.
+- Listas curtas no lugar de parágrafos longos.
+- Detalhe técnico só se o usuário pedir. Se pedir, dar.
+
+Isto vale para a conversa. Código, commits e documentos do repositório seguem
+o padrão técnico do projeto.
+
 ## Onde estão os dados — leia ANTES de planejar qualquer coisa que envolva dado
 
 Este projeto tem **dois** bancos, e ignorar o segundo já causou retrabalho caro.

@@ -227,15 +227,16 @@ def _porque_sem_saidas_fii(engine=None) -> str:
 def _vantagem_fii(metrics: dict) -> Portao:
     """O excesso sobre o IFIX e distinguivel de zero?
 
-    `validate_methodology` exige que o intervalo bootstrap EXISTA -- nunca que
-    ele exclua o zero. Um certificado pode entao sair "passed" com o excesso
-    medio dentro de um intervalo que atravessa o zero, e a tela mostra
-    "Validacao PIT: Aprovada" em verde ao lado da nota. O usuario le isso como
-    "bate o indice"; o portao nunca testou isso.
+    `validate_methodology` exige que o intervalo bootstrap EXISTA e, desde
+    19/11/2026 (protocolo 3.6.0), que o excesso MEDIO seja positivo -- nunca
+    que o intervalo exclua o zero. Um certificado pode entao sair "passed"
+    ganhando do indice na media com um intervalo que atravessa o zero, e o
+    usuario le "Aprovada" como "bate o indice com folga".
 
-    Aqui a pergunta e feita explicitamente. O certificado continua valendo pelo
-    que ele de fato atesta -- integridade do protocolo point-in-time --, e a
-    vantagem economica vira um portao separado, com o intervalo no detalhe.
+    Aqui a pergunta de significancia e feita explicitamente, como portao
+    separado, com o intervalo no detalhe. Certificados 3.5.0 ou anteriores
+    podem ter saido "passed" com media negativa; os ramos abaixo continuam
+    dizendo isso a eles.
     """
     # O piso e o mesmo do card da carteira e da aba de validacao
     # (`core.fii_validation.PISO_IC_EXCESSO`): guarda duplicada diverge.
@@ -249,9 +250,22 @@ def _vantagem_fii(metrics: dict) -> Portao:
     if leitura["significativo"]:
         return Portao("Vantagem fora da amostra", True, faixa,
                       dimensao=DIM_VANTAGEM)
+    # D12: o mesmo lado do zero que a tela de FIIs mostra
+    # (`core.fii_validation.veredito_do_excesso`).
+    if leitura["perde_significativo"]:
+        return Portao("Vantagem fora da amostra", False,
+                      f"{faixa} -- inteiro abaixo de zero: a carteira perde do "
+                      f"indice, e o acaso nao explica a perda",
+                      dimensao=DIM_VANTAGEM)
+    if leitura["negativo"]:
+        return Portao("Vantagem fora da amostra", False,
+                      f"{faixa}, media {leitura['media']:+.2%} -- excesso "
+                      f"negativo: na media a carteira rendeu menos que o indice, "
+                      f"e o intervalo atravessa o zero, entao o acaso pode "
+                      f"explicar a diferenca", dimensao=DIM_VANTAGEM)
     return Portao("Vantagem fora da amostra", False,
-                  f"{faixa} -- atravessa o zero, entao a vantagem sobre o "
-                  f"indice nao e distinguivel de acaso", dimensao=DIM_VANTAGEM)
+                  f"{faixa} -- atravessa o zero, entao o acaso pode explicar "
+                  f"a vantagem sobre o indice", dimensao=DIM_VANTAGEM)
 
 
 def comparacao_de_rigor(estados: "tuple[EstadoValidacao, ...] | None" = None,

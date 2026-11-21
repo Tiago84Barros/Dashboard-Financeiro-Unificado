@@ -39,8 +39,18 @@ def test_score_version_2_29_0():
     """A composição da trilha mudou; a versão a acompanha."""
     from core.b3_methodology import MODEL_SCHEMA_VERSION, SCORE_VERSION
 
-    assert SCORE_VERSION == "2.32.0"
+    assert SCORE_VERSION == "2.33.0"
     assert MODEL_SCHEMA_VERSION == 3
+
+
+def test_valor_isolado_vale_o_neutro_nao_o_extremo():
+    """Um valor só não tem ordem: neutro, não 1,0 nem 0,0 (achado D2)."""
+    from core.b3_company_score import _winsorized_percentile
+
+    s = pd.Series([0.2, np.nan, np.nan])
+    for alto in (True, False):
+        out = _winsorized_percentile(s, higher_is_better=alto)
+        assert out.tolist() == pytest.approx([0.5, 0.5, 0.5])
 
 
 def _universe() -> pd.DataFrame:

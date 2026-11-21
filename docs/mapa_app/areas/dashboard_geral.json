@@ -1,7 +1,7 @@
 {
   "nome": "Dashboard Geral",
   "resumo": "Resumo do seu dinheiro e dos investimentos numa página",
-  "explicacao": "É a primeira tela do app: uma página única, de rolar, que junta o mês atual (quanto entrou, quanto saiu, quanto sobrou), o histórico, a carteira que você tem investida e as carteiras sugeridas pelo app. Ela se monta com as seções que você mantém no menu (Configurações → Geral → Seções do aplicativo): o bloco de uma seção desligada não aparece, e o que sobra continua na mesma ordem. Aqui você só consulta: nada é digitado nem salvo. Para lançar ou corrigir valores, use os outros itens do menu.",
+  "explicacao": "É a primeira tela do app: uma página única, de rolar, que junta o mês atual (quanto entrou, quanto saiu, quanto sobrou), o histórico, a carteira que você tem investida e as carteiras sugeridas pelo app. Ela se monta com as seções que você mantém no menu (Configurações → Geral → Seções do aplicativo): o bloco de uma seção desligada não aparece, e o que sobra continua na mesma ordem. Aqui você só consulta: nada é digitado nem salvo. Para lançar ou corrigir valores, use os outros itens do menu. Os preços da bolsa brasileira usados aqui vêm do armazém local; se ele não responder, um aviso amarelo no topo diz que podem ser a cópia guardada em 15/11/2026.",
   "so_admin": false,
   "fonte": "views/dashboard_geral.py:1882",
   "filhos": [
@@ -104,7 +104,7 @@
         {
           "nome": "Empresas B3",
           "resumo": "Resumo da carteira de ações brasileiras sugerida",
-          "explicacao": "Resumo da carteira de ações brasileiras que você salvou na tela Empresas B3: quantas empresas, a nota média e o ano de compra. A etiqueta diz 'Ativa', 'Revisar' (feita com um método antigo) ou 'Sem carteira'. Leva o selo 'Carteira recomendada pelo app'.",
+          "explicacao": "Resumo da carteira de ações brasileiras que você salvou na tela Empresas B3: quantas empresas, a nota média (\"—\" quando nenhuma nota compara a empresa com um par do segmento) e o ano de compra. A etiqueta diz 'Ativa', 'Revisar' (feita com um método antigo) ou 'Sem carteira'. Leva o selo 'Carteira recomendada pelo app'.",
           "so_admin": false,
           "fonte": "views/dashboard_geral.py:1117",
           "filhos": []

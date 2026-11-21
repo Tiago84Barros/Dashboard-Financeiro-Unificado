@@ -63,9 +63,11 @@ from core.fii_renda_recorrente import dy_recorrente
 from core.fii_selection_explanations import build_selection_reports
 from core.fii_taxonomy import ORDEM_CATEGORIAS_FII, categoria_fii
 from core.fii_validation import (
+    PISO_EXCESSO_MEDIO,
     leitura_do_excesso,
     texto_do_excesso,
     validation_supports_strategy,
+    veredito_do_excesso,
 )
 from core.glossario import INTERVALO_95_EXCESSO_IFIX
 from core.inteligencia_ativos import veredito
@@ -317,8 +319,8 @@ def render(show_header: bool = True) -> None:
                     if validation_applicable
                     else "Motor atual pendente",
                 ),
-                # FII-02: o selo acima atesta integridade do protocolo, não
-                # vantagem. O IC do excesso fica ao lado dele no cabeçalho.
+                # FII-02: o selo acima atesta o protocolo e a média positiva,
+                # não a significância. O IC do excesso fica ao lado no cabeçalho.
                 ("Excesso vs IFIX", _metadado_do_excesso(validation)),
             ],
         )
@@ -899,7 +901,15 @@ def _metadado_do_excesso(validation: dict) -> str:
     inferior = f"{excesso['inferior'] * 100:+.2f}".replace(".", ",")
     superior = f"{excesso['superior'] * 100:+.2f}".replace(".", ",")
     faixa = f"Intervalo 95% {inferior} a {superior} p.p./mês"
-    return faixa if excesso["significativo"] else f"{faixa} · não significativo"
+    if excesso["significativo"]:
+        return faixa
+    # D12: o lado do zero aparece também no cabeçalho -- "não significativo"
+    # sozinho fazia o run que perde do IFIX ler igual ao que ganha sem prova.
+    if excesso["perde_significativo"]:
+        return f"{faixa} · perde do IFIX"
+    if excesso["negativo"]:
+        return f"{faixa} · negativo, não significativo"
+    return f"{faixa} · não significativo"
 
 
 def _card_do_protocolo_pit(validation_status: str, validation_metrics: dict) -> str:
@@ -921,10 +931,19 @@ def _card_do_protocolo_pit(validation_status: str, validation_metrics: dict) -> 
     periodos = int(pit.get("periods") or 0)
     cedidos = int(pit.get("concession_periods") or 0)
     fracao = float(pit.get("concession_period_fraction") or 0.0)
-    # A-162: o gate não afere vantagem sobre o IFIX; o rótulo diz o que o
-    # certificado realmente atesta.
-    sub = (f"integridade temporal, metodologia {METHODOLOGY_VERSION}; "
-           "não afere vantagem sobre o IFIX")
+    # A-162: o rótulo diz o que o certificado realmente atesta. Desde
+    # 19/11/2026 (protocolo 3.6.0) o portão exige excesso médio > 0 sobre o
+    # IFIX (`PISO_EXCESSO_MEDIO`); significância continua fora dele. Um
+    # "passed" que perde do índice só pode vir de protocolo anterior, e o card
+    # diz isso em vez de repetir a promessa nova sobre um certificado velho.
+    excesso = leitura_do_excesso(validation_metrics)
+    ganha = excesso["media"] is not None and excesso["media"] > PISO_EXCESSO_MEDIO
+    if aprovado and not ganha:
+        sub = (f"integridade temporal, metodologia {METHODOLOGY_VERSION}; "
+               "certificado anterior ao portão que exige ganhar do IFIX")
+    else:
+        sub = (f"integridade temporal e excesso médio positivo sobre o IFIX, "
+               f"metodologia {METHODOLOGY_VERSION}; significância não exigida")
     valor = "Aprovado" if aprovado else "Pendente"
     accent = sub_color = "#00C896" if aprovado else "#FC5C7D"
     if cedidos > 0:
@@ -937,13 +956,16 @@ def _card_do_protocolo_pit(validation_status: str, validation_metrics: dict) -> 
         accent = sub_color = "#F6C90E"
     # FII-02: o IC do excesso sai junto do selo. No run 90 ele vai de −0,127
     # a +0,380 p.p./mês — "Aprovado" sem isso ao lado é lido como "bate o
-    # índice". O piso (`PISO_IC_EXCESSO`) é aviso, não bloqueio: o portão
-    # continua o mesmo, e a vitrine continua publicando.
-    excesso = leitura_do_excesso(validation_metrics)
+    # índice com folga". O piso do IC (`PISO_IC_EXCESSO`) é aviso, não
+    # bloqueio; o portão exige só a média positiva.
     sub += " · " + texto_do_excesso(excesso)
     if aprovado and excesso["disponivel"] and not excesso["significativo"]:
-        valor = f"{valor} · excesso não significativo"
-        accent = sub_color = "#F6C90E"
+        # D12: o rótulo diz de que lado do zero o excesso está. Perder do
+        # IFIX com significância pinta o card de vermelho mesmo aprovado: o
+        # selo atesta o protocolo, e o número ao lado dele é uma perda.
+        valor = f"{valor} · {veredito_do_excesso(excesso)}"
+        accent = sub_color = ("#FC5C7D" if excesso["perde_significativo"]
+                              else "#F6C90E")
     return _kpi_html("Protocolo PIT", valor, sub=sub, sub_color=sub_color,
                      accent=accent)
 
@@ -2115,7 +2137,8 @@ def _chave_da_montagem(preferences: dict, portfolio_policy, eligible_rows: list,
 def _intel_avaliar_fii(tk: str):
     """Avaliação por regras da Inteligência dos Ativos (FII), com cache de
     sessão. Falha não é guardada: o portão é fail-open e tenta de novo no rerun."""
-    cache = st.session_state.setdefault("fii_intel_cache", {})
+    from core.fonte_b3 import cache_de_sessao
+    cache = cache_de_sessao("fii_intel_cache")
     chave = str(tk).upper()
     if chave not in cache:
         cache[chave] = veredito.avaliar_ativo(chave, mercado="fii")
@@ -2220,11 +2243,11 @@ def _carteira_integrada(preferences: dict):
         # renda recorrente na barra lateral para cair neste caminho.
         st.warning(
             "Nenhum FII passou pelos filtros estritos. A carteira será montada "
-            f"cedendo proteção ao investidor: {len(candidatos_da_concessao)} "
-            "candidatos foram reprovados apenas nos portões de proteção e podem "
-            "ser readmitidos, no menor número que viabilize a carteira. Cada "
-            "readmissão aparece nomeada abaixo — proteção cedida não é ausência "
-            "de risco."
+            f"com menos proteção ao investidor. {len(candidatos_da_concessao)} "
+            "candidatos foram reprovados só nos portões de proteção. Eles podem "
+            "voltar, no menor número que permita montar a carteira. Cada "
+            "readmissão aparece pelo nome logo abaixo. Menos proteção não "
+            "significa ausência de risco."
         )
 
     validation = _mr.load_fii_validation_status(METHODOLOGY_VERSION)
@@ -2430,10 +2453,10 @@ def _carteira_integrada(preferences: dict):
         accent="#00C896" if investable_gate.median_confidence >= .75 else "#FC5C7D",
     ), unsafe_allow_html=True)
     # A-162: "Validação PIT: Aprovada" em verde ao lado da nota era lido como
-    # "a estratégia bate o índice". O gate de `core/fii_validation.py` não testa
-    # isso -- ele exige que o intervalo bootstrap do excesso EXISTA, nunca que
-    # ele exclua o zero. O rótulo diz o que o certificado atesta, e agora
-    # declara junto quantas safras só tiveram carteira com proteção cedida.
+    # "a estratégia bate o índice". Desde 19/11/2026 o gate de
+    # `core/fii_validation.py` exige excesso médio > 0, mas não que o
+    # intervalo bootstrap exclua o zero. O rótulo diz o que o certificado
+    # atesta e declara quantas safras só tiveram carteira com proteção cedida.
     gate_cards[2].markdown(
         _card_do_protocolo_pit(validation_status, validation.get("metrics") or {}),
         unsafe_allow_html=True)
@@ -2823,18 +2846,69 @@ def _cards_por_padrao(curvas: dict) -> None:
     da concentração das carteiras de exceção, a manchete credita à
     metodologia um prêmio que é de risco cedido. Só a separação mostra isso.
     """
-    casa = curvas.get("padrao_da_casa") or {}
-    excecao = curvas.get("excecao") or {}
-    if not int(casa.get("periods") or 0) and not int(excecao.get("periods") or 0):
+    _cards_de_coortes("Padrão da casa × carteiras de exceção", (
+        ("Sob o padrão da casa", "#00C896", curvas.get("padrao_da_casa") or {},
+         "limites de forma íntegros ou cedidos levemente"),
+        ("Carteiras de exceção", "#F6C90E", curvas.get("excecao") or {},
+         "maior posição acima de 2× o teto, ou menos de 5 ativos"),
+    ), codigo="fii.backtest_coortes_nao_contiguas")
+
+
+def _cards_por_publicacao(curvas: dict, sensibilidade: dict | None = None) -> None:
+    """Separa a carteira publicável dos meses em caixa a Selic.
+
+    Mês sem carteira publicável -- o portão de transparência recusou o
+    rascunho, ou o otimizador não montou carteira -- conta na manchete como
+    caixa a Selic da decisão: a tela mostra o rascunho, mas não deixa
+    publicá-lo, e ninguém o recebeu como carteira-modelo. Mesma regra da
+    medição fora da amostra da Empresas B3. O rascunho medido com os próprios
+    pesos sai só como sensibilidade. Só aparece quando houve mês em caixa ou
+    rascunho medido.
+
+    Aceita ainda métricas gravadas antes da unificação (chave
+    ``publicacao_recusada``), quando o rascunho entrava na manchete.
+    """
+    if "caixa" not in curvas and int(
+            (curvas.get("publicacao_recusada") or {}).get("periods") or 0):
+        _cards_de_coortes("Carteira publicável × rascunho não publicável", (
+            ("Carteira publicável", "#00C896", curvas.get("publicavel") or {},
+             "passou pelo portão de transparência"),
+            ("Rascunho não publicável", "#F6C90E",
+             curvas.get("publicacao_recusada") or {},
+             "medição anterior: rascunho medido com os próprios pesos"),
+        ), codigo="fii.backtest_coortes_publicacao")
+        return
+    if not int((curvas.get("caixa") or {}).get("periods") or 0):
+        return
+    _cards_de_coortes("Carteira publicável × caixa a Selic", (
+        ("Carteira publicável", "#00C896", curvas.get("publicavel") or {},
+         "passou pelo portão de transparência"),
+        ("Caixa a Selic", "#F6C90E", curvas.get("caixa") or {},
+         "sem carteira publicável: rascunho recusado ou nenhuma carteira"),
+    ), codigo="fii.backtest_coortes_publicacao")
+    sens = sensibilidade or {}
+    if int(sens.get("periods") or 0):
+        excesso = sens.get("mean_excess")
+        texto_excesso = ("—" if excesso is None or pd.isna(excesso)
+                         else f"{float(excesso):+.2%}")
+        datas = sens.get("periodos_com_rascunho") or []
+        detalhe_tecnico(
+            "Sensibilidade, não manchete: medindo o rascunho recusado com os "
+            f"próprios pesos em {len(datas)} mês(es), em vez de caixa, o "
+            f"retorno médio seria {float(sens.get('mean_return') or 0):+.2%} "
+            f"por período e o excesso sobre o IFIX {texto_excesso}. Ninguém "
+            "recebeu essa carteira como carteira-modelo; o número só mostra "
+            "quanto o portão de transparência custou ou poupou.",
+            codigo="fii.backtest_sensibilidade_rascunho")
+
+
+def _cards_de_coortes(cabecalho: str, coortes: tuple, *, codigo: str) -> None:
+    """Uma linha de cartões por coorte de períodos do backtest PIT."""
+    if not any(int(dados.get("periods") or 0) for _, _, dados, _ in coortes):
         return
 
-    st.markdown("#### Padrão da casa × carteiras de exceção")
-    for titulo, cor, dados, nota in (
-        ("Sob o padrão da casa", "#00C896", casa,
-         "limites de forma íntegros ou cedidos levemente"),
-        ("Carteiras de exceção", "#F6C90E", excecao,
-         "maior posição acima de 2× o teto, ou menos de 5 ativos"),
-    ):
+    st.markdown(f"#### {cabecalho}")
+    for titulo, cor, dados, nota in coortes:
         periodos = int(dados.get("periods") or 0)
         if not periodos:
             st.caption(f"**{titulo}** — nenhum período nesta coorte.")
@@ -2867,7 +2941,7 @@ def _cards_por_padrao(curvas: dict) -> None:
         "não quanto se teria ganho. O mês que ficou de fora não vira caixa "
         "nem índice. Por isso a queda máxima aparece como concatenada, e a "
         "validação da metodologia continua sendo julgada pela curva completa.",
-        codigo="fii.backtest_coortes_nao_contiguas")
+        codigo=codigo)
 
 
 def _texto_premissas_liquido_fii(premissas: dict) -> str:
@@ -2959,11 +3033,13 @@ def _tab_backtest() -> None:
                                 sub=(("95%, líquido de custos e IR"
                                       if pit.get("ir_calculado") else
                                       "95%, após custos, sem IR")
-                                     + (" · excesso não significativo"
+                                     + (f" · {veredito_do_excesso(excesso)}"
                                         if excesso["disponivel"]
                                         and not excesso["significativo"] else "")),
                                 sub_color="#4A5568",
-                                accent="#00C896" if excesso["significativo"] else "#F6C90E"),
+                                accent=("#00C896" if excesso["significativo"]
+                                        else "#FC5C7D" if excesso["perde_significativo"]
+                                        else "#F6C90E")),
                       unsafe_allow_html=True)
     # A-118: quanto da carteira saiu de campo (liquidação, incorporação ou fim
     # do dado) em vez de ter retorno observado. A versão anterior redistribuía
@@ -2982,6 +3058,8 @@ def _tab_backtest() -> None:
 
     _bloco_liquido_fii(pit)
     _cards_por_padrao(pit.get("curvas_por_padrao") or {})
+    _cards_por_publicacao(pit.get("curvas_por_publicacao") or {},
+                          pit.get("sensibilidade_rascunho"))
 
     blockers = validation.get("blockers") or []
     if blockers:
@@ -2996,17 +3074,43 @@ def _tab_backtest() -> None:
         # como "a estratégia funciona": nenhum dos critérios acima exige que o
         # excesso sobre o índice seja distinguível de zero.
         # O piso é `PISO_IC_EXCESSO`, o mesmo do card da carteira.
-        if excesso["disponivel"] and not excesso["significativo"]:
-            st.warning(
-                f"Os gates aferem **integridade do protocolo**, não vantagem. O "
-                f"excesso médio sobre o IFIX tem intervalo de 95% de "
+        if excesso["perde_significativo"]:
+            # D12: perder do índice com o intervalo inteiro abaixo de zero não
+            # é "não significativo" -- é uma perda que a amostra distingue de
+            # acaso, e a tela diz isso com todas as letras.
+            st.error(
+                f"Os gates (testes de aprovação) medem se o **método foi "
+                f"seguido direito**, não se ele dá vantagem. O excesso médio "
+                f"sobre o IFIX tem intervalo de 95% de "
                 f"{excesso['inferior']:+.2%} a {excesso['superior']:+.2%} por "
-                f"período: **excesso não significativo** — o intervalo não fica "
-                f"acima do piso de {excesso['piso']:+.2%}, então a vantagem "
-                f"observada não é distinguível de "
-                f"acaso nesta amostra. A carteira segue sustentada por "
-                f"diversificação e por qualidade do ativo, não por evidência "
-                f"de que supera o índice."
+                f"período. O intervalo inteiro fica abaixo de zero: "
+                f"**a carteira perde do IFIX** nesta amostra, e acaso não "
+                f"explica a perda. O selo \"Aprovado\" atesta o método, não o "
+                f"desempenho."
+            )
+        elif excesso["disponivel"] and excesso["negativo"] and not excesso["significativo"]:
+            st.warning(
+                f"Os gates (testes de aprovação) medem se o **método foi "
+                f"seguido direito**, não se ele dá vantagem. O excesso médio "
+                f"sobre o IFIX é **negativo** "
+                f"({excesso['media']:+.2%} por período): na média a carteira "
+                f"rendeu menos que o índice. O intervalo de 95% vai de "
+                f"{excesso['inferior']:+.2%} a {excesso['superior']:+.2%}, então "
+                f"o acaso pode explicar a diferença. Mesmo assim, não há "
+                f"evidência de que a carteira supere o IFIX, e a média aponta "
+                f"para o outro lado."
+            )
+        elif excesso["disponivel"] and not excesso["significativo"]:
+            st.warning(
+                f"Os gates (testes de aprovação) medem se o **método foi "
+                f"seguido direito**, não se ele dá vantagem. O excesso médio "
+                f"sobre o IFIX tem intervalo de 95% de "
+                f"{excesso['inferior']:+.2%} a {excesso['superior']:+.2%} por "
+                f"período: **excesso não significativo**. O intervalo não fica "
+                f"acima do piso de {excesso['piso']:+.2%}, então o acaso pode "
+                f"explicar a vantagem observada nesta amostra. A carteira se "
+                f"apoia na diversificação e na qualidade do ativo, não em "
+                f"evidência de que supera o índice."
             )
 
     st.markdown("#### Retrospectiva da seleção atual")

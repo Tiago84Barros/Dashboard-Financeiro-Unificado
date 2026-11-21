@@ -228,6 +228,13 @@
           "fonte": "views/empresas_americanas.py:1776 (escolha do cenário em :1771)"
         },
         {
+          "nome": "Composição possível com proteção ao investidor",
+          "resumo": "Proposta parcial quando a carteira não fecha",
+          "explicacao": "Aparece no lugar da carteira quando nenhuma indústria é aprovada ou os tetos não fecham. Traz os líderes de cada indústria pela mesma regra da carteira normal, quanto do dinheiro ficaria sem aplicar e o botão \"Baixar composição para revisão\". Logo abaixo vêm os mesmos dois gráficos da carteira normal, Alocação por ativo e Alocação por setor, com o dinheiro sem aplicar como \"Não alocado\".",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:1887 -> core/portfolio_review_routes.py:us_review -> design/portfolio_review.py:208"
+        },
+        {
           "nome": "Composição de Entrada — Mercado Americano",
           "resumo": "Quantas empresas e indústrias foram aprovadas",
           "explicacao": "Aparece depois de rodar. Cartões com empresas elegíveis, indústrias aprovadas, em observação e excluídas. Abaixo há uma seção que abre ao clicar com a qualidade dos dados e a Auditoria por Indústria.",
@@ -272,9 +279,9 @@
             {
               "nome": "Alocação por ativo e Alocação por setor",
               "resumo": "Gráficos de pizza e barras dos pesos",
-              "explicacao": "Dois gráficos lado a lado: quanto cada ação pesa na carteira e quanto cada setor pesa.",
+              "explicacao": "Dois gráficos lado a lado: quanto cada ação pesa na carteira e quanto cada setor pesa. São os mesmos que aparecem depois da composição para revisão; dinheiro sem aplicar aparece como \"Não alocado\".",
               "so_admin": false,
-              "fonte": "views/empresas_americanas.py:2106"
+              "fonte": "views/empresas_americanas.py:1531"
             },
             {
               "nome": "Relação entre Score e Cobertura",

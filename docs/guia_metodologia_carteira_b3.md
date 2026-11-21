@@ -525,7 +525,7 @@ valor (por nome em inglês *ou* em português, ex.: `_MES_REBALANCE = 4`).
 O relatório de safras (`core/b3_safras.py`, desenhado por
 `views/portfolio_b3_safras.py`) reconstrói a carteira de cada safra — os
 líderes por segmento com o orçamento que o score daquele ano definiu — e mede
-o retorno da janela de vigência contra Selic e equal-weight. Três
+o retorno da janela de vigência contra Selic e equal-weight. Cinco
 características da medição, verificadas no código:
 
 1. **Viés de universo — medido, não só declarado.** O conjunto de segmentos
@@ -554,6 +554,49 @@ características da medição, verificadas no código:
    safra medida é maior que zero, aparece um aviso dizendo que aquela fatia
    "rende zero" e que a perda "também não rende o que os sobreviventes
    renderam".
+4. **Janela de 12 meses e Selic realizada (achado D13, 17/11/2026).** Os
+   preços são de fim de mês. Até 17/11/2026 a janela começava no primeiro
+   preço *dentro* da vigência — o fechamento de 30/04 — e media só 11 meses,
+   enquanto a Selic do benchmark rendia os 12. Agora `_janela_de_mercado`
+   parte do último fechamento até 01/04 dentro de `TOLERANCIA_DIAS` (o de
+   31/03) e vai ao de 31/03 seguinte: safras consecutivas se encadeiam sem
+   buraco nem sobreposição. Sem esse fechamento, a janela cai no primeiro
+   preço de dentro, como antes. A Selic deixou de ser a meta de fim de ano
+   (`taxa_selic_aa`) e passou a ser a **realizada**, composta mês a mês de
+   `info_economica_mensal."Selic_Media"` (`load_selic_mensal()`); mês sem
+   dado usa a meta do ano e sai nomeado na legenda ("pela meta: 2026-02,
+   2026-03"), e a tabela declara a fonte em `attrs["selic_fonte"]`. A medição
+   fora da amostra (`core/b3_oos_carteira.py`, 2.5.0) usa a mesma janela —
+   `tests/test_b3_safras.py::test_d13_oos_usa_a_mesma_janela_da_tabela`.
+5. **Safra inviável ou sem segmento é caixa na Selic, não ano descartado
+   (achado D1, 17/11/2026).** Na medição fora da amostra
+   (`core/b3_oos_carteira.py::itens_da_cadeia`, desde a 2.4.0), uma safra
+   cujos pesos não montam carteira (inviável) ou que não aprovou segmento
+   entra na média como caixa rendendo a Selic da janela. Tirar o ano da conta
+   seria escolher os anos: até a 2.3 a safra inviável entrava com os pesos
+   concentrados que sobravam, e o ano sem segmento simplesmente sumia. Ficam
+   fora só o **aquecimento** — as safras anteriores à primeira em que algum
+   segmento foi aprovado, quando ainda não há decisão nenhuma a medir — e as
+   sem preço observado. A primeira resposta inviável já é uma decisão e vira
+   caixa: até a revisão de 17/11/2026 o aquecimento ia até a primeira safra
+   *montável*, o que deixava fora a 2017 do Equilibrado e a 2018 do
+   Conservador, ambas inviáveis
+   (`tests/test_b3_oos_carteira.py::test_aquecimento_so_antes_da_primeira_resposta`).
+6. **Tetos que não fecham também são caixa (unificação B3 × FII,
+   18/11/2026, medição 2.6.0).** A tela desliga o salvar nos dois casos da
+   rota relaxada — poucos ativos para o cap e tetos de setor e de ciclo que
+   não fecham (`views/portfolio_b3.py`, `disabled=(not _portfolio_viavel) or
+   _rota_relaxada`) —, mas até a 2.5.0 a medição só convertia o primeiro em
+   caixa: a safra dos tetos entrava com os pesos relaxados, que a tela não
+   deixa salvar. A regra agora é uma função só,
+   `core/b3_oos_carteira.py::carteira_salvavel`, lida pela manchete
+   (`itens_da_cadeia`) e pela banda do portão (`rendimento_contado`). Os pesos
+   relaxados que a tela mostra viram sensibilidade
+   (`sensibilidade_pesos_da_tela` no JSON), nunca manchete. Na medição 2.5.0
+   gravada, só o Conservador tinha safras nesse caso (2023 e 2025). A Seleção
+   de FIIs segue a mesma regra desde a mesma data: período sem carteira
+   publicável é caixa a Selic e conta
+   (`tests/test_b3_oos_carteira.py::test_banda_e_cadeia_leem_a_mesma_regra_de_salvavel`).
 
 ### O alcance da chamada do relatório: por forma (AST) e, desde 22/09/2026, por execução
 

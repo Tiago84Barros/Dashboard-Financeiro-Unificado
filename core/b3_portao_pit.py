@@ -470,7 +470,9 @@ def coletar_dossie_saida_pit(tk: str, safra: int) -> dict | None:
 def carregar_macro_por_ano() -> dict[int, dict]:
     """``public.macro`` pelo engine do projeto (na medição, o armazém local)."""
     from core.dossie_b3 import _f, _rows
-    rows = _rows("SELECT ano, selic, ipca, cambio, pib FROM public.macro ORDER BY ano")
+    # public.macro fica fora do papel só-leitura do armazém: banco do app.
+    rows = _rows("SELECT ano, selic, ipca, cambio, pib FROM public.macro ORDER BY ano",
+                 _banco_do_app=True)
     return {int(r["ano"]): {c: _f(r[c]) for c in ("selic", "ipca", "cambio", "pib")}
             for r in rows if r.get("ano") is not None}
 

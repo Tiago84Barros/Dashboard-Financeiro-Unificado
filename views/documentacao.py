@@ -9,6 +9,7 @@ dicionário de indicadores/demonstrações financeiras.
 from __future__ import annotations
 
 import html
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import streamlit as st
@@ -350,8 +351,9 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
     title="Criação de portfólio B3",
     subtitle=(
         "Subaba Criação de Portfólio de Empresas B3: setores, subsetores e segmentos "
-        "entram no motor; o app encontra líderes, testa desempenho e salva uma "
-        "carteira modelo."
+        "entram no motor; o app testa desempenho e mostra a estratégia escolhida no "
+        "seletor: nota + fatores (padrão) ou a líder de cada segmento, que pode ser "
+        "salva como carteira modelo."
     ),
     tela="Empresas B3",
     abas=("Criação de Portfólio",),
@@ -360,7 +362,7 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
         ("Segmentação", ("setor_cp", "subsetor_cp", "segmento_cp")),
         ("Motor", ("variacao_cp", "score_cp", "lideres_cp")),
         ("Simulação", ("backtest_cp", "comparacao_cp", "aprovacao_cp")),
-        ("Portfólio", ("pesos_cp", "salvar_cp")),
+        ("Portfólio", ("pesos_cp", "salvar_cp", "ampla_cp")),
     ),
     default="setores_cp",
     nodes={
@@ -378,8 +380,26 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
         ),
         "macro_cp": _node(
             "macro_cp", "Cenário macro", "Dados",
-            "Carrega Selic e demais variáveis macro para simular benchmark e ajustar o score.",
-            ("load_selic_macro()", "load_macro_history()", "Taxa Selic média de fallback"),
+            "Carrega Selic e demais variáveis macro para simular benchmark e ajustar o score. "
+            "O desempenho safra a safra usa a Selic realizada mês a mês; a meta do ano só "
+            "cobre mês sem dado, e esses meses aparecem nomeados. As duas visões do "
+            "gráfico usam as carteiras escolhidas em abril de cada ano, lidas das "
+            "medições gravadas (líder de cada segmento e nota + fatores, as duas "
+            "líquidas do custo do giro, ao lado de pesos iguais, Selic e Ibovespa). "
+            "Ano a ano: uma barra por safra e a contagem de safras em que cada "
+            "carteira rendeu mais que os pesos iguais. Acumulado: linha do R$ 1 "
+            "encadeado, com um card por série com o R$ 1 final e a taxa ao ano; "
+            "é o resultado do período, a prova segue o teste ano a ano. Os três "
+            "cartões do topo e a tabela leem as mesmas medições: uma linha por "
+            "safra com a líder líquida, bruta e com IR, a diferença para a Selic "
+            "e para os pesos iguais, giro, custo e as maiores posições. O bloco "
+            "\"O que esperar da safra vigente\" lê as mesmas safras medidas para "
+            "as faixas contra a Selic e os pesos iguais, e o Rank-IC de cada ano "
+            "do universo inteiro, sem portão e fora da amostra "
+            "(data/vantagem_oos.json), para \"Ordena?\" e \"Fragilidade\". Sem "
+            "essas medições, ele volta à reconstrução com os segmentos de hoje e "
+            "diz isso na tela.",
+            ("load_selic_macro()", "load_selic_mensal()", "load_macro_history()", "Taxa Selic média de fallback"),
             "A comparação contra Selic é essencial porque o investidor brasileiro sempre tem uma alternativa de renda fixa.",
         ),
         "setor_cp": _node(
@@ -467,8 +487,22 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
             "Remove duplicatas, consolida motivos e distribui empresas selecionadas por peso e setor. "
             "Quem entrou pelo piso de qualidade ou pela Inteligência dos Ativos vem etiquetado "
             "no card da líder; o afrouxamento do piso e a vaga que ficou sem substituto vão "
-            "para Configurações → Restrições.",
-            ("Lista de empresas líderes", "Score médio", "Alpha médio", "Distribuição setorial"),
+            "para Configurações → Restrições. Quando os líderes não fecham nos limites de "
+            "concentração, a carteira normal continua na tela com um aviso: os pesos "
+            "passam do limite, a camada macro não é aplicada e o botão de salvar fica "
+            "desligado; por isso a medição fora da amostra conta essas safras (poucos "
+            "ativos para o limite ou tetos de setor e ciclo que não cabem juntos) como "
+            "caixa a Selic, e os pesos da tela vão só para uma sensibilidade à parte -- "
+            "a mesma regra da Seleção de FIIs. Só quando nenhum segmento "
+            "deixa líder entra a composição para revisão, com a mesma nota: uma empresa por "
+            "segmento, aprovados no backtest primeiro, e o card diz se o segmento foi aprovado. "
+            "Abaixo dela vêm os mesmos painéis da carteira normal, a começar pela distribuição "
+            "setorial, em que o dinheiro sem aplicar aparece como \"Não alocado\". A nota é "
+            "percentil dentro do segmento entre as compráveis de hoje: segmento com uma só "
+            "comprável não tem par, o card diz \"sem par comparável\" em vez de 0,0 e essa "
+            "nota fica fora do score médio.",
+            ("Lista de empresas líderes", "Score médio sem as notas sem par", "Alpha médio",
+             "Distribuição setorial"),
             "É a transição do motor por segmento para uma carteira única e acionável.",
         ),
         "salvar_cp": _node(
@@ -476,6 +510,34 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
             "Persiste a carteira sugerida como portfólio B3 ativo do usuário.",
             ("b3_portfolio_models", "b3_portfolio_model_items", "Parâmetros e métricas JSON"),
             "Esse registro vira a base da Avaliação de Portfólio e aparece no Dashboard Geral.",
+        ),
+        "ampla_cp": _node(
+            "ampla_cp", "Nota + fatores (estratégia padrão)", "Portfólio",
+            "Estratégia padrão da aba desde 20/11/2026: o seletor \"Estratégia\", logo "
+            "depois dos testes complementares, abre nela; \"Líder de cada segmento\" "
+            "leva à carteira concentrada, com o portão de LLM e o botão de salvar. A "
+            "rota padrão mostra esta seção, o desempenho safra a safra e a metodologia, "
+            "e não chama LLM. Em vez de escolher o "
+            "líder de cada segmento, junta todo nome com nota de hoje, tira os 30% de "
+            "pior sinal e divide igualmente entre o resto. O sinal é a média do "
+            "percentil da nota com o percentil de três fatores: momento 12-1, baixa "
+            "volatilidade em 36 meses e o último ROE publicado antes de abril. Nome sem "
+            "fator fica no meio (50). A carteira é refeita uma vez por ano, em abril; "
+            "de janeiro a março a lista sai como prévia. Os três cards mostram a "
+            "medição fora da amostra gravada (excesso líquido sobre pesos iguais, com "
+            "intervalo de 95%), a mesma régua só com a nota e a líder de cada segmento. "
+            "Outros três cards encadeiam R$ 1 pelas mesmas safras (nota + fatores, só "
+            "a nota e pesos iguais), com a taxa composta ao ano: é resultado do "
+            "período, não prova, que continua sendo o teste ano a ano. A tela avisa "
+            "quando a medição é de outra versão ou de outro perfil.",
+            ("core/b3_nota_fatores.py: a regra, a mesma da medição",
+             "data/oos_nota_fatores_b3.json (scripts/medir_nota_fatores_b3.py)",
+             "Sem guarda de entrada, piso de qualidade, portão de LLM nem tetos de setor",
+             "Nove safras: efeito pequeno, um ano ruim apaga a vantagem"),
+            "Tirar os piores foi a única estratégia com ganho medido fora do zero na B3 "
+            "(+2,5 pp ao ano sobre pesos iguais); a líder de cada segmento tem intervalo "
+            "que cruza o zero. Por isso é a padrão. A concentrada segue no seletor, e a "
+            "tela mostra as duas na mesma régua.",
         ),
     },
 )
@@ -1291,11 +1353,21 @@ FLOW_SELECAO_FIIS = FlowSpec(
             "A aba Retrospectiva refaz a seleção safra a safra usando SÓ o que era "
             "conhecido naquela data e mede o que a regra teria escolhido. Fundo da "
             "carteira que sai de campo no período rende zero, nunca o que os "
-            "sobreviventes renderam.",
+            "sobreviventes renderam. Mês sem carteira publicável -- a publicação foi "
+            "recusada, e a tela só mostrou o rascunho, ou o otimizador não montou "
+            "carteira -- entra na conta como caixa a Selic, a mesma regra da Empresas "
+            "B3, e o desempenho desses meses aparece em bloco separado; o rascunho "
+            "medido com os próprios pesos vira sensibilidade. O selo "
+            "\"Aprovado\" exige o protocolo íntegro E que a carteira tenha ganhado "
+            "do IFIX na média do walk-forward, líquida de custos: empatar ou perder "
+            "reprova. Ganhar com significância não é exigido -- ao lado do selo a "
+            "tela mostra o intervalo de 95% do excesso e marca \"não "
+            "significativo\" quando ele cruza o zero.",
             (
                 "Safras reconstruídas com dado da época",
                 "Mínimo metodológico de períodos para valer",
                 "Snapshots verificados e contados na tela",
+                "Excesso médio sobre o IFIX acima de zero para aprovar",
             ),
             "Sem point-in-time, o backtest lê o futuro e aprova qualquer regra. Mudar a "
             "versão de metodologia sem reconstruir a safra desliga o backtest em silêncio.",
@@ -1303,8 +1375,9 @@ FLOW_SELECAO_FIIS = FlowSpec(
         "gate_fii": _node(
             "gate_fii", "Portão de publicação", "Validação",
             "O app só chama o resultado de Carteira-Modelo se passar no portão: cobertura "
-            "mínima, confiança mediana e validação PIT em dia. Senão, sai como Lista de "
-            "Diligência, com os motivos listados na tela. Salvar continua possível: "
+            "mínima, confiança mediana e validação PIT aprovada para a versão corrente "
+            "-- e a validação só aprova a regra que ganhou do IFIX na média. Senão, sai "
+            "como Lista de Diligência, com os motivos listados na tela. Salvar continua possível: "
             "você marca que entendeu os motivos e a carteira fica gravada como salva "
             "sem aprovação da metodologia.",
             (
@@ -1336,11 +1409,16 @@ FLOW_SELECAO_FIIS = FlowSpec(
         "otimizacao_fii": _node(
             "otimizacao_fii", "Montagem da carteira", "Carteira",
             "A otimização busca a melhor combinação dentro dos SEUS limites. Quando os "
-            "limites se contradizem, o app avisa qual deles esvaziou a carteira.",
+            "limites se contradizem, o app avisa qual deles esvaziou a carteira. Quando "
+            "nem a cessão fecha, a composição para revisão usa a mesma utilidade e as "
+            "mesmas bandas por tipo da carteira normal: depois do capital, minimiza o "
+            "desvio fora das bandas, porque a nota é percentil dentro do tipo e não "
+            "decide quanto vai para cada tipo.",
             (
                 "Otimização com restrições de peso e de grupo",
                 "Diagnóstico quando a restrição é inalcançável",
                 "Cessão controlada da forma, nunca do risco",
+                "Revisão: capital, depois bandas por tipo, depois utilidade",
             ),
             "Carteira vazia quase nunca é falta de ativo bom: é teto inalcançável. "
             "O app precisa dizer QUAL limite travou, não devolver uma lista em branco.",
@@ -1499,10 +1577,13 @@ FLOW_EMPRESAS_EUA = FlowSpec(
         "percentil_industria_us": _node(
             "percentil_industria_us", "Percentil na indústria", "Score",
             "A nota de cada métrica é o percentil dentro da indústria, não no universo "
-            "inteiro. Qualidade é relativa ao segmento.",
+            "inteiro. Qualidade é relativa ao segmento. Quando a indústria tem menos "
+            "de quatro empresas com aquela métrica, ou a empresa não tem indústria, "
+            "a métrica é ranqueada no universo: valor sem par não vira o melhor do grupo (0.9.2).",
             (
                 "Percentil dentro da indústria",
-                "Piso de quantidade de pares para o percentil valer",
+                "Piso de quatro valores da métrica na indústria; abaixo dele, universo",
+                "Menos de dois valores não ordenam: percentil neutro",
                 "Substituição dentro do mesmo segmento",
             ),
             "Comparar margem de software com margem de varejo alimentar produz um ranking "
@@ -1595,11 +1676,18 @@ FLOW_EMPRESAS_EUA = FlowSpec(
             "Transforma o ranking em carteira, com limites por setor e por ativo "
             "definidos por você. O botão 💾 Salvar como carteira padrão grava no "
             "banco; é essa carteira que o Dashboard Geral, o Portfólio Global e a "
-            "Avaliação de Portfólio usam.",
+            "Avaliação de Portfólio usam. Quando nenhuma indústria é aprovada ou os "
+            "tetos não fecham, a composição para revisão segue a mesma regra: os "
+            "líderes de cada indústria, só as aprovadas quando existem (as demais, "
+            "sem nenhuma aprovada, pela margem até a aprovação) e o mesmo alvo de "
+            "pesos; o que não cabe nos tetos fica como capital não alocado. Abaixo "
+            "dela vêm os mesmos gráficos de alocação por ativo e por setor da "
+            "carteira normal, com essa sobra como \"Não alocado\".",
             (
                 "Limites por setor e por ativo",
                 "Piso de liquidez",
                 "Diagnóstico de restrição inalcançável",
+                "Revisão: líderes por indústria e o alvo de pesos da carteira normal",
                 "save_us_portfolio_model() → us_portfolio_models, no clique "
                 "(on_click), antes do rerun da tela",
             ),
@@ -1864,8 +1952,10 @@ FLOW_QUALIDADE_DADOS = FlowSpec(
             "frescor", "Selo de frescor", "Origem",
             "Cada vitrine carrega uma cadência alvo e um limite de validade. O selo no "
             "topo da tela compara a data da publicação com esses dois prazos. Na B3 "
-            "ele compara também a data do preço: as métricas são republicadas toda "
-            "semana mesmo quando a cotação para de chegar.",
+            "ele compara também a data do preço: uma publicação em dia pode trazer "
+            "uma cotação que parou de chegar. Desde 15/11/2026 a B3 é lida do "
+            "armazém local, e o selo mede o armazém; a cópia do Supabase, "
+            "congelada naquela data, só aparece com aviso.",
             (
                 "Cadência alvo: de quanto em quanto tempo deveria atualizar",
                 "Limite de validade: a partir de quando está velho",
@@ -1997,7 +2087,8 @@ FLOW_CONFIGURACOES = FlowSpec(
                           "cfg_trocar_usuario", "cfg_memoria_llm")),
         ("Diagnóstico", ("cfg_confianca", "cfg_restricoes", "cfg_mercado", "cfg_banco")),
         ("Entrada de arquivo", ("cfg_fatura", "cfg_extrato", "cfg_carteira", "cfg_cnpj")),
-        ("Segurança", ("cfg_conta", "cfg_sessao", "cfg_usuarios")),
+        ("Segurança", ("cfg_conta", "cfg_sessao", "cfg_usuarios", "cfg_logados",
+                       "cfg_excluir_conta")),
         ("Referência", ("cfg_mapa", "cfg_documentacao")),
     ),
     default="cfg_tema",
@@ -2027,9 +2118,13 @@ FLOW_CONFIGURACOES = FlowSpec(
             "e a seção volta inteira quando o interruptor é ligado de novo.",
             (
                 "Aba ⚙️ Geral, bloco 02 (🧭 Seções do aplicativo), logo depois do tema",
-                "Um interruptor por seção opcional: Controle Financeiro, Investimentos, "
-                "Empresas B3, Empresas Americanas, Seleção de FIIs e Portfólio Global",
+                "Um interruptor por seção opcional: Controle Financeiro, Controle CNPJ, "
+                "Investimentos, Empresas B3, Empresas Americanas, Seleção de FIIs e "
+                "Portfólio Global",
                 "Dashboard Geral e Configurações ficam sempre no menu, sem interruptor",
+                "Conta criada desde 15/11/2026 começa só com Controle Financeiro e "
+                "Investimentos ligados (core.secoes_app.VISIVEIS_CONTA_NOVA); as outras "
+                "cinco se ligam aqui. Conta anterior não perdeu seção",
                 "Botão 💾 Salvar seções; antes do clique, a contagem de ligadas e o que sai "
                 "ou volta ao menu",
                 "core.secoes_app: catálogo das seções, filtro do menu e cache da sessão",
@@ -2237,19 +2332,26 @@ FLOW_CONFIGURACOES = FlowSpec(
         ),
         "cfg_conta": _node(
             "cfg_conta", "Minha conta e cadastro", "Segurança",
-            "Abre a aba Segurança. Em Minha conta, você troca a própria senha; em Cadastrar "
-            "usuário, quem administra cria a conta de outra pessoa, que terá os próprios "
-            "dados financeiros e a própria memória de conversas.",
+            "Abre a aba Segurança. Em Minha conta, você troca a própria senha. Criar conta "
+            "não é mais daqui: desde 14/11/2026 qualquer pessoa cria a própria conta na aba "
+            "Criar conta da tela de login, e ela nasce com os próprios dados financeiros e a "
+            "própria memória de conversas.",
             (
-                "Aba 🔒 Segurança, Minha conta e Cadastrar usuário",
+                "Aba 🔒 Segurança, Minha conta",
                 "render_user_accounts() (design/user_accounts.py)",
                 "Nova senha com exatamente 8 caracteres; a sessão é encerrada depois da troca",
-                "Cadastrar usuário é do administrador: create_user chama require_admin, e "
-                "quem não administra vê a explicação no lugar do formulário",
+                "Cadastro na tela de login: core/auth.py::_renderizar_cadastro chama "
+                "core.user_accounts.cadastrar_usuario",
+                "Conta nova mora no Supabase das contas novas (SUPABASE_NOVOS_URL); as contas "
+                "anteriores continuam no Supabase principal",
+                "Sem SUPABASE_NOVOS_URL, a aba Criar conta diz que o cadastro ainda não abriu",
+                "A conta nasce com o menu enxuto: Dashboard Geral, Controle Financeiro, "
+                "Investimentos e Configurações. O resto se liga em ⚙️ Geral → 🧭 Seções do "
+                "aplicativo; a escolha inicial é gravada na mesma transação do cadastro",
             ),
-            "O bloco Cadastrar usuário não some para quem não administra desde 12/10/2026: "
-            "pedaço que desaparece sem explicação parece defeito, e o formulário só "
-            "entregaria um botão que sempre falha, porque quem recusa de fato é create_user.",
+            "O Supabase principal está no limite do plano gratuito. Conta nova ali cresceria "
+            "justo o banco que não tem espaço; por isso o cadastro aberto grava só no banco "
+            "novo, e recusa e-mail que já existe em qualquer um dos dois.",
         ),
         "cfg_sessao": _node(
             "cfg_sessao", "Proteção e sessão", "Segurança",
@@ -2276,6 +2378,37 @@ FLOW_CONFIGURACOES = FlowSpec(
             "A lista fecha a página, e não abre: o administrador chega nela depois de conferir "
             "o estado da sessão e da credencial.",
         ),
+        "cfg_logados": _node(
+            "cfg_logados", "Usuários logados agora", "Segurança",
+            "Mostra quantas pessoas estão com o aplicativo aberto neste momento, quantas abas "
+            "do navegador isso soma, a hora da última atividade e o nome de cada uma, em "
+            "cards KPI e numa tabela. Visível apenas para quem administra.",
+            (
+                "Aba 🔒 Segurança, bloco 04",
+                "render_logged_users(); core.presenca.usuarios_logados chama require_admin",
+                "Conta a sessão enquanto a aba está conectada e o login não expirou (12 h)",
+                "Registro em memória do servidor, nada gravado no banco",
+            ),
+            "Presença é fato do servidor que está de pé, não dado a guardar. Gravar a cada "
+            "clique disputaria a única conexão de banco do app. O limite é que, com mais de "
+            "uma réplica do app, cada uma veria só as próprias sessões.",
+        ),
+        "cfg_excluir_conta": _node(
+            "cfg_excluir_conta", "Excluir conta", "Segurança",
+            "Apaga uma conta e todos os dados dela: lançamentos, contas, cartões, carteiras, "
+            "importações, preferências e memória das conversas. Só quem administra, e a "
+            "conta do próprio administrador não aparece na lista.",
+            (
+                "Aba 🔒 Segurança, bloco 05",
+                "render_delete_user(); core.user_accounts.excluir_usuario chama require_admin",
+                "Confirmação pelo e-mail da conta digitado por extenso",
+                "Apaga no banco onde a conta mora, numa transação só",
+                "Toda tabela com user_id entra na exclusão, inclusive as que surgirem depois",
+            ),
+            "A exclusão lê o catálogo do banco em vez de uma lista fixa de tabelas: tabela "
+            "nova com user_id não fica para trás, e uma falha no meio desfaz tudo em vez de "
+            "deixar meia conta.",
+        ),
         "cfg_mapa": _node(
             "cfg_mapa", "Mapa do App", "Referência",
             "Fluxograma de todas as telas do app em linguagem simples: cada tela, aba e "
@@ -2294,12 +2427,15 @@ FLOW_CONFIGURACOES = FlowSpec(
         ),
         "cfg_documentacao": _node(
             "cfg_documentacao", "Documentação", "Referência",
-            "Esta aba: fluxogramas clicáveis das partes complexas do app, com objetivo, "
-            "dados, regra, exemplo, interpretação e cuidados de cada etapa.",
+            "Esta aba: um diagrama de como o app inteiro se encaixa e fluxogramas clicáveis "
+            "das partes complexas, com objetivo, dados, regra, exemplo, interpretação e "
+            "cuidados de cada etapa.",
             (
                 "Aba 📚 Documentação, a nona da barra",
                 "Era rota da barra lateral; virou aba de Configurações em 24/09/2026",
-                "Abas: Dashboard Geral, Controle financeiro, Carteira atual, Inteligência e IR, "
+                "Abas: Visão geral do app (diagrama de como o app inteiro se encaixa), "
+                "Dashboard Geral, Controle financeiro, Controle CNPJ, Carteira atual, "
+                "Inteligência e IR, "
                 "Empresas e Carteira 20 (B3), Criação de portfólio (B3), "
                 "Simulação (B3), Avaliação de portfólio (B3), Empresas Americanas, Seleção de "
                 "FIIs, Portfólio Global, Qualidade dos dados, Configurações e Indicadores",
@@ -2313,7 +2449,8 @@ FLOW_CONFIGURACOES = FlowSpec(
         "A tela é a mesma para todo mundo desde 12/10/2026: as nove abas aparecem para "
         "quem administra e para quem não administra. O que separa os dois é o dado que "
         "cada guarda entrega — a lista de usuários cadastrados, por exemplo, continua só "
-        "do administrador, e o bloco diz isso em vez de desaparecer.",
+        "do administrador, e o bloco diz isso em vez de desaparecer. O mesmo vale para quem está "
+        "logado e para a exclusão de conta.",
         "As duas entradas do Controle Financeiro são irmãs na mesma sub-aba, mas nunca se "
         "somam: a fatura é fluxo futuro e o extrato é o mês corrente.",
     ),
@@ -2476,11 +2613,43 @@ FLOW_EMPRESAS_B3_TELAS = FlowSpec(
     tela="Empresas B3",
     abas=("Empresas por Setor", "Análise de Empresa", "Carteira 20"),
     rows=(
-        ("Consulta", ("b3_setor", "b3_empresa", "b3_proventos", "b3_relatorio")),
+        ("Consulta", ("b3_fonte", "b3_setor", "b3_empresa", "b3_proventos", "b3_relatorio")),
         ("Registro", ("b3_c20_registro", "b3_c20_tela")),
     ),
     default="b3_setor",
     nodes={
+        "b3_fonte": _node(
+            "b3_fonte", "De onde a tela lê a B3", "Consulta",
+            "Desde 15/11/2026 a B3 não é mais publicada no Supabase: a ingestão grava só no "
+            "armazém local, e as subabas leem de lá. Se o armazém não responde, a tela lê a "
+            "cópia do Supabase congelada naquela data e diz isso num aviso amarelo no topo.",
+            (
+                "core.fonte_b3.consultar(): banco do app local → papel só-leitura "
+                "app4_leitura (ARMAZEM_SQL_DB_URL) → rota POST /sql do túnel → cópia congelada",
+                "O degrau que falha não tenta o seguinte: a reserva é uma só e tem motivo",
+                "Resposta cortada ou conexão caída no túnel tenta mais uma vez "
+                "(core.armazem_remoto._buscar); tempo de leitura esgotado não repete, "
+                "nem quando chega embrulhado num ConnectionError",
+                "O aviso vale por até 12 h, o maior cache dos loaders da B3. Antes de cada "
+                "tela, core.fonte_b3.conferir_volta() pergunta ao armazém, no máximo uma vez "
+                "por minuto, se ele voltou: voltou, limpa o st.cache_data e tira o aviso",
+                "Resultado guardado na sessão (Criação de Portfólio, Análise de Portfólio) "
+                "gerado com a cópia avisa, depois da volta, que precisa ser gerado de novo",
+                "Parecer por ativo guardado na sessão (portão da Inteligência dos Ativos e "
+                "parecer de seleção; também em FIIs e EUA) usa core.fonte_b3.cache_de_sessao, "
+                "que se esvazia na volta: gerar de novo refaz o parecer com o armazém",
+                "O aviso é decidido depois que a subaba carrega: pega também a leitura "
+                "que caiu na reserva no meio dela",
+                "Motivo da reserva: Configurações → Restrições (detalhe.b3.fonte_reserva)",
+                "O mesmo aviso, pela função única design.componentes.aviso_fonte_reserva_b3, "
+                "sai no topo de Dashboard Geral, Seleção de FIIs e Portfólio Global "
+                "(app.py::_ROTAS_QUE_LEEM_B3), que também leem a B3 por core.market_read",
+                "Ficam no banco do app: public.macro e public.docs_corporativos, fora do papel",
+            ),
+            "O papel do túnel só enxerga market, market_us e public.setores: é ele, e não o "
+            "filtro do texto, que impede o app publicado de ler finanças pessoais no armazém. "
+            "Mostrar a cópia congelada sem aviso faria um dado parado parecer atual.",
+        ),
         "b3_setor": _node(
             "b3_setor", "Subaba 🏢 Empresas por Setor", "Consulta",
             "Grade das empresas da B3 por setor, só com ações: FIIs, ETFs, BDRs e direitos de "
@@ -3334,6 +3503,25 @@ def _render_av_field(label: str, text: str) -> None:
     )
 
 
+_ALTURA_VISAO_GERAL = 900
+
+
+def _render_visao_geral() -> None:
+    """O diagrama de como o app inteiro se encaixa, num iframe com o tema do app.
+
+    Os fluxogramas das outras abas explicam cada tela por dentro; este mostra
+    de onde o dado vem, onde mora, que tela lê o quê e as regras que valem
+    para todas. A página está em ``docs/visao_geral/como_funciona.html``.
+    """
+    import streamlit.components.v1 as components
+
+    from design.theme_selector import tema_pintado
+    from design.visao_geral_app import pagina_html
+
+    components.html(pagina_html(tema_pintado()), height=_ALTURA_VISAO_GERAL,
+                    scrolling=True)
+
+
 def _render_indicadores() -> None:
     st.markdown(
         """
@@ -3455,13 +3643,15 @@ def render_corpo() -> None:
     """CSS e abas da documentação, sem o cabeçalho da página."""
     st.markdown(_CSS, unsafe_allow_html=True)
 
-    # Na ordem do menu lateral; Qualidade dos dados e Indicadores são transversais.
+    # Visão geral primeiro (o app inteiro num diagrama), depois as telas na
+    # ordem do menu lateral; Qualidade dos dados e Indicadores são transversais.
     # Rótulo e fluxo em listas paralelas, conferidas pelo tamanho: a versão
     # numerada à mão (``with tabs[7]``) desalinhava rótulo e conteúdo a cada aba
     # que entrava no meio. ``tab_labels`` continua sendo uma lista de textos
     # porque o Mapa do App é conferido contra ela
     # (``tests/test_configuracoes_sincronizadas.py``).
     tab_labels = [
+        "Visão geral do app",
         "Dashboard Geral",
         "Controle financeiro",
         "Controle CNPJ",
@@ -3478,7 +3668,9 @@ def render_corpo() -> None:
         "Configurações",
         "Indicadores",
     ]
-    fluxos: list[FlowSpec | None] = [
+    # Cada aba tem um fluxo ou uma função que a desenha.
+    fluxos: list[FlowSpec | Callable[[], None]] = [
+        _render_visao_geral,
         FLOW_DASHBOARD_GERAL,
         FLOW_CONTROLE_FINANCEIRO,
         FLOW_CONTROLE_CNPJ,
@@ -3493,13 +3685,13 @@ def render_corpo() -> None:
         FLOW_PORTFOLIO_GLOBAL,
         FLOW_QUALIDADE_DADOS,
         FLOW_CONFIGURACOES,
-        None,  # Indicadores
+        _render_indicadores,
     ]
     assert len(fluxos) == len(tab_labels), "documentação: aba sem fluxo ou fluxo sem aba"
     tabs = st.tabs(tab_labels)
     for tab, flow in zip(tabs, fluxos):
         with tab:
-            if flow is None:
-                _render_indicadores()
-            else:
+            if isinstance(flow, FlowSpec):
                 _render_flow(flow)
+            else:
+                flow()

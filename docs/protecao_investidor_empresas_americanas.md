@@ -144,8 +144,11 @@ indústria passaria a ser cedida por erro de digitação.
 
 **Rede final (carteira inteira)** — a guarda acima age por indústria e não tem
 como saber que aquela era a última. Se o piso esvaziou todas,
-`select_industry_leaders` remonta a carteira **pré-piso** e grava
-`carteira_preservada` no log. A carteira volta, a cessão é declarada.
+`_lideres_por_industria` (a carteira normal e a revisão usam a mesma) remonta
+a carteira **pré-piso** e grava `carteira_preservada` no log. A carteira volta,
+a cessão é declarada. A rede cede só o piso: com o portão da Inteligência dos
+Ativos ligado, os líderes pré-piso passam por ele antes de entrar, e o vetado
+cede a vaga ao próximo da mesma indústria.
 
 **Transparência obrigatória:** as duas cessões são renderizadas no painel
 "⛔ Empresas barradas pelo piso de qualidade" — aviso, tabela de readmitidos com

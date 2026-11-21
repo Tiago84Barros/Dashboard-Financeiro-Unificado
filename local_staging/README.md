@@ -173,10 +173,8 @@ tarefas obsoletas `DashboardFinanceiro-FII-Backfill` e
 |---|---|---|
 | `fii_ingest` | 1 dia | cadeia de 7 etapas de ingestão de FIIs **no armazém** |
 | `fii_selection` | 1 dia | vitrine de seleção de FIIs no Supabase |
-| `b3_brapi` | 1 dia | brapi `daily` + `setores` + prontidão **no armazém**; publica na vitrine o que mudou (empresas, preço de 35 dias, proventos, demonstrações, indicadores, safras) |
-| `b3_brapi_anual` | 7 dias | brapi `annual` (demonstrações completas, `range=1y`) no armazém e publica com 400 dias de preço |
-| `b3_metrics` | 7 dias | `market.calculated_metrics` |
-| `b3_vintages` | 7 dias | safras PIT da B3 |
+| `b3_brapi` | 1 dia | brapi `daily` + `setores` + prontidão **no armazém** |
+| `b3_brapi_anual` | 7 dias | brapi `annual` (demonstrações completas, `range=1y`) **no armazém** |
 | `us_snapshot` | 7 dias | `market_us.company_snapshots` |
 | `us_vintages` | por versão | safras PIT dos EUA (gatilho: `US_FUNDAMENTAL_SCORE_VERSION` mudar) |
 | `us_delistings` | 30 dias | saídas de bolsa |
@@ -204,7 +202,12 @@ Duas regras que existem por incidente:
 ### Estado, log e verificação
 
 O estado fica em `local_staging/estado_publicacao.json`, gravado **depois de cada
-alvo** (hibernar no meio não desfaz o que já foi publicado). Na primeira execução
+alvo** (hibernar no meio não desfaz o que já foi publicado). Alvo que declara
+artefato em `data/public/` fica `artefato_pendente` até o push do artefato
+chegar à `origin/main`; só então vira `ok` e a data avança. Em 13/11/2026 o
+push do `rag_corpus` não respondeu, a rotina caiu e o estado já dizia `ok`: o
+artefato ficou só na main local e ninguém foi avisado. Pendente volta à fila
+na execução seguinte e aparece no vigia. Na primeira execução
 ele é semeado com a data real da última publicação lida dos próprios bancos --
 sem isso um arquivo vazio republicaria tudo, inclusive as 346 mil linhas de
 `prices_monthly`:
@@ -300,14 +303,22 @@ O refresh de Empresas B3 (job `refresh-b3`) saiu do agendamento em 05/10/2026
 recálculo de indicador lia demonstrações e preços de lá (egress, numa conta que
 estourou a cota de 5 GB) e cada consulta à brapi gravava o payload bruto em
 `brapi_raw_payloads` (64 MB dos 500). Agora são os alvos `b3_brapi` e
-`b3_brapi_anual`. O publicador `scripts/publish_b3_brapi_from_local.py`:
+`b3_brapi_anual`, que gravam só no armazém.
+
+**Desde 15/11/2026 a rotina não publica a B3 no Supabase** (diretriz do usuário:
+o Supabase free não recebe atualização, salvo o que o usuário sobe pela
+interface). Saíram da rotina `publish_b3_brapi_from_local.py`,
+`publish_b3_cotacao_from_local.py` e os alvos `b3_metrics` e `b3_vintages`;
+os scripts ficam para uso manual. O app4 passa a ler a B3 do armazém pelo
+túnel. O que segue descreve o publicador manual
+`scripts/publish_b3_brapi_from_local.py`:
 
 - lê o armazém por marca d'água de `updated_at` (`local_staging/marca_b3_brapi.json`,
   estado de máquina) e grava com o `upsert` do repositório, que não reescreve linha igual;
 - **não cria ativo nem empresa**: ticker que a vitrine não conhece é retido e
   relatado (`tickers_retidos`) -- o armazém tem fósseis de alias (BRML3, CARD3);
 - respeita o portão de atualidade trimestral: bloqueado, segura indicadores e safras;
-- não apaga nada; a remoção de indicador órfão continua com o `b3_metrics` semanal.
+- não apaga nada; a remoção de indicador órfão era do `b3_metrics` semanal, hoje manual.
 
 Cota da brapi esgotada derruba o passo 1 (`daily` ou `annual`): três 429
 seguidos acionam o disjuntor, o que já foi coletado fica no armazém e o comando

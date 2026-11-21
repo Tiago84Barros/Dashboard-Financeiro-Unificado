@@ -31,6 +31,7 @@ import core.b3_company_score as _company_score
 import core.b3_data as _db  # facade de leitura B3 — fonte financeira única: market.* (brapi)
 import core.data_quality as _dq
 import core.market_read as _mr  # séries do market.* (preços mensais ajustados) p/ backtest
+import core.pesos_por_score as _pps
 from core.b3_methodology import SCORE_VERSION
 from core.b3_renda_sustentavel import enrich_decision_universe
 from core.b3_slopes import SLOPE_COLS, compute_slope_log, enrich_com_slopes
@@ -212,13 +213,15 @@ def _fv(v, d: int = 2) -> str:
         if v is None or (isinstance(v, float) and (np.isnan(v) or np.isinf(v))):
             return "—"
         x = float(v)
+        # Padrão pt-BR: vírgula decimal e "mil/mi/bi". Antes saía "R$ 801.0K",
+        # com ponto decimal e sufixo em inglês, na tela da Criação de Portfólio.
         if abs(x) >= 1e9:
-            return f"R$ {x/1e9:.2f}B"
+            return f"R$ {x/1e9:.2f} bi".replace(".", ",")
         if abs(x) >= 1e6:
-            return f"R$ {x/1e6:.2f}M"
+            return f"R$ {x/1e6:.2f} mi".replace(".", ",")
         if abs(x) >= 1e3:
-            return f"R$ {x/1e3:.1f}K"
-        return f"{x:,.{d}f}"
+            return f"R$ {x/1e3:.1f} mil".replace(".", ",")
+        return f"{x:_.{d}f}".replace(".", ",").replace("_", ".")
     except Exception:
         return "—"
 
@@ -976,39 +979,12 @@ def _resolve_group_col_df(df: pd.DataFrame, prefer: str = "SEGMENTO",
     return prefer
 
 
-def _select_n_heuristica(scores_desc: list[float], eps: float = 0.35) -> int:
-    if len(scores_desc) < 2:
-        return 1
-    gap12 = scores_desc[0] - scores_desc[1]
-    gap23 = scores_desc[1] - scores_desc[2] if len(scores_desc) >= 3 else 1.0
-    if gap12 <= eps and gap23 <= eps:
-        return 3
-    if gap12 <= eps:
-        return 2
-    return 1
-
-
-def _weights_from_scores(tickers: list[str], score_map: dict[str, float],
-                          gamma: float = 0.90) -> dict[str, float]:
-    scores = [score_map.get(tk, 0.0) for tk in tickers]
-    scores = [float(s) if (s is not None and np.isfinite(s)) else 0.0 for s in scores]
-    mn  = min(scores) if scores else 0.0
-    eps = 1e-6
-    raw = [(max(s - mn, 0) + eps) ** gamma for s in scores]
-    tot = sum(raw) or 1.0
-    return {tk: r / tot for tk, r in zip(tickers, raw)}
-
-
-def _apply_cap_soft(weights: dict[str, float],
-                    cap: float = 0.25, soft: float = 0.05) -> dict[str, float]:
-    """Aplica tilt suave e projeta em pesos válidos com cap estrito."""
-    from core.portfolio_constraints import project_capped_simplex
-
-    tilted = {
-        tk: float(v) + (float(v) - soft) * 0.5 if float(v) > soft else float(v)
-        for tk, v in weights.items()
-    }
-    return project_capped_simplex(tilted, cap)
+# Ponto único em core.pesos_por_score (a carteira de safras FII usa as
+# mesmas regras); os nomes antigos seguem para portfolio_b3 e os testes.
+_select_n_heuristica = _pps.select_n_heuristica
+_weights_from_scores = _pps.weights_from_scores
+_apply_cap_soft = _pps.apply_cap_soft
+_apply_decay_penalty = _pps.apply_decay_penalty
 
 
 def _apply_crowding_penalty(
@@ -1167,9 +1143,11 @@ def _score_universo(
     score = pd.Series(0.0, index=df.index)
 
     for col, (peso, melhor_alto) in pesos.items():
-        if col not in df.columns or peso == 0:
+        if peso == 0:
             continue
-        if col in rendimentos:
+        if col not in df.columns:
+            s = pd.Series(np.nan, index=df.index, dtype=float)
+        elif col in rendimentos:
             # Rendimento: maior é melhor, e a ordem entre lucrativas é a
             # mesma do múltiplo (o recíproco é monótono nos positivos).
             s, melhor_alto = rendimentos[col], True
@@ -1178,6 +1156,12 @@ def _score_universo(
             # reconstruído por imputação.
             s = pd.to_numeric(df[col], errors="coerce")
         if s.notna().sum() < 2:
+            # Sem dois valores não há ordem: o indicador vale o neutro para
+            # todos, a mesma regra do valor ausente (``fillna(0.5)`` abaixo).
+            # Antes o indicador era pulado e somava ZERO -- o segmento de uma
+            # empresa só saía com score 0 (o pior possível), e o ``_scale``
+            # dos ajustes de resiliência caía para 1,0. Achado D2 de 17/11/2026.
+            score += 0.5 * peso * 100.0
             continue
         s_win = _winsorize_series(s.dropna()).reindex(s.index)
 
@@ -1593,6 +1577,21 @@ SCORE_VERSION_CHANGELOG = {
         "parecer de LLM leem o dossie de hoje e seguem cobertos so pela banda "
         "das variantes. Muda a carteira atual e a medicao OOS: ambas sao "
         "desta versao."
+    ),
+    "2.33.0": (
+        "Achado D2 de 17/11/2026: indicador sem dois valores no grupo passa a "
+        "valer o neutro (50% do peso) para todos, a mesma regra do valor "
+        "ausente. Antes ele era pulado e somava zero: o segmento de uma "
+        "empresa so saia com score 0 -- o pior possivel -- e a escala dos "
+        "ajustes de resiliencia caia para 1,0. Antes dos ajustes, a ordem "
+        "dentro de grupos com par nao muda (o indicador sem ordem soma a mesma "
+        "constante para todos); muda o nivel, e os ajustes multiplicativos "
+        "(instabilidade, resiliencia, crowding, macro e o decaimento por anos "
+        "de lideranca) passam a tirar mais pontos em termos absolutos -- a "
+        "rotacao de lideres pode vir um ano antes. O gemeo do painel "
+        "individual (core.b3_company_score._winsorized_percentile) passa a "
+        "dar o neutro a um valor isolado em vez do percentil extremo. A "
+        "medicao OOS e desta versao."
     ),
 }
 
@@ -2261,19 +2260,6 @@ def _score_historico_ano_com_cobertura(
          if pd.notna(s) and np.isfinite(s)},
         degradacoes=_degradacoes(df_sc),
     ), cov
-
-
-def _apply_decay_penalty(
-    score_map: dict[str, float],
-    anos_lideranca: dict[str, int],
-    desconto_aa: float = 0.07,
-    cap: float = 0.30,
-) -> dict[str, float]:
-    """Desconta scores de líderes consecutivos — força rotação de carteira."""
-    return {
-        tk: s * (1.0 - min(anos_lideranca.get(tk, 0) * desconto_aa, cap))
-        for tk, s in score_map.items()
-    }
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3302,6 +3288,14 @@ def render() -> None:
     fallback_legado = bool(getattr(df_set, "attrs", {}).get("fallback_legado"))
     df_set = _so_acoes(df_set)
 
+    # Desde 15/11/2026 a B3 é lida do armazém local (core.fonte_b3). Se o
+    # armazém não respondeu, os loaders caíram na cópia do Supabase congelada
+    # naquela data -- a tela diz isso em vez de mostrar dado velho calado. O
+    # lugar do aviso fica reservado aqui, no topo, mas ele só é decidido
+    # depois que a aba ativa carregou: as leituras da aba (demonstrações,
+    # histórico de múltiplos, preços) podem cair na reserva depois deste ponto.
+    slot_reserva = st.empty()
+
     if df_set.empty:
         aviso_lacuna(
             "Cadastro de setores vazio — o app não conseguiu ler o banco. "
@@ -3318,19 +3312,31 @@ def render() -> None:
     active = render_market_tabs(state_key="b3_active_tab", key_prefix="b3",
                                 itens=NAV_ITEMS_B3)
 
-    if active == 0:
-        _tab_empresas(df_set)
-    elif active == 1:
-        _tab_analise(df_set)
-    elif active == 2:
-        from views import portfolio_b3
+    try:
+        if active == 0:
+            _tab_empresas(df_set)
+        elif active == 1:
+            _tab_analise(df_set)
+        elif active == 2:
+            from views import portfolio_b3
 
-        portfolio_b3.render(show_header=False)
-    elif active == 3:
-        from views import analise_portfolio_b3
+            portfolio_b3.render(show_header=False)
+        elif active == 3:
+            from views import analise_portfolio_b3
 
-        analise_portfolio_b3.render(show_header=False)
-    else:
-        from views import carteira20_b3
+            analise_portfolio_b3.render(show_header=False)
+        else:
+            from views import carteira20_b3
 
-        carteira20_b3.render(show_header=False, cadastro=df_set)
+            carteira20_b3.render(show_header=False, cadastro=df_set)
+    finally:
+        # Também quando a aba para no meio (st.stop, erro): o que ela já leu
+        # da reserva continua na tela e precisa do aviso.
+        _aviso_fonte_reserva_b3(slot_reserva)
+
+
+def _aviso_fonte_reserva_b3(slot) -> None:
+    """Preenche o aviso do topo se alguma leitura da B3 caiu na cópia congelada."""
+    from design.componentes import aviso_fonte_reserva_b3
+
+    aviso_fonte_reserva_b3(slot)

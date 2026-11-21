@@ -33,6 +33,21 @@ Este módulo refaz essas quatro decisões safra a safra, point-in-time:
   líquido desconta o giro do rebalanceamento de abril com
   `CostConfig.brasil_pf_default()` -- compra E venda pagam corretagem e meia
   spread, e o IR entra como sensibilidade à parte (depende do porte).
+- **Safra sem carteira salvável é caixa (desde a 2.4.0; tetos desde a
+  2.6.0).** Quando a tela pediria revisão em vez de carteira -- por faltar
+  ativo para o cap OU porque os tetos de setor e de ciclo não fecham --, ou
+  quando nenhum segmento passa, o investidor fica em caixa rendendo a Selic
+  da vigência, e a safra entra na média como entrou na vida dele. A tela,
+  nesses casos, mostra uma carteira relaxada com o botão de salvar
+  desligado (`carteira_salvavel`): ela não vira carteira-modelo, e medir
+  esses pesos como se fossem a estratégia, ou tirar o ano da conta, é
+  escolher os anos. Os pesos relaxados ficam numa sensibilidade à parte
+  (`itens_da_cadeia(..., pesos_da_tela=True)`), nunca na manchete.
+  Ficam fora só as de aquecimento (antes da primeira safra em que algum
+  segmento foi aprovado, sem líder anterior) e as sem preço observado
+  (`itens_da_cadeia`). É a mesma regra da Seleção de FIIs
+  (`core.fii_validation.robust_optimizer_point_in_time_backtest`): período
+  sem carteira que se possa salvar ou publicar é caixa e conta.
 
 O que fica FORA, e por quê, é devolvido em `FORA_DO_PIT` e vai para o JSON e a
 tela: cada item ali é uma decisão da carteira de hoje que não dá para refazer
@@ -86,7 +101,30 @@ logger = logging.getLogger(__name__)
 #: (`core.b3_retrato_pit`, score 2.32.0); o substituto de qualquer veto -- da
 #: banda ou do portão medido -- passa a pular quem a guarda da safra exclui, e
 #: o excluído sai no fim, como no laço final da tela.
-VERSAO_MEDICAO = "oos-carteira-2.3.0"
+#: 2.4.0 (achado D1, 17/11/2026): safra sem carteira-modelo salvável -- poucos
+#: ativos para o cap ou nenhum segmento aprovado -- passa a ser CAIXA
+#: rendendo a Selic da vigência, e ENTRA na média. Até a 2.3.0 a inviável era
+#: medida com os pesos concentrados da carteira relaxada, que a tela mostra
+#: com o salvar desligado, e a sem segmento
+#: saía da média: as duas escolhiam os anos que contam. Safra sem preço de
+#: ninguém do universo (não mensurável) continua fora, e o aquecimento --
+#: antes da primeira safra com algum segmento aprovado -- também.
+#: 2.5.0 (achado D13, 17/11/2026): a janela da safra parte do FECHAMENTO de
+#: 31/03 (último pregão até o início da vigência, dentro da tolerância) e
+#: vai ao fechamento de 31/03 seguinte -- 12 meses, não 11; até a 2.4.0 o
+#: primeiro preço era o de 30/04 e abril ficava fora. A Selic do caixa e do
+#: benchmark passa a ser a REALIZADA mês a mês (`info_economica_mensal`),
+#: com a meta do ano como reserva nomeada mês a mês.
+#: 2.6.0 (unificação B3 × FII, 18/11/2026): a safra cujos tetos de setor e de
+#: ciclo não fecham (`exige_revisao` sem `inviavel`) também vira CAIXA. A
+#: tela desliga o salvar nos DOIS casos relaxados (`_rota_relaxada` de
+#: `views/portfolio_b3.py`), e até a 2.5.0 a medição só convertia o
+#: inviável no cap: a safra dos tetos era medida com pesos que a tela não
+#: deixa salvar, contra a própria regra D1. Os pesos relaxados que a tela
+#: mostra vão para a sensibilidade `sensibilidade_pesos_da_tela`.
+VERSAO_MEDICAO = "oos-carteira-2.6.0"
+#: Chave interna de `simular_custos` para a posição em caixa.
+_CAIXA = "__caixa__"
 CAMINHO_MEDICAO = Path(__file__).resolve().parents[1] / "data" / "oos_carteira_b3.json"
 
 #: Mesmo piso da view para a janela de validação valer: menos que 18 meses é
@@ -124,7 +162,9 @@ PORTAO_LLM = {
         "vetado; sem próximo no ranking, o segmento sai e seu orçamento vai "
         "para os demais) --, remonta com cap e tetos e fica com o veto que "
         "MAIS derruba o retorno BRUTO da safra ('veta o melhor', adversário) "
-        "e com o que MAIS o sobe ('veta o pior', favorável). No bruto são "
+        "e com o que MAIS o sobe ('veta o pior', favorável). O bruto comparado "
+        "é o que a média conta: opção que deixa a safra inviável ou sem "
+        "segmento rende a Selic do caixa, não os pesos que sobraram (D1). No bruto são "
         "limites estritos para qualquer portão que vete no máximo um nome por "
         "safra, e o sem-portão fica sempre entre eles. No líquido não são: o "
         "veto muda o giro, e os números líquidos dessas variantes são os dos "
@@ -505,21 +545,32 @@ def aplicar_portao_medido(segmentos: list[Segmento], avaliar, *,
 
 def escolher_veto(segmentos: list[Segmento], retornos: dict[str, float | None], *,
                   veta: str, cap: float, teto_setor: float,
-                  teto_ciclico: float, exclui: Exclui = None) -> dict:
+                  teto_ciclico: float, exclui: Exclui = None,
+                  caixa: float | None = None) -> dict:
     """O limite da banda do portão: o veto ÚNICO da safra que mais derruba
     (`veta="melhor"`, adversário) ou mais sobe (`veta="pior"`, favorável) o
-    retorno bruto da CARTEIRA montada.
+    rendimento da safra.
 
     Enumera todas as opções -- não vetar e vetar cada nome com peso --,
-    remonta com cap e tetos e escolhe pelo retorno bruto (`None` rende 0, a
-    regra de `retorno_da_safra`). Escolher pelo impacto, e não pelo maior
+    remonta com cap e tetos e escolhe pelo rendimento que a medição de fato
+    conta (`rendimento_contado`): o retorno bruto da carteira montada
+    (`None` rende 0, a regra de `retorno_da_safra`) ou, quando a opção não
+    dá carteira salvável (`carteira_salvavel`: inviável no cap, tetos que
+    não fecham ou sem pesos) e ``caixa`` é dado, o ``caixa`` --
+    a Selic da vigência, a regra D1 de `itens_da_cadeia`. Escolher antes da
+    conversão punha na ponta "favorável" um veto que deixava a carteira sem
+    ativos para o cap e acabava rendendo só a Selic, abaixo do sem-portão
+    (revisão do Codex no #763). Escolher pelo impacto, e não pelo maior
     retorno do vetado, é o que torna o limite estrito: o nome que mais rendeu
     pode ter peso pequeno ou um substituto que rendeu quase o mesmo. "Não
-    vetar" entra como opção, então no bruto vale sempre
+    vetar" entra como opção, então no rendimento contado vale sempre
     `adversário <= sem portão <= favorável`. Empate fica com não vetar e,
     entre vetos, com a ordem alfabética (determinístico). ``exclui`` é a
     guarda da safra: vale para o substituto e para o laço final, nas
-    mesmas condições do sem-portão."""
+    mesmas condições do sem-portão.
+
+    Devolve ``bruto`` (o retorno da carteira montada, mesmo que vire caixa)
+    e ``efetivo`` (o rendimento que decidiu a escolha)."""
     if veta not in ("melhor", "pior"):
         raise ValueError(f"veta deve ser 'melhor' ou 'pior', não {veta!r}")
 
@@ -531,13 +582,40 @@ def escolher_veto(segmentos: list[Segmento], retornos: dict[str, float | None], 
         itens, trocas = vetar_na_carteira(segmentos, vetado, exclui)
         cart = montar_carteira(itens, cap=cap, teto_setor=teto_setor,
                                teto_ciclico=teto_ciclico, exclui=exclui)
-        opcoes.append((_bruto(cart["pesos"]), i, {
-            "vetado": vetado, "trocas": trocas, "itens": itens, "carteira": cart}))
+        bruto = _bruto(cart["pesos"])
+        opcoes.append((rendimento_contado(cart, bruto, caixa), i, {
+            "vetado": vetado, "trocas": trocas, "itens": itens, "carteira": cart,
+            "bruto": bruto}))
     sinal = 1.0 if veta == "melhor" else -1.0
     # Arredondado: veto que não muda nada não pode vencer "não vetar" por
     # ruído de ponto flutuante da reprojeção.
-    bruto, _i, escolhida = min(opcoes, key=lambda o: (round(sinal * o[0], 12), o[1]))
-    return {**escolhida, "bruto": bruto}
+    efetivo, _i, escolhida = min(opcoes, key=lambda o: (round(sinal * o[0], 12), o[1]))
+    return {**escolhida, "efetivo": efetivo}
+
+
+def carteira_salvavel(pesos: dict | None, *, inviavel: bool,
+                      exige_revisao: bool) -> bool:
+    """A safra dá carteira-modelo que a tela deixa SALVAR? Ponto único da
+    regra D1, lido por `rendimento_contado` e `itens_da_cadeia`.
+
+    Espelha o botão de salvar de `views/portfolio_b3.py`
+    (``disabled=(not _portfolio_viavel) or _rota_relaxada``): sem pesos não
+    há carteira; inviável no cap ou com revisão exigida (tetos de setor e de
+    ciclo que não fecham) é a rota relaxada, mostrada com o salvar
+    desligado. Até a 2.5.0 só o inviável virava caixa -- a revisão por tetos
+    era medida com os pesos relaxados."""
+    return bool(pesos) and not inviavel and not exige_revisao
+
+
+def rendimento_contado(carteira: dict, bruto: float, caixa: float | None) -> float:
+    """O rendimento da safra que a medição conta: a Selic (``caixa``) quando
+    a carteira não é salvável (`carteira_salvavel`), senão o retorno bruto da
+    carteira. É a regra D1 de `itens_da_cadeia`, dita para quem compara
+    opções dentro da safra (a banda do portão)."""
+    salvavel = carteira_salvavel(
+        carteira.get("pesos"), inviavel=bool(carteira.get("inviavel")),
+        exige_revisao=bool(carteira.get("exige_revisao")))
+    return float(caixa) if (not salvavel and caixa is not None) else float(bruto)
 
 
 # ── piso de qualidade da safra ──────────────────────────────────────────────
@@ -660,6 +738,65 @@ def retorno_benchmark(serie: pd.Series | None, df_precos: pd.DataFrame,
 
 # ── custos do giro ──────────────────────────────────────────────────────────
 
+def primeira_resposta(linhas: list[dict]) -> int | None:
+    """A primeira safra em que a estratégia respondeu (algum peso): o fim do
+    aquecimento de `itens_da_cadeia`."""
+    return next((r["safra"] for r in linhas if r.get("pesos")), None)
+
+
+def itens_da_cadeia(linhas: list[dict], *, comeca_em: int | None = None,
+                    pesos_da_tela: bool = False) -> list[dict]:
+    """O que cada safra leva para `simular_custos` (ponto único da regra D1).
+
+    ``linhas`` em ordem de safra, cada uma com ``safra``, ``pesos``,
+    ``retornos``, ``inviavel_no_cap``, ``exige_revisao``, ``mensuravel`` e
+    ``selic``. ``pesos_da_tela=True`` é a SENSIBILIDADE: mede os pesos que a
+    tela mostra mesmo quando ela não deixa salvar (rota relaxada), e só a
+    safra sem pesos vira caixa -- o que a manchete media até a 2.3.0 no
+    inviável e até a 2.5.0 nos tetos.
+    ``comeca_em`` fixa o fim do aquecimento por fora -- a medição passa o da
+    estratégia sem portão às variantes, para que um veto que esvazia a
+    primeira safra a converta em caixa, como faria em qualquer outra, em vez
+    de tirá-la da média. Sem ele, vale `primeira_resposta(linhas)`.
+
+    - Aquecimento -- as safras ANTES da primeira em que a estratégia
+      respondeu (algum segmento aprovado, com pesos, montável ou não): fora.
+      Ali ainda não há líder anterior, backtest nem aprovação; a estratégia
+      não existia, não decidiu ficar em caixa. A primeira resposta inviável
+      no cap já é decisão -- a tela não deixaria salvar -- e vira caixa: até
+      o ajuste de 17/11 o aquecimento ia até a primeira MONTÁVEL e tirava da
+      conta justamente esse ano (2017 no Equilibrado, 2018 no Conservador).
+    - Não mensurável (nenhum preço do universo) ou sem Selic medida: fora --
+      não há mercado observado para comparar.
+    - Depois do aquecimento, sem carteira salvável (`carteira_salvavel`:
+      inviável no cap, tetos que não fecham ou nenhum segmento aprovado):
+      CAIXA a Selic da vigência, que é o que o investidor teria; a safra
+      conta.
+    - O resto: a carteira montada, com os retornos de cada papel.
+    """
+    def _montavel(r: dict) -> bool:
+        if pesos_da_tela:
+            return bool(r.get("pesos"))
+        return carteira_salvavel(
+            r.get("pesos"), inviavel=bool(r.get("inviavel_no_cap")),
+            exige_revisao=bool(r.get("exige_revisao")))
+
+    inicio = primeira_resposta(linhas) if comeca_em is None else comeca_em
+    out: list[dict] = []
+    for r in linhas:
+        safra = r["safra"]
+        comecou = inicio is not None and safra >= inicio
+        if not comecou or not r.get("mensuravel", True):
+            out.append({"safra": safra, "pesos": {}})
+        elif not _montavel(r):
+            selic = r.get("selic")
+            out.append({"safra": safra, "pesos": {}} if selic is None else
+                       {"safra": safra, "pesos": {}, "rendimento_caixa": float(selic)})
+        else:
+            out.append({"safra": safra, "pesos": r["pesos"], "retornos": r["retornos"]})
+    return out
+
+
 def simular_custos(safras: list[dict], cfg: CostConfig, *,
                    capital: float = CAPITAL_NOCIONAL) -> list[dict]:
     """Encadeia as safras com rebalanceamento anual em abril.
@@ -678,6 +815,11 @@ def simular_custos(safras: list[dict], cfg: CostConfig, *,
     (corretagem default zero).
 
     Safra sem carteira: o investidor fica em caixa; a seguinte parte de caixa.
+    Com ``"rendimento_caixa"`` no item (desde a oos-carteira-2.4.0, achado D1)
+    o caixa é uma posição medida: vende o que havia (corretagem, spread e IR
+    da venda, como num rebalanceamento), rende a taxa dada (a Selic da
+    vigência) e a safra sai ``medida`` com ``"caixa": True``. Sem a chave, o
+    comportamento antigo: valor parado, safra fora (``medida: False``).
     """
     saida: list[dict] = []
     valor = float(capital)
@@ -689,13 +831,21 @@ def simular_custos(safras: list[dict], cfg: CostConfig, *,
     prejuizo = 0.0
     for s in safras:
         pesos = s.get("pesos") or {}
-        if not pesos:
+        caixa = s.get("rendimento_caixa")
+        if not pesos and caixa is None:
             valor = sum(pos.values()) if pos else valor
             valor_ir = sum(pos_ir.values()) if pos_ir else valor_ir
             pos, base, pos_ir, base_ir = {}, {}, {}, {}
             saida.append({"safra": s["safra"], "medida": False})
             continue
-        rets = {tk: float(s["retornos"].get(tk) or 0.0) for tk in pesos}
+        if not pesos:
+            # Caixa a uma taxa: a venda total é o rebalanceamento para um
+            # "papel" que rende ``caixa``. Some no ano seguinte (sem base de
+            # IR, sem custo de saída: resgate de título pós-fixado).
+            pesos = {_CAIXA: 1.0}
+            rets = {_CAIXA: float(caixa)}
+        else:
+            rets = {tk: float(s["retornos"].get(tk) or 0.0) for tk in pesos}
         bruto = sum(w * rets[tk] for tk, w in pesos.items())
 
         def _rebalancear(valor_atual, posicoes, bases, com_ir):
@@ -705,6 +855,8 @@ def simular_custos(safras: list[dict], cfg: CostConfig, *,
             vendas = 0.0
             realizado = 0.0
             for tk in set(posicoes) | set(alvo):
+                if tk == _CAIXA:
+                    continue  # aplicar e resgatar o caixa não paga bolsa nem IR de ações
                 atual = posicoes.get(tk, 0.0)
                 delta = alvo.get(tk, 0.0) - atual
                 if delta > 1e-9:
@@ -742,8 +894,10 @@ def simular_custos(safras: list[dict], cfg: CostConfig, *,
                 novas_bases[tk] = (b_mant + comprado) * fator
             # Giro = fração comprada (um lado): 100% na primeira safra e numa
             # troca total, 0% quando a carteira-alvo é a que derivou.
+            # O caixa não conta: ir para o caixa é venda, sair dele é a compra
+            # das ações que entram.
             giro = sum(max(alvo.get(tk, 0.0) - posicoes.get(tk, 0.0), 0.0)
-                       for tk in set(posicoes) | set(alvo)) / valor_atual
+                       for tk in set(posicoes) | set(alvo) if tk != _CAIXA) / valor_atual
             return novas_pos, novas_bases, custo, ir, giro, investido
 
         pos, base, custo, _, giro, investido = _rebalancear(valor, pos, base, False)
@@ -753,12 +907,15 @@ def simular_custos(safras: list[dict], cfg: CostConfig, *,
         pos_ir, base_ir, custo_i, ir, _, _ = _rebalancear(valor_ir, pos_ir, base_ir, True)
         liquido_ir = sum(pos_ir.values()) / valor_ir - 1.0
         valor_ir = sum(pos_ir.values())
-        saida.append({
+        item = {
             "safra": s["safra"], "medida": True,
             "bruto": bruto, "liquido": liquido, "liquido_com_ir": liquido_ir,
             "custo_pct": custo / valor_ini, "ir_pct": ir / max(valor_ir, 1e-12),
             "giro": giro,
-        })
+        }
+        if _CAIXA in pesos:
+            item["caixa"] = True
+        saida.append(item)
     return saida
 
 
@@ -788,8 +945,12 @@ def resumir(linhas: list[dict], chave: str) -> dict:
     }
 
 
-def leitura_honesta(resumo: dict, rotulo: str = "pesos iguais") -> str:
-    """Uma frase que não promete mais do que o intervalo sustenta."""
+def leitura_honesta(resumo: dict, rotulo: str = "pesos iguais", *,
+                    alternativa: str = "dividir igualmente entre as empresas") -> str:
+    """Uma frase que não promete mais do que o intervalo sustenta.
+
+    ``alternativa``: o que o intervalo que cruza o zero não distingue da
+    carteira. A carteira de safras FII passa "comprar o IFIX"."""
     n = resumo.get("n_safras") or 0
     media = resumo.get("media")
     lo, hi = (resumo.get("ic95") or [None, None])
@@ -806,7 +967,7 @@ def leitura_honesta(resumo: dict, rotulo: str = "pesos iguais") -> str:
                     f"seria {sem_melhor * 100:+.1f} pp.")
     if lo <= 0 <= hi:
         return base + (" O intervalo cruza o zero: a medição NÃO distingue esta "
-                       "carteira de dividir igualmente entre as empresas.") + robustez
+                       f"carteira de {alternativa}.") + robustez
     if hi < 0:
         return base + " O intervalo está todo abaixo de zero: a carteira perdeu." + robustez
     return base + " O intervalo exclui o zero." + robustez
@@ -847,7 +1008,8 @@ __all__ = [
     "metricas_pit", "aprova_economico", "selecao_do_segmento",
     "substituto_no_segmento", "candidatos_a_veto", "tickers_da_banda",
     "vetar_na_carteira", "aplicar_portao_medido", "escolher_veto",
-    "aplicar_piso", "montar_carteira", "retornos_por_ticker",
+    "aplicar_piso", "montar_carteira", "retornos_por_ticker", "itens_da_cadeia",
+    "primeira_resposta", "carteira_salvavel", "rendimento_contado",
     "retorno_benchmark", "simular_custos", "resumir", "leitura_honesta",
     "carregar", "vencida",
 ]

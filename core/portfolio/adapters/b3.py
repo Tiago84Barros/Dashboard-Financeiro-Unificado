@@ -66,6 +66,7 @@ def build_snapshots(items: list[dict], *, model_id: str, params: dict,
                 "fundamentals": mult[-1] if mult else {},
                 "metrics": {
                     "score": item.get("score"),
+                    "score_sem_par": bool(item.get("score_sem_par")),
                     "alpha_selic": item.get("alpha_selic"),
                     "alpha_ew": item.get("alpha_ew"),
                     "rank_score": item.get("rank_score"),

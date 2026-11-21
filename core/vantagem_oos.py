@@ -235,8 +235,8 @@ def avaliar(motor: str, versao_atual: str,
              f"em {n} periodos, medido em {quando}")
     if low > 0:
         return APROVADO, faixa
-    return REPROVADO, (f"{faixa} -- atravessa o zero, entao a vantagem nao e "
-                       f"distinguivel de acaso{_poder_preditivo(med)}")
+    return REPROVADO, (f"{faixa} -- atravessa o zero, entao o acaso pode explicar "
+                       f"a vantagem{_poder_preditivo(med)}")
 
 
 def rank_ic_significativo(med: dict[str, Any]) -> tuple[float, float] | None:

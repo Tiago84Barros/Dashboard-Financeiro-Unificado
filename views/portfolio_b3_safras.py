@@ -5,7 +5,10 @@ Renderizacao apenas: toda a aritmetica de safra mora em core/b3_safras.py.
 views/portfolio_b3.py ja tem 4.400+ linhas e nao recebe logica nova.
 
 `_resumo_safras`, `_legenda_resumo`, `_tabela_para_exibicao`,
-`_column_config_retorno`, `_grafico_barras` e `_expectativa` sao as pecas
+`_column_config_retorno`, `_grafico_barras`, `series_medidas`,
+`dados_das_barras_medidas`, `vitorias_sobre_pesos_iguais`,
+`legenda_barras_medidas`, `dados_da_curva_acumulada`, `legenda_medidas`,
+`fontes_medidas_da_expectativa` e `_expectativa` sao as pecas
 de logica deste modulo, e sao deliberadamente
 puras (sem streamlit, sem banco) para poder ser testadas direto — nesta
 base, teste via Streamlit AppTest vaza atribuicao de modulo e falha só
@@ -24,7 +27,15 @@ import plotly.express as px
 import streamlit as st
 
 from core.b3_pooled_evidence import MIN_ATIVOS_ANO
-from core.b3_safras import MIN_SAFRAS_LOO, tabela_de_safras
+from core.b3_safras import (
+    MIN_SAFRAS_LOO,
+    acumulado_das_safras,
+    fmt_ao_ano,
+    fmt_reais,
+    legenda_acumulado,
+    rotulos_do_caminho,
+    tabela_de_safras,
+)
 from core.glossario import leitura_rank_ic
 from design.componentes import card_metrica, explicar_rank_ic
 from design.lacunas import aviso_lacuna, detalhe_tecnico
@@ -262,14 +273,574 @@ def _grafico_barras(completas: pd.DataFrame):
     return fig
 
 
+# ── Gráfico (ano a ano e acumulado) pelas carteiras escolhidas ano a ano ──
+#
+# `tabela_de_safras` reconstrói cada safra com os segmentos que o portão aprova
+# HOJE, e o portão de hoje olha o histórico inteiro: escolher o segmento
+# sabendo que ele deu certo infla a estratégia e os pesos iguais (medido em
+# 20/11/2026: R$ 1 viraria ~10,2 contra ~3,3 com todos os segmentos). O
+# gráfico, a tabela e os cartões do topo não usam essa reconstrução. Eles leem
+# as medições fora da amostra gravadas no repositório, em que cada safra usa
+# a carteira escolhida em abril daquele ano, só com o que se sabia então:
+#
+# - `data/oos_carteira_b3.json` -- a líder de cada segmento, com o portão e o
+#   piso daquele ano, sem o portão de LLM (variante ``sem_portao``);
+# - `data/oos_nota_fatores_b3.json` -- a carteira ampla de nota + fatores.
+#
+# As duas medem contra o MESMO universo de pesos iguais; se o arquivo de uma
+# divergir do da outra, nota + fatores sai do gráfico com aviso, porque
+# linhas em réguas diferentes não se comparam.
+
+_PERFIL_MEDIDO = "Equilibrado (padrão)"
+_TOLERANCIA_REGUA = 1e-6
+_COR_IBOV = "#A78BFA"
+
+# (chave, rótulo, cor): uma linha e um cartão por série.
+_SERIES_ACUMULADO = (
+    ("concentrada", "Líder de cada segmento", _COR_POS),
+    ("nota_fatores", "Nota + fatores", _COR_INF),
+    ("equal_weight", "Pesos iguais", _COR_NEU),
+    ("selic", "Selic", _COR_ALT),
+    ("ibovespa", "Ibovespa", _COR_IBOV),
+)
+
+_AJUDA_ACUMULADO = {
+    "concentrada": "A líder de cada segmento aprovado, escolhida em abril de cada "
+                   "ano com os dados daquele ano. Líquida do custo do giro, sem IR.",
+    "nota_fatores": "Tira os 30% piores pela nota + fatores e divide igual entre "
+                    "o resto, refeita em abril de cada ano. Líquida do custo do "
+                    "giro, sem IR.",
+    "equal_weight": "Divide igual entre todas as ações do universo daquele ano.",
+    "selic": "Selic realizada de abril a março; mês sem dado mensal usa a "
+             "meta do ano, e a legenda nomeia esses meses.",
+    "ibovespa": "Ibovespa pelo BOVA11, de abril a março.",
+}
+
+_CARTAO_ACUMULADO = {
+    "concentrada": "R$ 1 na líder de cada segmento",
+    "nota_fatores": "R$ 1 em nota + fatores",
+    "equal_weight": "R$ 1 em pesos iguais",
+    "selic": "R$ 1 na Selic",
+    "ibovespa": "R$ 1 no Ibovespa",
+}
+
+
+def _fracao(valor) -> float | None:
+    """Retorno gravado em fração, ou None se faltar ou não for finito."""
+    try:
+        v = float(valor)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
+
+
+def series_medidas(carteira: dict | None, notafat: dict | None) -> dict:
+    """Séries do acumulado lidas das medições gravadas, safra a safra.
+
+    ``carteira`` é `data/oos_carteira_b3.json` e ``notafat`` é
+    `data/oos_nota_fatores_b3.json`, já carregados. Cada safra usa a
+    carteira escolhida naquele abril: nada aqui olha os segmentos que o
+    portão aprova hoje.
+
+    Devolve ``{"series", "perfil", "em_caixa", "selic_pela_meta", "avisos"}``.
+    ``series`` mapeia a chave de `_SERIES_ACUMULADO` para ``{safra: retorno em
+    fração}``; ``em_caixa`` lista as safras em que a líder de cada segmento
+    não coube nas regras e ficou na Selic; ``selic_pela_meta`` mapeia a safra
+    para os meses em que a Selic gravada usou a meta do ano, por falta do
+    dado mensal (só safras com algum mês assim); ``avisos`` diz o que saiu e
+    por quê.
+    """
+    perfil = (notafat or {}).get("perfil") or _PERFIL_MEDIDO
+    avisos: list[str] = []
+    series: dict[str, dict[int, float | None]] = {}
+
+    variante = ((((carteira or {}).get("perfis") or {}).get(perfil) or {})
+                .get("variantes") or {}).get("sem_portao") or {}
+    linhas_c = [s for s in variante.get("safras") or []
+                if isinstance(s, dict) and s.get("liquido") is not None]
+    if linhas_c:
+        for chave, campo in (("concentrada", "liquido"), ("equal_weight", "ew"),
+                             ("selic", "selic"), ("ibovespa", "ibov")):
+            series[chave] = {int(s["safra"]): _fracao(s.get(campo)) for s in linhas_c}
+    elif carteira:
+        avisos.append(f"A medição da líder de cada segmento não tem o perfil "
+                      f"{perfil}; a linha dela ficou de fora.")
+
+    linhas_n = [s for s in ((notafat or {}).get("nota_fatores") or {}).get("safras") or []
+                if isinstance(s, dict) and s.get("liquido") is not None]
+    if linhas_n:
+        nf_serie = {int(s["safra"]): _fracao(s.get("liquido")) for s in linhas_n}
+        nf_ew = {int(s["safra"]): _fracao(s.get("equal_weight")) for s in linhas_n}
+        ew = series.get("equal_weight")
+        if ew is None:
+            series["nota_fatores"] = nf_serie
+            series["equal_weight"] = nf_ew
+        else:
+            comuns = [a for a in nf_ew if nf_ew[a] is not None and ew.get(a) is not None]
+            iguais = bool(comuns) and all(
+                abs(nf_ew[a] - ew[a]) <= _TOLERANCIA_REGUA for a in comuns)
+            if iguais:
+                series["nota_fatores"] = nf_serie
+            else:
+                avisos.append("As duas medições gravadas usam pesos iguais "
+                              "diferentes; nota + fatores ficou fora do gráfico "
+                              "até as duas serem refeitas juntas.")
+
+    em_caixa = (sorted(int(a) for a in variante.get("safras_em_caixa") or [])
+                if "concentrada" in series else [])
+    selic_pela_meta = {int(s["safra"]): sorted(str(m) for m in s["selic_meses_pela_meta"])
+                       for s in linhas_c if s.get("selic_meses_pela_meta")}
+    detalhe_lider = {
+        int(s["safra"]): {"bruto": _fracao(s.get("bruto")),
+                          "com_ir": _fracao(s.get("liquido_com_ir")),
+                          "giro": _fracao(s.get("giro")),
+                          "custo": _fracao(s.get("custo")),
+                          "n_ativos": s.get("n_ativos"),
+                          "maiores": str(s.get("maiores") or "")}
+        for s in linhas_c
+    }
+    sem_carteira = (sorted(int(a) for a in variante.get("safras_sem_carteira") or [])
+                    if "concentrada" in series else [])
+    return {"series": series, "perfil": perfil if series else None,
+            "em_caixa": em_caixa, "selic_pela_meta": selic_pela_meta,
+            "detalhe_lider": detalhe_lider, "sem_carteira": sem_carteira,
+            "custos": (carteira or {}).get("custos") if linhas_c else None,
+            "avisos": avisos}
+
+
+def frase_selic_pela_meta(medidas: dict, safras) -> str:
+    """Nomeia os meses em que a Selic gravada usou a meta do ano, só nas
+    ``safras`` mostradas. Vazia quando todas usaram a Selic realizada."""
+    pela_meta = medidas.get("selic_pela_meta") or {}
+    partes = [f"na safra {a}, {' e '.join(pela_meta[a])}"
+              for a in sorted(set(safras)) if pela_meta.get(a)]
+    if not partes:
+        return ""
+    return (" Sem o dado mensal, a Selic usou a meta do ano em: "
+            + "; ".join(partes) + ".")
+
+
+# ── Tabela e cartões do topo pelas carteiras escolhidas ano a ano ──
+#
+# Mesma fonte do gráfico (`series_medidas`): cada safra com a carteira
+# escolhida em abril daquele ano. A reconstrução com os segmentos de hoje
+# (`tabela_de_safras`) só aparece quando não há medição gravada da líder.
+
+_COLUNAS_MEDIDAS_PCT = [
+    "Líder líquida (%)", "Líder − Selic (pp)", "Líder − pesos iguais (pp)",
+    "Nota + fatores (%)", "Pesos iguais (%)", "Selic (%)", "Ibovespa (%)",
+    "Líder bruta (%)", "Líder com IR (%)", "Giro (%)", "Custo do giro (pp)",
+]
+_COLUNAS_MEDIDAS = (["Safra"] + _COLUNAS_MEDIDAS_PCT
+                    + ["Ações", "Maiores posições"])
+
+
+def _pct(valor: float | None) -> float:
+    return float("nan") if valor is None else valor * 100.0
+
+
+def tabela_medida(medidas: dict) -> pd.DataFrame:
+    """Uma linha por safra com a líder de cada segmento medida, lida das
+    medições gravadas (``medidas``, de `series_medidas`). Retornos em %,
+    diferenças em pontos percentuais; célula sem valor fica NaN. Vazia
+    quando não há medição da líder."""
+    series = medidas.get("series") or {}
+    lider = series.get("concentrada") or {}
+    detalhe = medidas.get("detalhe_lider") or {}
+    linhas = []
+    for safra in sorted(a for a, v in lider.items() if v is not None):
+        liq = lider[safra]
+        sel = (series.get("selic") or {}).get(safra)
+        ew = (series.get("equal_weight") or {}).get(safra)
+        d = detalhe.get(safra) or {}
+        n_ativos = d.get("n_ativos")
+        linhas.append({
+            "Safra": int(safra),
+            "Líder líquida (%)": _pct(liq),
+            "Líder − Selic (pp)": _pct(None if sel is None else liq - sel),
+            "Líder − pesos iguais (pp)": _pct(None if ew is None else liq - ew),
+            "Nota + fatores (%)": _pct((series.get("nota_fatores") or {}).get(safra)),
+            "Pesos iguais (%)": _pct(ew),
+            "Selic (%)": _pct(sel),
+            "Ibovespa (%)": _pct((series.get("ibovespa") or {}).get(safra)),
+            "Líder bruta (%)": _pct(d.get("bruto")),
+            "Líder com IR (%)": _pct(d.get("com_ir")),
+            "Giro (%)": _pct(d.get("giro")),
+            "Custo do giro (pp)": _pct(d.get("custo")),
+            "Ações": int(n_ativos) if isinstance(n_ativos, (int, float)) else None,
+            "Maiores posições": d.get("maiores") or "",
+        })
+    return pd.DataFrame(linhas, columns=_COLUNAS_MEDIDAS)
+
+
+def resumo_medido(tabela: pd.DataFrame) -> dict:
+    """O que os três cartões afirmam, das safras da ``tabela_medida`` que
+    têm a líder e a Selic: quantas são, a média simples da diferença para a
+    Selic (líquida, e também bruta e com IR) e quantas ficaram acima dela."""
+    base = tabela.dropna(subset=["Líder − Selic (pp)"]) if not tabela.empty else tabela
+    if base.empty:
+        return {"n_medidas": 0, "media_excesso": None, "media_excesso_bruto": None,
+                "media_excesso_com_ir": None, "venceu": 0,
+                "safra_min": None, "safra_max": None}
+
+    def _media(serie: pd.Series) -> float | None:
+        serie = serie.dropna()
+        return float(serie.mean()) if not serie.empty else None
+
+    return {
+        "n_medidas": len(base),
+        "media_excesso": float(base["Líder − Selic (pp)"].mean()),
+        "media_excesso_bruto": _media(base["Líder bruta (%)"] - base["Selic (%)"]),
+        "media_excesso_com_ir": _media(base["Líder com IR (%)"] - base["Selic (%)"]),
+        "venceu": int((base["Líder − Selic (pp)"] > 0).sum()),
+        "safra_min": int(base["Safra"].min()),
+        "safra_max": int(base["Safra"].max()),
+    }
+
+
+def legenda_tabela_medida(medidas: dict, resumo: dict) -> str:
+    """Frase acima dos cartões: quais safras, de onde vem cada carteira e o
+    que ficou de fora (safras sem carteira, caixa, Selic pela meta, safra
+    vigente)."""
+    n = resumo["n_medidas"]
+    if n:
+        txt = (f"{n} safra(s) medida(s), de {resumo['safra_min']} a "
+               f"{resumo['safra_max']}.")
+    else:
+        txt = "Nenhuma safra medida ainda."
+    txt += (" Cada safra vai de abril a março e usa a carteira escolhida em "
+            "abril daquele ano, com os segmentos aprovados e os dados que "
+            f"existiam então (perfil {medidas.get('perfil') or _PERFIL_MEDIDO}).")
+    sem = medidas.get("sem_carteira") or []
+    if sem:
+        txt += (f" Em {', '.join(str(a) for a in sem)}, nenhum segmento passou "
+                "nas regras daquele ano, e essas safras ficam fora.")
+    caixa = medidas.get("em_caixa") or []
+    if caixa:
+        txt += (f" Em {', '.join(str(a) for a in caixa)}, a líder de cada "
+                "segmento não coube nas regras e ficou na Selic.")
+    txt += (" A safra vigente ainda não fechou e não entra aqui.")
+    series = medidas.get("series") or {}
+    txt += frase_selic_pela_meta(
+        medidas, [a for a, v in (series.get("concentrada") or {}).items()
+                  if v is not None])
+    return txt
+
+
+def premissas_medidas(medidas: dict) -> str:
+    """Premissas de custo e IR gravadas com a medição da líder."""
+    custos = medidas.get("custos") or {}
+    partes = []
+    if custos.get("cobrado"):
+        partes.append(f"Custo do giro: {custos['cobrado']}")
+    if custos.get("spread_bps_large_cap") is not None:
+        partes.append(f"spread de {custos['spread_bps_large_cap']:g} bps (large "
+                      f"cap) e {custos.get('spread_bps_demais', 0):g} bps (demais)")
+    if custos.get("ir"):
+        partes.append(f"IR (coluna \"com IR\"): {custos['ir']}")
+    if custos.get("benchmarks"):
+        partes.append(f"Réguas: {custos['benchmarks']}")
+    return ("; ".join(partes) + ".") if partes else (
+        "A medição gravada não traz as premissas de custo.")
+
+
+def _column_config_medida() -> dict:
+    """Uma casa decimal nas colunas numéricas, sem mudar o dtype."""
+    cfg = {col: st.column_config.NumberColumn(col, format=_FORMATO_TABELA)
+           for col in _COLUNAS_MEDIDAS_PCT}
+    cfg["Safra"] = st.column_config.NumberColumn("Safra", format="%d")
+    cfg["Ações"] = st.column_config.NumberColumn("Ações", format="%d")
+    return cfg
+
+
+def legenda_colunas_medida(bloco3_medido: bool) -> str:
+    """Legenda sob a tabela medida. A última frase diz de onde o Bloco 3
+    ("O que esperar da safra vigente") tira os números: com as fontes
+    medidas ele usa as carteiras de cada abril, e só sem elas volta à
+    reconstrução com os segmentos aprovados hoje."""
+    txt = ("Líder líquida = bruta − custo do giro, sem IR, como no gráfico. "
+           "\"Com IR\" desconta também o imposto da troca de abril. Pesos "
+           "iguais, Selic e Ibovespa seguem brutos.")
+    if bloco3_medido:
+        return txt + (" O bloco \"O que esperar da safra vigente\", mais "
+                      "abaixo, também usa a carteira escolhida em cada abril.")
+    return txt + (" O bloco \"O que esperar da safra vigente\", mais abaixo, "
+                  "ainda usa em parte a reconstrução com os segmentos "
+                  "aprovados hoje, e diz onde.")
+
+
+def _render_topo_medido(medidas: dict, tabela_m: pd.DataFrame,
+                        bloco3_medido: bool) -> None:
+    """Legenda, os três cartões e a tabela das safras medidas."""
+    resumo = resumo_medido(tabela_m)
+    st.caption(legenda_tabela_medida(medidas, resumo))
+    cols = st.columns(3)
+    with cols[0]:
+        card_metrica("Safras medidas", f"{resumo['n_medidas']}",
+                     ajuda="Safras de abril a março já fechadas, cada uma com a "
+                           "carteira escolhida em abril daquele ano")
+    if resumo["n_medidas"]:
+        media = resumo["media_excesso"]
+        extras = []
+        if resumo["media_excesso_bruto"] is not None:
+            extras.append(f"bruto: {resumo['media_excesso_bruto']:+.1f} pp")
+        if resumo["media_excesso_com_ir"] is not None:
+            extras.append(f"com IR: {resumo['media_excesso_com_ir']:+.1f} pp")
+        with cols[1]:
+            card_metrica("Excesso médio s/ Selic (líquido)", f"{media:+.1f} pp",
+                         positivo=media > 0,
+                         ajuda=("Média simples das safras da líder de cada "
+                                "segmento, líquida do custo do giro, sem IR"
+                                + (f" ({'; '.join(extras)})" if extras else "")))
+        with cols[2]:
+            card_metrica("Safras acima da Selic",
+                         f"{resumo['venceu']} de {resumo['n_medidas']}",
+                         ajuda="Contagem, não significância")
+    st.dataframe(tabela_m, width="stretch", hide_index=True,
+                 column_config=_column_config_medida())
+    st.caption(legenda_colunas_medida(bloco3_medido))
+    detalhe_tecnico(premissas_medidas(medidas),
+                    codigo="portfolio_b3.safras_premissas_medidas")
+
+
+_VISAO_ANUAL = "Ano a ano"
+_VISAO_ACUMULADA = "Acumulado (R$ 1)"
+
+
+def dados_das_barras_medidas(medidas: dict) -> pd.DataFrame:
+    """Barras do ano a ano: uma linha por (safra, série) com o retorno da
+    safra em %, lido das medições gravadas (``medidas``, de
+    `series_medidas`). Safra sem valor numa série não ganha barra nela."""
+    colunas = ["Safra", "Série", "Retorno da safra (%)"]
+    series = medidas.get("series") or {}
+    linhas = []
+    for chave, rotulo, _cor in _SERIES_ACUMULADO:
+        for safra, valor in sorted((series.get(chave) or {}).items()):
+            if valor is None:
+                continue
+            linhas.append({"Safra": int(safra), "Série": rotulo,
+                           "Retorno da safra (%)": valor * 100.0})
+    return pd.DataFrame(linhas, columns=colunas)
+
+
+def _grafico_barras_medidas(medidas: dict):
+    """Barras por safra das carteiras escolhidas ano a ano e das réguas."""
+    barras = dados_das_barras_medidas(medidas)
+    cores = {rotulo: cor for _chave, rotulo, cor in _SERIES_ACUMULADO}
+    ordem = [rotulo for _chave, rotulo, _cor in _SERIES_ACUMULADO]
+    fig = px.bar(barras, x="Safra", y="Retorno da safra (%)", color="Série",
+                 barmode="group", color_discrete_map=cores,
+                 category_orders={"Série": ordem})
+    fig.update_traces(
+        hovertemplate="Safra %{x}: %{y:.1f}%<extra>%{fullData.name}</extra>")
+    fig.update_layout(**_plot_layout(380))
+    fig.update_xaxes(type="category")
+    return fig
+
+
+def vitorias_sobre_pesos_iguais(medidas: dict) -> dict[str, tuple[int, int]]:
+    """Para cada carteira, em quantas safras ela rendeu mais que os pesos
+    iguais, entre as safras em que as duas têm valor: ``{chave: (venceu, n)}``.
+    Contagem, não significância."""
+    series = medidas.get("series") or {}
+    ew = series.get("equal_weight") or {}
+    saida = {}
+    for chave in ("concentrada", "nota_fatores"):
+        serie = series.get(chave) or {}
+        comuns = [a for a, v in serie.items()
+                  if v is not None and ew.get(a) is not None]
+        if comuns:
+            saida[chave] = (sum(1 for a in comuns if serie[a] > ew[a]), len(comuns))
+    return saida
+
+
+def legenda_barras_medidas(medidas: dict) -> str:
+    """Frase abaixo das barras: de onde vem cada barra, o que cada série
+    desconta, a contagem contra os pesos iguais e o caixa."""
+    txt = ("Cada barra é o retorno de uma safra, de abril a março, com a "
+           "carteira escolhida em abril daquele ano, com os segmentos aprovados "
+           "e os dados que existiam então (perfil "
+           f"{medidas.get('perfil') or _PERFIL_MEDIDO}). As carteiras são "
+           "líquidas do custo do giro, sem IR; pesos iguais, Selic e Ibovespa, "
+           "brutos.")
+    nomes = {"concentrada": "A líder de cada segmento", "nota_fatores": "nota + fatores"}
+    partes = [f"{nomes[k]} em {v} de {n}"
+              for k, (v, n) in vitorias_sobre_pesos_iguais(medidas).items()]
+    if partes:
+        txt += (" Rendeu mais que os pesos iguais: " + "; ".join(partes)
+                + " safras (contagem, não prova).")
+    series = medidas.get("series") or {}
+    caixa = [a for a in medidas.get("em_caixa") or []
+             if (series.get("concentrada") or {}).get(a) is not None]
+    if caixa:
+        lista = ", ".join(str(a) for a in caixa)
+        txt += (f" Em {lista}, a líder de cada segmento não coube nas regras e "
+                f"ficou na Selic.")
+    txt += frase_selic_pela_meta(
+        medidas, [a for a, v in (series.get("selic") or {}).items() if v is not None])
+    return txt
+
+
+def dados_da_curva_acumulada(acum: dict) -> pd.DataFrame:
+    """Pontos do gráfico acumulado: R$ 1 em abril da primeira safra e o
+    valor ao fim de cada safra usada (março do ano seguinte).
+
+    Sai de ``acumulado_das_safras``, a mesma conta dos cartões: o último
+    ponto de cada série é o ``valor_final`` do cartão. Safra pulada (sem
+    retorno em alguma série) não ganha ponto; a legenda já a nomeia.
+    """
+    colunas = ["Data", "Série", "Valor de R$ 1"]
+    if not acum.get("safras"):
+        return pd.DataFrame(columns=colunas)
+    datas = rotulos_do_caminho(acum)
+    linhas = []
+    for chave, rotulo, _cor in _SERIES_ACUMULADO:
+        serie = acum["series"].get(chave)
+        if not serie:
+            continue
+        for data, valor in zip(datas, [1.0] + list(serie["caminho"])):
+            linhas.append({"Data": data, "Série": rotulo, "Valor de R$ 1": valor})
+    return pd.DataFrame(linhas, columns=colunas)
+
+
+def _grafico_acumulado(acum: dict):
+    """Uma linha por série com o R$ 1 encadeado safra a safra."""
+    pontos = dados_da_curva_acumulada(acum)
+    cores = {rotulo: cor for _chave, rotulo, cor in _SERIES_ACUMULADO}
+    fig = px.line(pontos, x="Data", y="Valor de R$ 1", color="Série",
+                  markers=True, color_discrete_map=cores)
+    fig.update_traces(hovertemplate="%{x}: R$ %{y:.2f}<extra>%{fullData.name}</extra>")
+    fig.update_layout(**_plot_layout(380))
+    fig.update_yaxes(tickprefix="R$ ", tickformat=".2f")
+    fig.update_xaxes(type="category")
+    return fig
+
+
+def legenda_medidas(acum: dict, medidas: dict) -> str:
+    """Frase abaixo dos cartões: de onde vêm as carteiras e o que cada
+    série desconta, mais a legenda comum do acumulado."""
+    txt = (f"Cada ano usa a carteira escolhida em abril daquele ano, com os "
+           f"segmentos aprovados e os dados que existiam então (perfil "
+           f"{medidas.get('perfil') or _PERFIL_MEDIDO}). ")
+    txt += legenda_acumulado(
+        acum, base="as carteiras líquidas do custo do giro, sem IR; pesos "
+                   "iguais, Selic e Ibovespa brutos")
+    usadas = set(acum.get("safras") or [])
+    caixa = [a for a in medidas.get("em_caixa") or [] if a in usadas]
+    if caixa:
+        lista = ", ".join(str(a) for a in caixa)
+        txt += (f" Em {lista}, a líder de cada segmento não coube nas regras e "
+                f"ficou na Selic.")
+    txt += frase_selic_pela_meta(medidas, usadas)
+    return txt
+
+
+def _render_acumulado(acum: dict, medidas: dict) -> None:
+    """Cartões do R$ 1 encadeado, um por série, e a legenda."""
+    if not acum["n"]:
+        return
+    presentes = [k for k, _r, _c in _SERIES_ACUMULADO if k in acum["series"]]
+    cols = st.columns(len(presentes))
+    for col, chave in zip(cols, presentes):
+        s = acum["series"][chave]
+        with col:
+            card_metrica(_CARTAO_ACUMULADO[chave], fmt_reais(s["valor_final"]),
+                         delta=fmt_ao_ano(s["anual"]),
+                         ajuda=_AJUDA_ACUMULADO[chave]
+                         + (frase_selic_pela_meta(medidas, acum.get("safras") or [])
+                            if chave == "selic" else "")
+                         + " Quanto R$ 1 vira reaplicado a cada abril, e a taxa "
+                           "composta ao ano.")
+    st.caption(legenda_medidas(acum, medidas))
+
+
+def _carregar_medidas() -> dict:
+    """Lê as duas medições gravadas e diz se alguma está vencida."""
+    import core.b3_nota_fatores as nf
+    import core.b3_oos_carteira as oos
+    from core.b3_methodology import SCORE_VERSION
+    from core.b3_portfolio_presets import VERSION as PRESETS_VERSION
+    from views.portfolio_b3_nota_fatores import CAMINHO_MEDICAO as CAMINHO_NF
+
+    carteira = oos.carregar(oos.CAMINHO_MEDICAO)
+    notafat = oos.carregar(CAMINHO_NF)
+    medidas = series_medidas(carteira, notafat)
+    for nome, dados, versao in (("líder de cada segmento", carteira, oos.VERSAO_MEDICAO),
+                                ("nota + fatores", notafat, nf.VERSAO)):
+        if not dados:
+            continue
+        motivos = oos.vencida(dados, SCORE_VERSION, PRESETS_VERSION,
+                              versao_medicao=versao)
+        if motivos:
+            medidas["avisos"].append(
+                f"A medição de {nome} foi gravada com outra versão do código "
+                f"({'; '.join(motivos)}). A linha mostra o que foi medido então.")
+    return medidas
+
+
+def _render_grafico_safras(completas: pd.DataFrame, medidas: dict) -> None:
+    """Um gráfico só, com a escolha entre cada safra sozinha (barras) e o
+    R$ 1 encadeado pelas carteiras escolhidas ano a ano (linha).
+
+    As duas visões saem das medições gravadas (``medidas``, de
+    `series_medidas`): cada safra com a carteira escolhida naquele abril.
+    Sem medição nenhuma, as barras caem para a tabela acima (segmentos de
+    hoje), com a legenda dizendo isso, e não há acumulado."""
+    acum = acumulado_das_safras(medidas.get("series") or {})
+    barras_medidas = not dados_das_barras_medidas(medidas).empty
+    opcoes = [_VISAO_ANUAL] + ([_VISAO_ACUMULADA] if acum["n"] else [])
+    visao = st.segmented_control(
+        "Ver o desempenho", opcoes, default=_VISAO_ANUAL,
+        key="pb3_safras_visao", label_visibility="collapsed",
+    ) or _VISAO_ANUAL
+    if barras_medidas or visao == _VISAO_ACUMULADA:
+        for aviso in medidas.get("avisos") or []:
+            st.warning(aviso, icon="⚠️")
+    if visao == _VISAO_ACUMULADA:
+        st.plotly_chart(_grafico_acumulado(acum), width="stretch",
+                        config={"displayModeBar": False},
+                        key="pb3_safras_acumulado")
+        st.caption(
+            "A linha encadeia as safras: o valor de cada ponto é o do ponto "
+            "anterior vezes o retorno da safra. Ela não mostra quantas safras "
+            "ficaram atrás dos pesos iguais; para isso, veja o ano a ano."
+        )
+        _render_acumulado(acum, medidas)
+    elif barras_medidas:
+        st.plotly_chart(_grafico_barras_medidas(medidas), width="stretch",
+                        config={"displayModeBar": False},
+                        key="pb3_safras_barras")
+        st.caption(legenda_barras_medidas(medidas))
+    else:
+        st.plotly_chart(_grafico_barras(completas), width="stretch",
+                        config={"displayModeBar": False},
+                        key="pb3_safras_barras")
+        st.caption(
+            "Sem medição gravada das carteiras escolhidas ano a ano, as barras "
+            "repetem a tabela acima, que refaz cada safra só com os segmentos "
+            "que o portão aprova hoje. Como o portão de hoje já conhece o "
+            "passado, elas saem melhores do que uma escolha feita na época."
+        )
+
+
 def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
                   selic_por_ano: dict[int, float],
-                  taxa_selic_aa: float) -> None:
-    """Bloco 1: a tabela de safras e a barra por safra contra Selic/EW.
-    Ao fim, chama `render_expectativa` (Bloco 3).
+                  taxa_selic_aa: float,
+                  selic_mensal: dict[tuple[int, int], float] | None = None) -> None:
+    """Bloco 1: cartões, tabela e gráfico por safra das carteiras escolhidas
+    ano a ano (medições gravadas) contra pesos iguais, Selic e Ibovespa. Sem
+    medição da líder, o topo cai para a reconstrução com os segmentos de hoje
+    (`tabela_de_safras`), com a legenda dizendo isso.
+    Ao fim, chama `render_expectativa` (Bloco 3), que lê as mesmas safras
+    medidas e o Rank-IC por ano do universo gravado em `data/vantagem_oos.json`;
+    a reconstrução só entra no que faltar medição, e o bloco diz onde.
 
     `resultados` e a lista JA FILTRADA pelo gate de aprovacao -- e a
     carteira que a tela publica.
+
+    `selic_mensal` (achado D13) e a Selic realizada mes a mes de
+    `core.b3_data.load_selic_mensal`; sem ela, cada ano usa a meta de
+    `selic_por_ano`, como antes.
 
     O Bloco 2 (`render_vies_universo`, "Tamanho do vies de universo")
     saiu da tela por pedido do dono do projeto (30/10/2026). A funcao
@@ -289,15 +860,167 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
 
     tabela = tabela_de_safras(resultados, df_precos,
                               selic_por_ano=selic_por_ano,
-                              taxa_selic_aa=taxa_selic_aa)
+                              taxa_selic_aa=taxa_selic_aa,
+                              selic_mensal=selic_mensal)
     if tabela.empty:
         st.caption("Nenhuma safra com líderes reconstruídos.")
         return
 
     resumo = _resumo_safras(tabela)
     completas = resumo["completas"]
+    medidas = _carregar_medidas()
+    tabela_m = tabela_medida(medidas)
+    fontes = _carregar_fontes_expectativa(medidas)
 
-    st.caption(_legenda_resumo(resumo))
+    if not tabela_m.empty:
+        _render_topo_medido(medidas, tabela_m,
+                            _tela_toda_medida(tabela_m, fontes))
+    else:
+        _render_topo_reconstruido(resumo, tabela)
+
+    if not completas.empty or not tabela_m.empty:
+        _render_grafico_safras(completas, medidas)
+
+    render_expectativa(resultados, tabela, fontes)
+
+    # Com o topo e o Bloco 3 nas safras medidas, a reconstrução não aparece
+    # mais na tela, e o peso sem preço DELA não descreve nada que se vê. A
+    # medição não grava esse peso, mas aplica a mesma regra: ação sem preço
+    # na janela rende zero. A tela diz a regra e não inventa a fatia.
+    if _tela_toda_medida(tabela_m, fontes):
+        detalhe_tecnico(
+            "Ação sem preço na janela da safra (deslistagem, incorporação ou "
+            "buraco de dado) rende **zero** nas carteiras medidas: não "
+            "inventamos a perda, mas ela também não rende o que as outras "
+            "renderam. A medição gravada não registra quanto do peso ficou "
+            "assim em cada safra.",
+            codigo="portfolio_b3.safras_preco_ausente_medido")
+        return
+
+    # Mesma população das outras agregações (as safras medidas): incluir as
+    # não mensuráveis infla o aviso, porque nelas "Peso sem preço" vale
+    # 100,0 justamente por não ter havido observação nenhuma (achado I-1).
+    ausente = resumo["peso_ausente_max"]
+    if ausente > 0:
+        onde = ("Na reconstrução com os segmentos de hoje, usada em parte "
+                "do bloco acima, em pelo menos uma safra"
+                if not tabela_m.empty else "Em pelo menos uma safra medida")
+        aviso_lacuna(
+            f"{onde}, até {ausente:.1f}% do peso "
+            "ficou sem preço na janela — deslistagem, incorporação ou "
+            "buraco de dado. Essa fatia rende **zero** no cálculo: não "
+            "inventamos a perda, mas ela também não rende o que os "
+            "sobreviventes renderam.",
+            codigo="tela.portfolio_b3.safras_peso_sem_preco",
+        )
+
+
+def _tela_toda_medida(tabela_m: pd.DataFrame, fontes: dict) -> bool:
+    """True quando nada visível na tela sai da reconstrução: topo medido,
+    bandas e Rank-IC do Bloco 3 medidos."""
+    return bool(not tabela_m.empty
+                and fontes.get("excessos_medidos")
+                and fontes.get("ics_por_ano") is not None)
+
+
+def fontes_medidas_da_expectativa(medidas: dict, vantagem: dict | None,
+                                  versao_atual: str | None) -> dict:
+    """O que o Bloco 3 lê das medições gravadas, sem streamlit.
+
+    ``medidas`` vem de `series_medidas` (`data/oos_carteira_b3.json`): cada
+    safra com a carteira escolhida naquele abril. Os excessos por safra são
+    os MESMOS que `scripts/medir_oos_carteira_b3.py` resume em ``vs_selic``
+    e ``vs_equal_weight`` (líquido − Selic, líquido − pesos iguais), então a
+    banda daqui reproduz o ``ic95`` gravado -- um teste confere.
+
+    ``vantagem`` é a entrada ``b3`` de `data/vantagem_oos.json`: o Rank-IC de
+    cada ano sobre o universo inteiro, sem portão e fora da amostra. É ele
+    que substitui o Rank-IC dos segmentos aprovados hoje, que já conhecem o
+    passado. Gravado com outra versão do score, ele NÃO entra: o Bloco 3 cai
+    para a reconstrução e diz por quê.
+
+    Devolve ``{"excessos_medidos", "excessos", "safras", "ics_por_ano",
+    "medicao_ic", "avisos"}``. ``excessos`` tem listas em fração para
+    ``selic``, ``ew``, ``selic_bruto`` e ``ew_bruto``; ``ics_por_ano`` é
+    ``{ano: ic}`` ou None.
+    """
+    series = medidas.get("series") or {}
+    lider = series.get("concentrada") or {}
+    detalhe = medidas.get("detalhe_lider") or {}
+    excessos: dict[str, list[float]] = {"selic": [], "ew": [],
+                                        "selic_bruto": [], "ew_bruto": []}
+    safras: list[int] = []
+    for safra in sorted(a for a, v in lider.items() if v is not None):
+        liq = lider[safra]
+        bruto = (detalhe.get(safra) or {}).get("bruto")
+        sel = (series.get("selic") or {}).get(safra)
+        ew = (series.get("equal_weight") or {}).get(safra)
+        if sel is not None:
+            safras.append(int(safra))
+            excessos["selic"].append(liq - sel)
+            if bruto is not None:
+                excessos["selic_bruto"].append(bruto - sel)
+        if ew is not None:
+            excessos["ew"].append(liq - ew)
+            if bruto is not None:
+                excessos["ew_bruto"].append(bruto - ew)
+
+    avisos: list[str] = []
+    ics: dict[int, float] | None = None
+    medicao_ic: dict = {}
+    if vantagem:
+        brutos = (vantagem.get("extras") or {}).get("ic_por_ano") or {}
+        lidos: dict[int, float] = {}
+        for ano, valor in brutos.items():
+            v = _fracao(valor)
+            try:
+                a = int(ano)
+            except (TypeError, ValueError):
+                continue
+            if v is not None:
+                lidos[a] = v
+        versao = str(vantagem.get("versao_metodologia") or "")
+        medido_em = str(vantagem.get("medido_em") or "")
+        if len(medido_em) == 10 and medido_em[4] == medido_em[7] == "-":
+            medido_em = f"{medido_em[8:]}/{medido_em[5:7]}/{medido_em[:4]}"
+        medicao_ic = {"medido_em": medido_em, "versao": versao}
+        if not lidos:
+            avisos.append("A medição do Rank-IC do universo não traz o valor "
+                          "de cada ano; Ordena? e Fragilidade usam a "
+                          "reconstrução com os segmentos de hoje.")
+        elif versao_atual and versao != str(versao_atual):
+            avisos.append(f"O Rank-IC do universo foi medido com a versão "
+                          f"{versao or '?'} do score, e a atual é "
+                          f"{versao_atual}; Ordena? e Fragilidade usam a "
+                          "reconstrução com os segmentos de hoje até a "
+                          "medição ser refeita.")
+        else:
+            ics = dict(sorted(lidos.items()))
+    else:
+        avisos.append("Sem medição gravada do Rank-IC do universo; Ordena? e "
+                      "Fragilidade usam a reconstrução com os segmentos de "
+                      "hoje.")
+
+    return {"excessos_medidos": len(excessos["selic"]) > 0,
+            "excessos": excessos, "safras": safras, "ics_por_ano": ics,
+            "medicao_ic": medicao_ic, "avisos": avisos}
+
+
+def _carregar_fontes_expectativa(medidas: dict) -> dict:
+    """Lê o Rank-IC gravado do universo e monta as fontes do Bloco 3."""
+    from core.vantagem_oos import carregar_medicao, versao_corrente
+
+    return fontes_medidas_da_expectativa(medidas, carregar_medicao("b3"),
+                                         versao_corrente("b3"))
+
+
+def _render_topo_reconstruido(resumo: dict, tabela: pd.DataFrame) -> None:
+    """Topo sem medição gravada da líder: legenda, cartões e tabela da
+    reconstrução com os segmentos aprovados hoje."""
+    st.caption(_legenda_resumo(resumo)
+               + " Sem medição gravada das carteiras escolhidas ano a ano, "
+                 "esta tabela refaz cada safra só com os segmentos que o "
+                 "portão aprova hoje, que já conhece o passado.")
 
     cols = st.columns(3)
     if resumo["n_medidas"]:
@@ -329,34 +1052,32 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
                 column_config=_column_config_retorno())
     st.caption("Líquido = bruto − custo de giro − IR. Equal-weight e Selic "
                "seguem brutos.")
+    st.caption(_legenda_selic(tabela))
     detalhe_tecnico(_texto_premissas_liquido_b3(),
                     codigo="portfolio_b3.safras_premissas_liquido")
 
-    if not completas.empty:
-        st.plotly_chart(_grafico_barras(completas), width="stretch",
-                        config={"displayModeBar": False},
-                        key="pb3_safras_barras")
-        st.caption(
-            "Barras, não curva acumulada: encadear os retornos produziria um "
-            "número grande e único, que esconde quantas safras individuais "
-            "ficaram atrás do benchmark."
-        )
 
-    render_expectativa(resultados, tabela)
+def _legenda_selic(tabela: pd.DataFrame) -> str:
+    """Diz qual Selic a coluna "Selic (%)" mede (achado D13, 17/11/2026).
 
-    # Mesma população das outras agregações (as safras medidas): incluir as
-    # não mensuráveis infla o aviso, porque nelas "Peso sem preço" vale
-    # 100,0 justamente por não ter havido observação nenhuma (achado I-1).
-    ausente = resumo["peso_ausente_max"]
-    if ausente > 0:
-        aviso_lacuna(
-            f"Em pelo menos uma safra medida, até {ausente:.1f}% do peso "
-            "ficou sem preço na janela — deslistagem, incorporação ou "
-            "buraco de dado. Essa fatia rende **zero** no cálculo: não "
-            "inventamos a perda, mas ela também não rende o que os "
-            "sobreviventes renderam.",
-            codigo="tela.portfolio_b3.safras_peso_sem_preco",
-        )
+    Pura, para ser testada direto. A fonte vem de `tabela.attrs`, posta por
+    `core.b3_safras.tabela_de_safras` -- a tela nao adivinha qual serie
+    entrou. Mes que caiu na meta e nomeado, nunca some.
+    """
+    janela = ("Cada safra vai do fechamento de 31/03 ao de 31/03 do ano "
+              "seguinte (12 meses).")
+    if tabela.attrs.get("selic_fonte") != "realizada":
+        return (f"{janela} Selic = meta do fim de cada ano (a série "
+                "mensal realizada não estava disponível nesta análise).")
+    pela_meta = sorted({mes for meses in
+                        (tabela.attrs.get("selic_meses_pela_meta_por_safra")
+                         or {}).values() for mes in (meses or [])})
+    texto = (f"{janela} Selic = taxa realizada mês a mês (média mensal da "
+             "meta Selic, `info_economica_mensal`).")
+    if pela_meta:
+        texto += (" Sem dado mensal, valeu a meta do ano em: "
+                  + ", ".join(pela_meta) + ".")
+    return texto
 
 
 def _ics_por_ano(resultados: list[dict],
@@ -491,8 +1212,15 @@ def _frase(*partes: str) -> str:
     return " ".join(p.strip() for p in partes if p and p.strip())
 
 
-def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
+def _expectativa(resultados: list[dict], tabela: pd.DataFrame,
+                 fontes: dict | None = None) -> dict:
     """Tudo que o Bloco 3 publica, derivado das leituras — sem streamlit.
+
+    ``fontes`` (de `fontes_medidas_da_expectativa`) troca a reconstrução com
+    os segmentos de hoje pelas medições gravadas, peça a peça: as bandas
+    leem as safras escolhidas em cada abril, e Ordena?/Fragilidade leem o
+    Rank-IC de cada ano sobre o universo sem portão. O que faltar na
+    medição segue na reconstrução, e ``fonte`` diz qual entrou onde.
 
     Três perguntas distintas, e é de propósito que elas não virem um
     número só: **ordenar não é superar**. Um Rank-IC positivo diz que o
@@ -540,8 +1268,18 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
         veredito_do_rank_ic,
     )
 
-    pares = _pares_de_ic(resultados)
-    ics_por_ano = _ics_por_ano(resultados, pares)
+    fontes = fontes or {}
+    ic_medido = fontes.get("ics_por_ano") is not None
+    banda_medida = bool(fontes.get("excessos_medidos"))
+
+    if ic_medido:
+        # O Rank-IC gravado já é um por ano (universo inteiro, sem portão):
+        # os pares dos segmentos aprovados hoje não entram.
+        pares: list[tuple] = []
+        ics_por_ano = dict(fontes["ics_por_ano"])
+    else:
+        pares = _pares_de_ic(resultados)
+        ics_por_ano = _ics_por_ano(resultados, pares)
     anos = sorted(ics_por_ano)
     ic_values = [ics_por_ano[ano] for ano in anos]
 
@@ -555,10 +1293,21 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
     col_ew, _ = _coluna_excesso(tabela, _EXCESSO_EW)
 
     def _excessos(coluna: str) -> list[float]:
+        if banda_medida:
+            # As safras medidas já chegam em fração e só com o que foi
+            # gravado; a coluna da reconstrução nomeia qual lista ler.
+            chave = {col_selic: "selic", col_ew: "ew",
+                     "Excesso s/ Selic (pp)": "selic_bruto",
+                     "Excesso s/ EW (pp)": "ew_bruto"}[coluna]
+            return list(fontes["excessos"].get(chave) or [])
         if completas.empty or coluna not in completas.columns:
             return []
         return [float(v) / 100.0 for v in completas[coluna] if pd.notna(v)]
 
+    if banda_medida:
+        # A medição grava o líquido e o bruto de toda safra.
+        col_selic, col_ew, liquido = ("Excesso líquido s/ Selic (pp)",
+                                      "Excesso líquido s/ EW (pp)", True)
     excessos = _excessos(col_selic)
 
     # F-1: o MESMO criterio que o leave-one-out usa. Antes o card chamava
@@ -586,23 +1335,22 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
             f"O intervalo de 95% do excesso {'líquido ' if liquido else ''}"
             f"sobre a Selic vai de {baixo:+.1%} "
             f"a {alto:+.1%} por safra: ele **atravessa o zero**. Nesta "
-            "amostra, a vantagem observada não é distinguível de acaso. "
-            "Ordenar não é superar — o Rank-IC pode indicar que o motor "
-            "discrimina retornos sem que isso vire vantagem líquida."
+            "amostra, o acaso pode explicar a vantagem observada. "
+            "Ordenar não é superar: o Rank-IC pode mostrar que o motor "
+            "separa bem os retornos, sem que isso vire ganho líquido."
         )
     if baixo_ew is not None and baixo_ew <= 0 <= alto_ew:
         avisos.append(
             f"O intervalo de 95% do excesso {'líquido ' if liquido else ''}"
             "sobre o equal-weight vai de "
             f"{baixo_ew:+.1%} a {alto_ew:+.1%} por safra: ele **atravessa o "
-            "zero**. Nesta amostra, a carteira não é distinguível de comprar "
-            "o universo inteiro em partes iguais.")
+            "zero**. Nesta amostra, o acaso pode explicar a diferença para "
+            "comprar o universo inteiro em partes iguais.")
     if loo["safras_que_viram"] > 0:
         avisos.append(
             f"O veredito muda se {loo['safras_que_viram']} dos "
-            f"{loo['n_safras']} anos for removido. Uma conclusão que depende "
-            "de um ano específico não é uma conclusão sobre a estratégia — é "
-            "uma conclusão sobre aquele ano."
+            f"{loo['n_safras']} anos for removido. Se a conclusão depende de "
+            "um ano só, ela não vale para a estratégia: vale para aquele ano."
         )
 
     # N-3: a causa vem do que `_ics_por_ano` VIU (os pares), não de
@@ -729,12 +1477,54 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
     # lado a lado sem explicação — "Safras medidas: N" (janela fechada com
     # pregão) contra "0 de M anos" (anos com Rank-IC calculável).
     if loo["medido"] and n_banda and n_banda != n_loo:
-        nota_frag = _frase(
-            nota_frag,
-            f"A fragilidade conta os {n_loo} ano(s) com Rank-IC calculável "
-            f"(≥ {MIN_ATIVOS_ANO} ativos no universo), não as {n_banda} "
-            "safra(s) mensurável(is) do bloco acima: são populações "
-            "diferentes.")
+        if ic_medido:
+            nota_frag = _frase(
+                nota_frag,
+                f"A fragilidade conta os {n_loo} ano(s) de Rank-IC do "
+                f"universo inteiro, não as {n_banda} safra(s) da carteira "
+                "escolhida em cada abril: são populações diferentes.")
+        else:
+            nota_frag = _frase(
+                nota_frag,
+                f"A fragilidade conta os {n_loo} ano(s) com Rank-IC "
+                f"calculável (≥ {MIN_ATIVOS_ANO} ativos no universo), não as "
+                f"{n_banda} safra(s) mensurável(is) do bloco acima: são "
+                "populações diferentes.")
+
+    safras_banda = fontes.get("safras") or []
+    if banda_medida:
+        periodo = (f" ({safras_banda[0]}–{safras_banda[-1]})"
+                   if safras_banda else "")
+        fonte_banda = (f"**Supera?** e **Supera o mercado?** usam as {n_banda} "
+                       f"safra(s) medidas{periodo} da líder de cada segmento, "
+                       "cada uma com a carteira escolhida naquele abril.")
+        ajuda_banda = (f"Intervalo de 95% por reamostragem de {n_banda} "
+                       "safra(s), cada uma com a carteira escolhida naquele "
+                       "abril")
+        ajuda_banda_ew = ("Intervalo de 95% do excesso sobre pesos iguais no "
+                          "universo daquele abril, por reamostragem das "
+                          "mesmas safras")
+    else:
+        fonte_banda = ("**Supera?** e **Supera o mercado?** refazem cada "
+                       "safra só com os segmentos que o portão aprova hoje, "
+                       "que já conhece o passado: falta a medição gravada "
+                       "da líder de cada segmento.")
+        ajuda_banda = (f"Intervalo de 95% por reamostragem de {n_banda} "
+                       "safra(s) mensurável(is)")
+        ajuda_banda_ew = ("Intervalo de 95% do excesso sobre o equal-weight "
+                          "do universo, com saltos de preço neutralizados e "
+                          "retornos winsorizados a 1%/99% por safra")
+    if ic_medido:
+        med = fontes.get("medicao_ic") or {}
+        quando = f", medido em {med['medido_em']}" if med.get("medido_em") else ""
+        fonte_ic = ("**Ordena?** e **Fragilidade** usam o Rank-IC de cada "
+                    "ano sobre o universo inteiro, sem portão e fora da "
+                    f"amostra{quando}.")
+    else:
+        fonte_ic = ("**Ordena?** e **Fragilidade** usam o Rank-IC dos "
+                    "segmentos que o portão aprova hoje, que já conhece o "
+                    "passado.")
+    avisos.extend(fontes.get("avisos") or [])
 
     return {
         "ic_values": ic_values,
@@ -762,10 +1552,16 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
         "loo": loo,
         "avisos": avisos,
         "limitacao_banda": limitacao,
+        "ajuda_banda": ajuda_banda,
+        "ajuda_banda_ew": ajuda_banda_ew,
+        "fonte": _frase(fonte_banda, fonte_ic),
+        "banda_medida": banda_medida,
+        "ic_medido": ic_medido,
     }
 
 
-def render_expectativa(resultados: list[dict], tabela: pd.DataFrame) -> None:
+def render_expectativa(resultados: list[dict], tabela: pd.DataFrame,
+                       fontes: dict | None = None) -> None:
     """Bloco 3: o motor ordena? supera? e quão frágil é a conclusão?
 
     Só renderiza — a medição inteira está em `_expectativa`, que é pura e
@@ -779,7 +1575,7 @@ def render_expectativa(resultados: list[dict], tabela: pd.DataFrame) -> None:
         unsafe_allow_html=True,
     )
 
-    exp = _expectativa(resultados, tabela)
+    exp = _expectativa(resultados, tabela, fontes)
     veredito = exp["veredito"]
 
     cols = st.columns(4)
@@ -795,8 +1591,7 @@ def render_expectativa(resultados: list[dict], tabela: pd.DataFrame) -> None:
         qual = "líquido" if exp["liquido"] else "bruto"
         card_metrica(f"Supera? (excesso {qual} s/ Selic)", exp["texto_banda"],
                      positivo=(baixo is not None and baixo > 0),
-                     ajuda=(f"Intervalo de 95% por reamostragem de "
-                            f"{exp['n_safras_banda']} safra(s) mensurável(is)"
+                     ajuda=(exp["ajuda_banda"]
                             + (f". Bruto: {exp['texto_banda_bruta']}"
                                if exp["liquido"] else "")))
     with cols[3]:
@@ -805,9 +1600,7 @@ def render_expectativa(resultados: list[dict], tabela: pd.DataFrame) -> None:
         card_metrica(f"Supera o mercado? ({qual_ew} s/ equal-weight)",
                      exp["texto_banda_ew"],
                      positivo=(baixo_ew is not None and baixo_ew > 0),
-                     ajuda="Intervalo de 95% do excesso sobre o equal-weight "
-                           "do universo, com saltos de preço neutralizados e "
-                           "retornos winsorizados a 1%/99% por safra"
+                     ajuda=exp["ajuda_banda_ew"]
                            + (f". Bruto: {exp['texto_banda_ew_bruta']}"
                               if exp["liquido"] else ""))
     with cols[2]:
@@ -820,6 +1613,7 @@ def render_expectativa(resultados: list[dict], tabela: pd.DataFrame) -> None:
         "que os retornos delas vieram no ano seguinte (Rank-IC). **Supera?** "
         "responde outra pergunta: se isso virou dinheiro a mais. Ordenar não é "
         "superar.")
+    st.caption(exp["fonte"])
     leitura = leitura_rank_ic(_ic_medio, periodo="no ano seguinte")
     if leitura:
         st.caption(f"🧭 {leitura}")
@@ -1252,7 +2046,8 @@ def _assinatura_vies(com_gate: pd.DataFrame | None,
                      resultados_todos: list[dict] | None,
                      df_precos: pd.DataFrame | None,
                      selic_por_ano: dict | None,
-                     taxa_selic_aa: float | None) -> str:
+                     taxa_selic_aa: float | None,
+                     selic_mensal: dict | None = None) -> str:
     """Impressao digital das ENTRADAS da medição do viés.
 
     A medição fica em `session_state` e sobrevive a um novo "Rodar": sem
@@ -1281,6 +2076,11 @@ def _assinatura_vies(com_gate: pd.DataFrame | None,
         _serializa(selic_por_ano or {}),
         _serializa(taxa_selic_aa),
     ]
+    # A Selic mensal (D13) so entra quando existe: sem ela a assinatura
+    # continua a mesma de antes, e medicoes guardadas nao caducam a toa.
+    if selic_mensal:
+        partes.append("selic_mensal=" + _serializa(
+            {f"{a:04d}-{m:02d}": v for (a, m), v in sorted(selic_mensal.items())}))
     if com_gate is not None:
         partes.append(_serializa(com_gate))
         # `attrs` nao entra no hash das celulas, e e ele que define a
@@ -1333,7 +2133,8 @@ def render_vies_universo(resultados_aprovados: list[dict],
                          df_precos: pd.DataFrame, *,
                          selic_por_ano: dict[int, float],
                          taxa_selic_aa: float,
-                         tabela_com_gate: pd.DataFrame | None = None) -> None:
+                         tabela_com_gate: pd.DataFrame | None = None,
+                         selic_mensal: dict[tuple[int, int], float] | None = None) -> None:
     """Bloco 2: o tamanho do viés de seleção de universo, SOB DEMANDA.
 
     Atrás de um botão por decisão do dono do projeto: reconstruir todas as
@@ -1383,7 +2184,8 @@ def render_vies_universo(resultados_aprovados: list[dict],
     # ainda vale). O rerun comum, sem clique e sem medicao, nao paga nada.
     assinatura = _assinatura_vies(tabela_com_gate, resultados_aprovados,
                                   resultados_todos, df_precos,
-                                  selic_por_ano, taxa_selic_aa)
+                                  selic_por_ano, taxa_selic_aa,
+                                  selic_mensal)
 
     if not clicou:
         # Medição de OUTRA análise não volta para a tela: ela responde a uma
@@ -1403,10 +2205,12 @@ def render_vies_universo(resultados_aprovados: list[dict],
         if com_gate is None:
             com_gate = tabela_de_safras(resultados_aprovados, df_precos,
                                         selic_por_ano=selic_por_ano,
-                                        taxa_selic_aa=taxa_selic_aa)
+                                        taxa_selic_aa=taxa_selic_aa,
+                                        selic_mensal=selic_mensal)
         sem_gate = tabela_de_safras(resultados_todos, df_precos,
                                     selic_por_ano=selic_por_ano,
-                                    taxa_selic_aa=taxa_selic_aa)
+                                    taxa_selic_aa=taxa_selic_aa,
+                                    selic_mensal=selic_mensal)
         medicao = _vies_universo(com_gate, sem_gate)
 
     st.session_state["pb3_vies_universo"] = {

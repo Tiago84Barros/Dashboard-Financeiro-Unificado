@@ -9,6 +9,7 @@ import importlib
 import logging
 import sys
 import time
+from pathlib import Path
 
 import streamlit as st
 
@@ -36,9 +37,14 @@ MSG_ERRO_GENERICO_AO_CARREGAR_MODULO = (
     "Não foi possível carregar este módulo. Tente novamente em instantes."
 )
 
+# Monograma TSB do dono do app (15/11/2026). O caminho é montado aqui, e não
+# importado de ``design.componentes``, porque nada do projeto além do guarda de
+# módulos roda antes do ``set_page_config``. Sem o arquivo, volta o emoji.
+_ICONE_DA_ABA = Path(__file__).resolve().parent / "design" / "assets" / "tsb_icone.png"
+
 st.set_page_config(
     page_title="Dashboard Financeiro Unificado",
-    page_icon="📊",
+    page_icon=str(_ICONE_DA_ABA) if _ICONE_DA_ABA.is_file() else "📊",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -94,6 +100,13 @@ _ROTAS: dict[str, str] = {
     "🌐 Portfólio Global":    "portfolio_global",
     "⚙️ Configurações":       "configuracoes",
 }
+
+# Telas que leem a B3 por ``core.market_read`` e por isso podem cair na cópia
+# congelada do Supabase quando o armazém não responde (``core.fonte_b3``).
+# Empresas B3 reserva o próprio lugar, abaixo do cabeçalho dela; as demais
+# ganham o aviso aqui, no topo. Portfólio Global entra pelos preços mensais
+# das posições brasileiras (``core.global_portfolio.returns``).
+_ROTAS_QUE_LEEM_B3 = frozenset({"dashboard_geral", "fiis", "portfolio_global"})
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -205,6 +218,18 @@ if modulo_nome:
     _nome_do_modulo = f"views.{module_for_route(modulo_nome)}"
     _import_frio = _nome_do_modulo not in sys.modules
     _concluiu = False
+    # Antes de desenhar: se a B3 caiu na cópia congelada e o armazém já
+    # voltou, limpa o cache e o aviso agora, para a tela já reler do armazém.
+    # Depois do desenho seria tarde: a tela mostraria a cópia sem o aviso.
+    try:
+        from core.fonte_b3 import conferir_volta
+
+        conferir_volta()
+    except Exception:  # noqa: BLE001 - conferência é extra, nunca requisito
+        logger.exception("falha ao conferir se o armazém voltou")
+    # Sempre criado nessas rotas (vazio quando não há aviso): elemento que só
+    # existisse em alguns runs deslocaria os ``st.tabs`` da view.
+    _slot_fonte_b3 = st.empty() if modulo_nome in _ROTAS_QUE_LEEM_B3 else None
     try:
         _cronometro.entrar("import")
         modulo = importlib.import_module(_nome_do_modulo)
@@ -259,6 +284,13 @@ if modulo_nome:
             except Exception:  # noqa: BLE001 - diagnostico e extra, nunca requisito
                 logger.exception("falha ao montar o diagnostico da rota")
     finally:
+        if _slot_fonte_b3 is not None:
+            try:
+                from design.componentes import aviso_fonte_reserva_b3
+
+                aviso_fonte_reserva_b3(_slot_fonte_b3)
+            except Exception:  # noqa: BLE001 - aviso e extra, nunca requisito
+                logger.exception("falha ao montar o aviso da fonte da B3")
         # ``finally`` porque ``st.stop``/``st.rerun`` não são ``Exception`` e
         # atravessam o ``except``: a execução interrompida também vai ao log,
         # marcada como não concluída.

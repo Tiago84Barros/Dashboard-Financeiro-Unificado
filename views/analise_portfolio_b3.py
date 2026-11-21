@@ -17,6 +17,7 @@ import streamlit as st
 
 import core.b3_data as _db  # facade de leitura B3 — fonte financeira única: market.* (brapi)
 import core.data_reconciliacao as _recon
+from core.b3_methodology import media_scores_comparaveis
 from core.b3_portfolio_model import load_active_b3_portfolio_model
 from core.chat_memory import (
     clear_chat_history,
@@ -221,10 +222,11 @@ def _media_das_notas(items: list[dict], chave: str = "score") -> float | None:
     """Média das notas que existem; None quando nenhuma existe.
 
     ``float(x or 0)`` contava a nota ausente como zero e puxava a média para
-    baixo; zero observado continua entrando.
+    baixo; zero observado continua entrando. Nota ``score_sem_par`` (grupo de
+    uma empresa só) não compara ninguém e fica de fora — a regra mora em
+    ``core.b3_methodology.media_scores_comparaveis``.
     """
-    notas = [n for n in (to_float(it.get(chave)) for it in items) if n is not None]
-    return float(np.mean(notas)) if notas else None
+    return media_scores_comparaveis(items, chave)
 
 
 def _texto_nota(rotulo: str, nota: float | None) -> str:
@@ -967,7 +969,8 @@ def _executar_analise(
         seg_      = it.get("segmento") or "N/D"
         peso_pct_ = float(it.get("weight") or 0) * 100.0
         # Sem nota, a LLM lia "score quantitativo 50.0" — um número inventado.
-        score_    = to_float(it.get("score"))
+        # Grupo de uma empresa só: o 0,0 não compara ninguém (caso WEGE3).
+        score_    = None if it.get("score_sem_par") else to_float(it.get("score"))
         # alpha_selic já vem em pontos percentuais (fix auditoria 2026-07)
         alpha_    = float(it.get("alpha_selic") or 0)
         n_docs    = (cobertura_docs or {}).get(tk, 0)
@@ -1006,7 +1009,9 @@ def _executar_analise(
             _ctx_emp = (
                 f"{portfolio_ctx} Empresa avaliada: {nome_} | setor {setor_} / "
                 f"segmento {seg_}. Peso atual na carteira: {peso_pct_:.1f}% | "
-                + _texto_nota("score quantitativo", score_)
+                + (_texto_nota("score quantitativo", score_)
+                   if not it.get("score_sem_par")
+                   else "score quantitativo sem par comparável (única empresa do segmento)")
                 + f" | alpha vs Selic {alpha_:+.1f}%."
                 + _web_ctx_da_empresa(tk, web_sinal)
                 + veredito.regra_relatorio(av_regras, tk)
@@ -1323,7 +1328,9 @@ def _build_chat_context(model: dict, state: dict, macro_hist: dict,
         meta = [f"peso={w:.1f}%"]
         if it.get("segmento"):
             meta.append(f"segmento={it['segmento']}")
-        if it.get("score") is not None:
+        if it.get("score_sem_par"):
+            meta.append("score=sem par comparável")
+        elif it.get("score") is not None:
             meta.append(f"score={float(it['score']):.1f}")
         if it.get("alpha_selic") is not None:
             meta.append(f"alphaSelic={float(it['alpha_selic']):+.1f}%")
@@ -1616,6 +1623,7 @@ def render(show_header: bool = True) -> None:
     with col_reset:
         if st.button("🗑️ Limpar", width="stretch", key="apb3_reset"):
             st.session_state.pop("apb3_state", None)
+            st.session_state.pop("apb3_fonte_reserva", None)
             st.rerun()
 
     # ── Executa análise ───────────────────────────────────────────────────────
@@ -1642,10 +1650,16 @@ def render(show_header: bool = True) -> None:
             web_sinal=web_sinal,
         )
         st.session_state["apb3_state"] = result
+        from design.componentes import guardar_fonte_do_resultado_b3
+
+        guardar_fonte_do_resultado_b3("apb3_fonte_reserva")
         st.rerun()
 
     # ── Exibe resultados (se a análise qualitativa já foi executada) ──────────
     if state:
+        from design.componentes import aviso_resultado_da_reserva_b3
+
+        aviso_resultado_da_reserva_b3("apb3_fonte_reserva", "rode a análise")
         items_an    = state["items_analisados"]
         port_an     = state["port_analise"]
         pesos_novos = state["pesos_novos"]

@@ -94,6 +94,8 @@ FII).
 | `fii_metrics_monthly`, macro, `valuation_historico` | artefatos em `data/public/` | sem leitura remota |
 | PR #501 | vitrine de FIIs sem leitura descartada; `companies`/`overview` e `load_mercado_retorno_mensal` com TTL de 12 h | ~−560 MB/dia por processo, no pior caso |
 | Ingestão brapi da B3 (caminho A, 05/10/2026) | saiu do GitHub (`refresh-b3` só por disparo manual) para os alvos locais `b3_brapi`/`b3_brapi_anual`, com `--warehouse`; `scripts/publish_b3_brapi_from_local.py` leva só o que o app lê, por marca d'água | sem leitura de demonstrações e preços a cada recálculo; nenhum payload bruto da B3 gravado no Supabase |
+| B3 sem gravar no Supabase (15/11/2026) | saíram da rotina `publish_b3_brapi_from_local`, `publish_b3_cotacao_from_local` e os alvos `b3_metrics`/`b3_vintages`; a B3 fica só no armazém e o app4 passa a ler pelo túnel | nenhuma gravação da B3 no Supabase pela rotina |
+| B3 lida do armazém (18/11/2026) | `core/fonte_b3.py`: os loaders da B3, o dossiê, o selo de frescor e o índice de confiança leem o armazém (papel `app4_leitura` direto ou `POST /sql` do túnel); a cópia congelada do Supabase só entra como reserva, com aviso na tela | nenhuma leitura da B3 no Supabase com o túnel no ar |
 | PR seguinte (INF-A2, parte 2) | `us_data.dossie()` com cache de 12 h por ticker; `us_data._use_snapshot()` guarda o "sim" por 12 h; linhagem B3 desacoplada de `brapi_raw_payloads` | ~7 KB e 2–3 consultas a menos por rerun da aba EUA; a tabela pode sair sem quebrar a validação |
 
 ## 3. O que ainda falta

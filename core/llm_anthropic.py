@@ -60,6 +60,10 @@ def separar(messages: Sequence[dict]) -> tuple[str, list[dict]]:
     for m in messages:
         papel = m.get("role")
         texto = m.get("content")
+        if isinstance(texto, list):  # partes {"type": "text", "text": ...}
+            partes = [str(p.get("text") or "") for p in texto
+                      if isinstance(p, dict) and p.get("type") == "text"]
+            texto = "\n\n".join(partes)
         texto = texto if isinstance(texto, str) else ("" if texto is None else str(texto))
         if not texto.strip():
             continue

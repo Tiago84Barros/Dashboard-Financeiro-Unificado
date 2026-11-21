@@ -117,6 +117,14 @@ def executar(config: Config, timeout: int = 600) -> Resultado:
         for chave, valor in config.as_state().items():
             _ajustar(app, chave, valor)
         app.button(key="pb3_rodar").click().run(timeout=timeout)
+        # Desde 20/11/2026 a aba abre na nota + fatores; a auditoria confere
+        # a líder de cada segmento, que é a carteira que monta
+        # ``pb3_carteira_final``. Sem o seletor (execução sem resultado), a
+        # chave ausente abaixo já vira "inconclusivo".
+        try:
+            app.radio(key="pb3_estrategia").set_value("lider").run(timeout=timeout)
+        except KeyError:
+            pass
     except Exception as exc:                       # noqa: BLE001
         resultado.ok = False
         resultado.defeitos.append(f"I1 execução falhou: {type(exc).__name__}: {exc}")

@@ -640,9 +640,9 @@ def render_theme_selector() -> None:
     if pendente is not None:
         st.warning(
             "Tema aplicado agora, mas não foi possível guardá-lo na sua conta. "
-            "Ele já vale nesta sessão e neste navegador, e vai para a conta "
-            "assim que o banco responder -- sem passar por cima de uma escolha "
-            "mais nova feita em outro aparelho."
+            "Ele já vale nesta sessão e neste navegador. Vai para a conta "
+            "assim que o banco responder, sem apagar uma escolha mais nova "
+            "feita em outro aparelho."
         )
     _render_diagnostico(escolha, theme)
 

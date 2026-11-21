@@ -94,3 +94,53 @@ def test_confianca_global_pondera_pela_medicao_efetiva():
 
 def test_global_sem_nada_medido_e_none_nao_zero():
     assert confianca_global([_sec(Componente("a", None, 1.0, ""))]) is None
+
+
+class _Conn:
+    def __init__(self, linha):
+        self._linha = linha
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def execute(self, *_a, **_k):
+        linha = self._linha
+
+        class _R:
+            def one(self):
+                return linha
+        return _R()
+
+
+class _EngineCom:
+    def __init__(self, linha):
+        self._linha = linha
+
+    def connect(self):
+        return _Conn(self._linha)
+
+
+def test_b3_declara_a_selic_mensal_que_o_benchmark_das_safras_le():
+    """Revisao do Codex no #763: desde o D13 a tela de Empresas B3 le
+    `info_economica_mensal` para a Selic do benchmark das safras. O Grau de
+    Confianca tem de nomear a fonte e ate que mes ela vai -- e, com o banco
+    fora, dizer "nao medido", nunca sumir com a nota."""
+    from datetime import date
+
+    from core.confianca_secao import confianca_b3, nota_selic_mensal
+
+    medida = nota_selic_mensal(_EngineCom((date(2026, 1, 1), 160)))
+    assert "info_economica_mensal" in medida
+    assert "160 meses" in medida and "2026-01" in medida
+
+    vazia = nota_selic_mensal(_EngineCom((None, 0)))
+    assert "meta" in vazia and "info_economica_mensal" in vazia
+
+    fora = nota_selic_mensal(_EngineFora())
+    assert "nao medido: RuntimeError" in fora
+
+    secao = confianca_b3(_EngineFora())
+    assert any("info_economica_mensal" in n for n in secao.notas)

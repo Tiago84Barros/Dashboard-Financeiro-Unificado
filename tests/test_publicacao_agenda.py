@@ -28,12 +28,12 @@ def test_nunca_publicado_esta_devendo():
 
 
 def test_dentro_da_cadencia_nao_deve_nada():
-    alvo = POR_CHAVE["b3_metrics"]  # semanal
+    alvo = POR_CHAVE["b3_brapi_anual"]  # semanal
     assert motivo_para_publicar(alvo, _registro(3), AGORA) is None
 
 
 def test_cadencia_vencida_deve_publicar():
-    alvo = POR_CHAVE["b3_metrics"]  # semanal
+    alvo = POR_CHAVE["b3_brapi_anual"]  # semanal
     motivo = motivo_para_publicar(alvo, _registro(8), AGORA)
     assert motivo is not None and "8d" in motivo
 
@@ -130,7 +130,7 @@ def test_maquina_desligada_por_uma_semana_publica_o_que_venceu():
     devidos = dict(alvos_devidos(estado, AGORA))
     chaves = {a.chave for a in devidos}
     assert "fii_selection" in chaves  # diária, 7 dias de atraso
-    assert "b3_metrics" in chaves     # semanal, exatamente no limite
+    assert "b3_brapi_anual" in chaves  # semanal, exatamente no limite
     assert "us_prices" not in chaves  # mensal, ainda em dia
 
 
@@ -179,8 +179,8 @@ def test_sucesso_grava_data_e_versao_sem_mutar_o_estado_recebido():
 def test_forcar_e_apenas_selecionam_sem_consultar_cadencia():
     estado = {a.chave: _registro(0) for a in ALVOS}
     assert alvos_devidos(estado, AGORA) == []
-    forcados = alvos_devidos(estado, AGORA, forcar=True, apenas=("b3_metrics",))
-    assert [a.chave for a, _ in forcados] == ["b3_metrics"]
+    forcados = alvos_devidos(estado, AGORA, forcar=True, apenas=("b3_brapi_anual",))
+    assert [a.chave for a, _ in forcados] == ["b3_brapi_anual"]
 
 
 @pytest.mark.parametrize("alvo", ALVOS, ids=[a.chave for a in ALVOS])
@@ -329,3 +329,40 @@ def test_indices_de_referencia_dos_eua_sao_coletados_derivados_e_publicados_todo
     # Antes da republicação mensal, para que ela já leve os índices frescos.
     chaves = [a.chave for a in ALVOS]
     assert chaves.index("us_benchmarks") < chaves.index("us_prices")
+
+
+def test_artefato_pendente_nao_avanca_a_data_e_volta_para_a_fila():
+    """13/11/2026: o publicador rodou, o estado disse "ok" e o artefato não
+    chegou à main. Publicado é quando o artefato está na origin."""
+    original = {"cdi_diario": _registro(0.5)}
+    novo = registrar_resultado(original, "cdi_diario", True, AGORA, versao="2",
+                               artefato_pendente=True)
+    registro = novo["cdi_diario"]
+
+    assert registro["ultimo_status"] == "artefato_pendente"
+    assert registro["ultima_tentativa"] == AGORA.isoformat()
+    assert registro["ultima_publicacao"] == original["cdi_diario"]["ultima_publicacao"]
+    assert "versao" not in registro
+    # Dentro da cadência, mas devido: o artefato da main é o velho.
+    assert motivo_para_publicar(POR_CHAVE["cdi_diario"], registro, AGORA) == (
+        "artefato não chegou à main")
+
+
+#: Publicadores que gravam a B3 no Supabase. Diretriz do usuário de 15/11/2026:
+#: o Supabase free não recebe atualização (salvo o que o usuário sobe pela
+#: interface), e o app4 lê do armazém. Os scripts seguem no repositório para
+#: uso manual. O que não pode é a rotina voltar a chamá-los toda noite.
+PUBLICADORES_B3_PARA_SUPABASE = (
+    "scripts/publish_b3_cotacao_from_local.py",
+    "scripts/publish_b3_brapi_from_local.py",
+    "scripts/publish_b3_metrics_to_supabase.py",
+    "scripts/publish_b3_vintages_from_local.py",
+)
+
+
+def test_rotina_nao_grava_a_b3_no_supabase():
+    chamados = [(a.chave, p) for a in ALVOS for p in a.passos
+                if set(p) & set(PUBLICADORES_B3_PARA_SUPABASE)]
+    assert chamados == []
+    assert "b3_metrics" not in POR_CHAVE
+    assert "b3_vintages" not in POR_CHAVE

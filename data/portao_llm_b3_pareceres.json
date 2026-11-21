@@ -1,6 +1,36 @@
 {
  "versao": "dossie-pit-1.2.0",
  "registros": {
+  "ABCB4|2023|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa (lucro 869,5 milhões em A-1), barata (P/L 5,6 e P/VP 0,8) e com DY 8,3%, mas sem documentos CVM, sem dado de dívida líquida e com margem líquida caindo de 20,1% (A-2) para 15,7% (A-1).",
+   "confianca": 60,
+   "score_qualitativo": 60,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-B095AF",
+   "hash_prompt": "e25f7bde5451e1b0",
+   "tentativa": 1
+  },
+  "ABCB4|2024|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com caixa relevante e sem dívida líquida reportada, mas com EBIT e margem líquida em queda no último exercício e sem base documental CVM para verificar governança.",
+   "confianca": 60,
+   "score_qualitativo": 58,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-C6C79A",
+   "hash_prompt": "8bc1e9c0d9795f36",
+   "tentativa": 1
+  },
+  "ABCB4|2024|1": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com balanço patrimonial de R$ 3621,0 mi, caixa de R$ 398,7 mi e múltiplos baixos (P/L 7,7, P/VP 1,1), mas sem documentos CVM indexados, sem EBITDA e sem dado de dívida líquida, o que impede confirmação plena da tese.",
+   "confianca": 68,
+   "score_qualitativo": 66,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-C6C79A",
+   "hash_prompt": "8bc1e9c0d9795f36",
+   "tentativa": 1
+  },
   "ABEV3|2018|0": {
    "classificacao": "aprovar",
    "motivo": "Balanco forte com caixa líquido elevado e dividendos recorrentes, apesar da queda recente de lucro típica de ciclo.",
@@ -81,6 +111,16 @@
    "hash_prompt": "586f8ae2879a1572",
    "tentativa": 1
   },
+  "ALOS3|2019|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa em todos os anos observados, com balanço intacto (PL 4089.7, caixa 414.1, dívida líquida 1352.6) e recuperação de margem em A-1, mas múltiplos elevados (P/L 76.4; P/VP 5.2) e ausência de documentos CVM indexados limitam a convicção.",
+   "confianca": 60,
+   "score_qualitativo": 55,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-49CCF3",
+   "hash_prompt": "2ff79ce05c0a7c01",
+   "tentativa": 1
+  },
   "ALOS3|2022|0": {
    "classificacao": "aprovar_com_ressalvas",
    "motivo": "Valoração elevada (P/L 36,6) e ausência de documentos CVM aumentam incerteza, apesar da recuperação do lucro e do beneficio de caixa líquida com juros altos.",
@@ -110,6 +150,45 @@
    "codigo": "EMPRESA-A37C3B",
    "hash_prompt": "8528e1c57351b904",
    "tentativa": 1
+  },
+  "APTI4|2021|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Lucro de A-1 (56,8 R$ mi, margem 366,9%) depende de item não recorrente, com prejuízo em cinco dos seis trimestres de A-2 e A-1 com dados; dividendos superaram o lucro em 7 de 7 anos com ambos os dados (A-5 a A-11) e o yield dos últimos 12 meses é zero, sem preço nem documentos CVM para precificar.",
+   "confianca": 40,
+   "score_qualitativo": 35,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-56A763",
+   "hash_prompt": "b8149334f26bc887",
+   "tentativa": 1
+  },
+  "APTI4|2024|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Retorno à lucratividade em A-1 (lucro 16,6, margem 46,9%) com balanço intacto (PL 227,8, dívida líquida 55,6), mas histórico de prejuízos na maioria dos anos entre A-8 e A-2 e ausência de preço e documentos CVM impedem convicção plena.",
+   "confianca": 45,
+   "score_qualitativo": 48,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-067982",
+   "hash_prompt": "562cdf3da6b3abb0",
+   "tentativa": 1
+  },
+  "APTI4|2025|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Resultado de A-1 depende de itens não recorrentes (margem líquida 133.7% sobre receita de 31.3 R$ mi) e não há preço nem documentos CVM para confirmar a tese; apenas com ressalvas e monitoramento do lucro recorrente.",
+   "confianca": 35,
+   "score_qualitativo": 35,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-00FD44",
+   "hash_prompt": "6774dd5df69a607e",
+   "tentativa": 1,
+   "sonda": {
+    "empresa": false,
+    "ano": false,
+    "ano_perto": false,
+    "palpite": null,
+    "ano_palpite": null,
+    "confianca": 0,
+    "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free"
+   }
   },
   "ARZZ3|2018|0": {
    "classificacao": "aprovar",
@@ -149,6 +228,36 @@
    "codigo": "EMPRESA-5112E0",
    "hash_prompt": "8a208f96cc749b98",
    "tentativa": 2
+  },
+  "AZUL3|2018|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Recuperação de lucro de -72.9 (A-2) para 305.3 (A-1) com ROE de 18.7%, mas apenas dois anos de histórico, sem preço de mercado e sem documentos CVM impedem convicção plena.",
+   "confianca": 50,
+   "score_qualitativo": 50,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-A1B378",
+   "hash_prompt": "f0f6b34125b1348c",
+   "tentativa": 1
+  },
+  "AZUL3|2018|1": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Recuperação cíclica com balanço fortalecido, mas histórico de apenas dois anos e ausência de documentos CVM impedem confirmação plena da tese.",
+   "confianca": 55,
+   "score_qualitativo": 55,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-A1B378",
+   "hash_prompt": "f0f6b34125b1348c",
+   "tentativa": 1
+  },
+  "AZUL3|2021|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Patrimônio líquido negativo (-13.844,4 mi) e prejuízo de -10.601,6 mi em A-1, com receita em queda e sem dividendos ou valuation disponíveis; sem evidência de veto por interferência do controlador ou mascaramento, mas a tese depende de reversão operacional não confirmada.",
+   "confianca": 40,
+   "score_qualitativo": 30,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-B7FD96",
+   "hash_prompt": "53a0ef4a751b4f7b",
+   "tentativa": 1
   },
   "AZUL4|2018|0": {
    "classificacao": "aprovar_com_ressalvas",
@@ -207,6 +316,16 @@
    "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
    "codigo": "EMPRESA-2DD1D5",
    "hash_prompt": "6dcf0f32af0e9279",
+   "tentativa": 1
+  },
+  "AZZA3|2021|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Cíclica de consumo em vale de lucro (A-1) com operação ainda positiva e caixa relevante, mas múltiplos pressionados e alavancagem elevada no último ano; tese depende de recuperação cíclica, não de preço.",
+   "confianca": 58,
+   "score_qualitativo": 52,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-4E7709",
+   "hash_prompt": "f296f2e2c6b1db85",
    "tentativa": 1
   },
   "AZZA3|2022|0": {
@@ -395,6 +514,16 @@
    "hash_prompt": "499fcb35a9c9364f",
    "tentativa": 1
   },
+  "BBAS3|2023|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Lucro recorde de 32234.9 e receita de 247593.9 em A-1 com caixa de 72039.9 e múltiplos baixos (P/L 3,6; P/VP 0,7), mas ausência de documentos CVM e escala de valores não informada impedem confirmação integral da tese.",
+   "confianca": 65,
+   "score_qualitativo": 60,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-07C85E",
+   "hash_prompt": "e81d4960dc36949d",
+   "tentativa": 1
+  },
   "BBAS3|2024|0": {
    "classificacao": "aprovar_com_ressalvas",
    "motivo": "Lucro positivo e dividendos consistentes, mas ausência de informações de governança, dívida líquida e EBITDA reduz a confiança.",
@@ -473,6 +602,16 @@
    "hash_prompt": "d45b008d5a492f7c",
    "tentativa": 1
   },
+  "BIOM3|2019|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa com prejuízo persistente, fluxo de caixa negativo e receita irrelevante, negociada a 8,4x patrimônio; sem documentos CVM, a tese depende de reversão operacional não evidenciada.",
+   "confianca": 40,
+   "score_qualitativo": 30,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-A6B9A8",
+   "hash_prompt": "7e30cc9e6063e175",
+   "tentativa": 1
+  },
   "BMKS3|2023|0": {
    "classificacao": "aprovar",
    "motivo": "Valuation atractiva com P/L 6,8 e P/VP 0,9, caixa líquido elevado e yield de dividendos conservador de 4,6% sustentado pelo último exercício.",
@@ -540,6 +679,26 @@
    "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
    "codigo": "EMPRESA-5F62CF",
    "hash_prompt": "5bcc787068c11ede",
+   "tentativa": 1
+  },
+  "BPAC11|2018|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com caixa relevante e múltiplos baixos (P/L 9,4; P/VP 1,2), mas resultado depende do ciclo e há limitações de dados (sem CVM, proventos duplicados, escala oculta).",
+   "confianca": 65,
+   "score_qualitativo": 60,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-FFF37A",
+   "hash_prompt": "a59f111539b4b042",
+   "tentativa": 1
+  },
+  "BPAC11|2025|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa (lucro 12850.2 em A-1) com caixa relevante (5631.8) e múltiplos P/L 12.2 e P/VP 2.2, mas sem dado de dívida líquida, sem EBITDA e sem documentos CVM indexados; lucro trimestral caiu 9.6% a/a apesar de receita +134.6%, resultado sujeito ao ciclo.",
+   "confianca": 60,
+   "score_qualitativo": 65,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-352341",
+   "hash_prompt": "90711cd79ac8e45e",
    "tentativa": 1
   },
   "BRAP3|2017|0": {
@@ -807,6 +966,45 @@
    "hash_prompt": "fbafe4d2b1e70489",
    "tentativa": 1
   },
+  "BRML3|2019|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa em todos os anos da série, com patrimônio crescente e recuperação de lucro e margem no último exercício, mas sem preço de mercado, sem múltiplos e sem documentos CVM indexados para confirmar governança e eventos societários.",
+   "confianca": 60,
+   "score_qualitativo": 55,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-D72CA7",
+   "hash_prompt": "a84285c25c769fd3",
+   "tentativa": 1,
+   "sonda": {
+    "empresa": false,
+    "ano": true,
+    "ano_perto": true,
+    "palpite": "ITSA3",
+    "ano_palpite": 2019,
+    "confianca": 75,
+    "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free"
+   }
+  },
+  "BRML3|2019|1": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com geração de caixa e PL em expansão, mas sem preço nem múltiplos de valuation, com ROE de 6,8% e dívida líquida de R$ 1.249,8 mi, o que impede convicção maior sem documentos CVM e precificação.",
+   "confianca": 60,
+   "score_qualitativo": 58,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-D72CA7",
+   "hash_prompt": "a84285c25c769fd3",
+   "tentativa": 1
+  },
+  "BRPR3|2021|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa no último ano e barata por patrimônio, mas lucro volátil e sem documentos CVM.",
+   "confianca": 55,
+   "score_qualitativo": 50,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-E7F2F7",
+   "hash_prompt": "0d0136b1d7e74ca9",
+   "tentativa": 1
+  },
   "BRPR3|2023|0": {
    "classificacao": "aprovar_com_ressalvas",
    "motivo": "Lucro fortemente negativo no último ano e pagamento de dividendo apesar do prejuízo, mas posição de caixa elevada e potencial benefício de Selic alta mantêm incerteza moderada.",
@@ -836,6 +1034,26 @@
    "codigo": "EMPRESA-519C4C",
    "hash_prompt": "d94a652cf9be4983",
    "tentativa": 2
+  },
+  "CALI3|2018|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com caixa líquido e balanço intacto, mas receita e EBIT em forte retração entre A-2 e A-1, múltiplos exigentes (P/L 23,9 e EV/EBIT 27,9) e ausência de documentos CVM; sem evidência de mascaramento de lucro ou destruição de valor pelo controlador, mas a tese depende do ciclo.",
+   "confianca": 50,
+   "score_qualitativo": 45,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-4CA94D",
+   "hash_prompt": "fd3d2af0444e0070",
+   "tentativa": 1
+  },
+  "CALI3|2019|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa e com caixa líquido no último exercício, mas receita encolhida no ciclo, dividendos elevados sem confirmação de padrão recorrente e ausência de documentos CVM indexados.",
+   "confianca": 50,
+   "score_qualitativo": 45,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-C3366E",
+   "hash_prompt": "8081e3a41c5d004e",
+   "tentativa": 1
   },
   "CAMB3|2022|0": {
    "classificacao": "aprovar_com_ressalvas",
@@ -1112,6 +1330,16 @@
    "hash_prompt": "2483093d91ac36d4",
    "tentativa": 1
   },
+  "CIEL3|2018|0": {
+   "classificacao": "aprovar",
+   "motivo": "Empresa lucrativa com oito anos de série, caixa relevante e dívida baixa. Margem e ROE caíram, mas o balanço segue intacto, o que aponta para vale de ciclo.",
+   "confianca": 65,
+   "score_qualitativo": 65,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-3F69C9",
+   "hash_prompt": "32b98c6d9b7494e4",
+   "tentativa": 1
+  },
   "CIEL3|2019|0": {
    "classificacao": "aprovar_com_ressalvas",
    "motivo": "ROE em forte queda e endividamento líquido crescente, apesar de alavancagem moderada.",
@@ -1152,6 +1380,16 @@
    "hash_prompt": "7abb29e43fa6f8e9",
    "tentativa": 1
   },
+  "CRPG5|2019|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Aprovar com ressalvas: balanço líquido positivo (caixa 45,0, dívida líquida -42,8), lucro recorde de 148,0 em A-1 e múltiplos baixos (P/L 5,9, EV/EBIT 5,7), mas qualidade dos dados comprometida (proventos possivelmente duplicados, ausência de CVM) e dividendo de 7,0822 em A-1 provavelmente não recorrente.",
+   "confianca": 65,
+   "score_qualitativo": 65,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-159940",
+   "hash_prompt": "4ce12393276f87c8",
+   "tentativa": 1
+  },
   "CRPG5|2020|0": {
    "classificacao": "aprovar",
    "motivo": "Balanco sólido com caixa líquido de R$ 107 mi e baixa alavancagem, apesar da volatilidade cíclica do lucro.",
@@ -1160,6 +1398,16 @@
    "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
    "codigo": "EMPRESA-6F5C8C",
    "hash_prompt": "11928e433ea73e4c",
+   "tentativa": 1
+  },
+  "CRPG5|2021|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com balanço sólido (caixa líquido de R$ 542 mi, dívida líquida negativa e PL de R$ 1 039,9 mi em A-1), mas resultado depende do ciclo e há limitações documentais (sem CVM indexado e escala ocultada).",
+   "confianca": 60,
+   "score_qualitativo": 65,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-E66DEE",
+   "hash_prompt": "1dfcabfb5670fe5f",
    "tentativa": 1
   },
   "CRPG6|2019|0": {
@@ -1268,6 +1516,45 @@
     "ano_palpite": null,
     "confianca": 0,
     "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+   }
+  },
+  "CYRE3|2021|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com balanço intacto, mas lucro de A-1 (1.232,4 mi, margem 46,0%) depende do ciclo e dados de proventos apresentam duplicação; sem documentos CVM para atestar governança.",
+   "confianca": 65,
+   "score_qualitativo": 58,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-20CCFF",
+   "hash_prompt": "b26503e510fb7ec6",
+   "tentativa": 1
+  },
+  "CYRE3|2021|1": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa em A-1 (lucro 1232,4 R$ mi, ROE 32,0%) e múltiplos baixos (P/L 6,3), mas a margem de 46,0% é atípica frente ao histórico e a qualidade dos dados é limitada (sem CVM, proventos duplicados), então depende da verificação da natureza do resultado A-1.",
+   "confianca": 65,
+   "score_qualitativo": 60,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-20CCFF",
+   "hash_prompt": "b26503e510fb7ec6",
+   "tentativa": 1
+  },
+  "DEXP3|2024|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa em A-1 com caixa líquido e múltiplos baixos, mas histórico cíclico de prejuízos, receita em retração e limitações de dados que impedem confirmar governança e sustentabilidade de dividendos.",
+   "confianca": 68,
+   "score_qualitativo": 62,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-7B7C96",
+   "hash_prompt": "d4d8523c2e02bf2e",
+   "tentativa": 1,
+   "sonda": {
+    "empresa": false,
+    "ano": true,
+    "ano_perto": true,
+    "palpite": "AVLL3",
+    "ano_palpite": 2024,
+    "confianca": 60,
+    "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free"
    }
   },
   "DEXP3|2025|0": {
@@ -1397,6 +1684,44 @@
     "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
    }
   },
+  "EALT4|2022|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa em A-1 (R$ 37,2 mi), balanço com caixa relevante e múltiplos baixos, mas dados de proventos duplicados, ausência de documentos CVM e dividendo de A-1 fora do padrão histórico limitam a confiança na tese.",
+   "confianca": 65,
+   "score_qualitativo": 60,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-F8D210",
+   "hash_prompt": "4862b1f20f644643",
+   "tentativa": 1,
+   "sonda": {
+    "empresa": false,
+    "ano": true,
+    "ano_perto": true,
+    "palpite": "ROMI3",
+    "ano_palpite": 2022,
+    "confianca": 90,
+    "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free"
+   }
+  },
+  "EALT4|2024|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com balanço intacto (PL 298.5 R$ mi, dívida líquida 137.9 R$ mi) e múltiplos baixos (P/L 5.2; P/VP 1.0), mas lucro ainda sensível ao ciclo e proventos com duplicação de classe na ingestão.",
+   "confianca": 65,
+   "score_qualitativo": 60,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-F9FD9D",
+   "hash_prompt": "c3957804cd60abf5",
+   "tentativa": 1,
+   "sonda": {
+    "empresa": false,
+    "ano": true,
+    "ano_perto": true,
+    "palpite": "RAPT3",
+    "ano_palpite": 2024,
+    "confianca": 55,
+    "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free"
+   }
+  },
   "EALT4|2025|0": {
    "classificacao": "aprovar",
    "motivo": "Lucro crescente, margens elevadas e valuation atrativo sem red flags de governança ou distribuição insustentável.",
@@ -1436,6 +1761,36 @@
     "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
    }
   },
+  "EMBJ3|2018|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com lucro restaurado em A-1 (R$ 418,1 mi) e caixa relevante (R$ 2.208,8 mi), mas alavancada (dívida líquida/PL 0,72) e com lucro trimestral em queda de 81,9% a/a; sem evidência de insustentabilidade de dividendos, aprova-se com ressalvas por sensibilidade a juros e qualidade de dados.",
+   "confianca": 65,
+   "score_qualitativo": 60,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-01E739",
+   "hash_prompt": "fbecf0b2f1d32b90",
+   "tentativa": 1
+  },
+  "EMBJ3|2024|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa de bens industriais em recuperação após prejuízos acumulados, com lucro positivo em A-1 e caixa relevante, mas histórico de perdas recentes, múltiplo elevado e ausência de base documental CVM impedem convicção maior.",
+   "confianca": 55,
+   "score_qualitativo": 52,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-8DAF54",
+   "hash_prompt": "2ffb0ac4ab96eb6c",
+   "tentativa": 1
+  },
+  "EMBJ3|2025|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Lucro de 1628,8 em A-1 com caixa de 8215,8 acima da dívida líquida de 4878,1, mas histórico de prejuízos até A-7 e queda de 72,0% no lucro do último trimestre tornam a tese dependente do ciclo.",
+   "confianca": 65,
+   "score_qualitativo": 60,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-C1D2CD",
+   "hash_prompt": "d99945430d67fa24",
+   "tentativa": 1
+  },
   "EMBR3|2018|0": {
    "classificacao": "aprovar_com_ressalvas",
    "motivo": "Lucro volátil e alta alavancagem deixam os resultados sensíveis ao ciclo de juros; sem red flags confirmadas, a tese depende de recuperação cíclica.",
@@ -1465,6 +1820,35 @@
    "codigo": "EMPRESA-B2C3C2",
    "hash_prompt": "b5f9448185679481",
    "tentativa": 3
+  },
+  "ENAT3|2019|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Lucro recorde de 724,6 em A-1 com balanço intacto (dívida líquida 391,6 e caixa 102,2), mas dividendo por ação saltou de 0,126 para 1,2907 sem comprovação de recorrência e sem múltiplos de valuation disponíveis.",
+   "confianca": 60,
+   "score_qualitativo": 65,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-0ACA5A",
+   "hash_prompt": "85661421160706a0",
+   "tentativa": 1
+  },
+  "ENAT3|2023|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa no A-1 (R$ 154.5 mi) com patrimônio de R$ 4423.0 mi e caixa de R$ 826.7 mi, mas lucro muito abaixo dos picos históricos e sem documentos CVM que corroborem a tese; dividendos foram pagos em anos com prejuízo (A-3 e A-4), o que justifica ressalva.",
+   "confianca": 45,
+   "score_qualitativo": 50,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-1E0AC5",
+   "hash_prompt": "80e8dfbdcd107d14",
+   "tentativa": 1,
+   "sonda": {
+    "empresa": true,
+    "ano": true,
+    "ano_perto": true,
+    "palpite": "ENAT3",
+    "ano_palpite": 2023,
+    "confianca": 75,
+    "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free"
+   }
   },
   "EPAR3|2018|0": {
    "classificacao": "aprovar_com_ressalvas",
@@ -1777,6 +2161,16 @@
     "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
    }
   },
+  "EZTC3|2020|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa, com caixa líquido e balanço intacto, mas resultado ainda depende do ciclo de consumo e a margem está abaixo de picos históricos; sem documentos CVM indexados para a data da decisão.",
+   "confianca": 68,
+   "score_qualitativo": 65,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-4DEDCD",
+   "hash_prompt": "71b4e13469f3faa5",
+   "tentativa": 1
+  },
   "FESA3|2018|0": {
    "classificacao": "aprovar",
    "motivo": "Empresa apresenta margens elevadas, caixa líquido e valuation atraente, sem evidências de distribuição insustentável ou fragilidade governamental nos dados disponíveis.",
@@ -1944,6 +2338,35 @@
     "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
    }
   },
+  "FRAS3|2018|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com caixa relevante e dívida líquida negativa, mas com margem comprimida no trimestre, dividendo elevado em ano isolado e ausência de documentos CVM.",
+   "confianca": 65,
+   "score_qualitativo": 60,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-AE126F",
+   "hash_prompt": "03e249c868f1c555",
+   "tentativa": 1
+  },
+  "FRAS3|2021|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Lucro recuperado para R$ 205,1 mi em A-1 com balanço intacto (caixa R$ 482,4 mi, dívida líquida/PL 0,51) e sem red flags determinísticas, mas dados anonimados e ausência de documentos CVM indexados limitam a confirmação da tese.",
+   "confianca": 65,
+   "score_qualitativo": 65,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-53BC1B",
+   "hash_prompt": "9d5b1f36a5a23758",
+   "tentativa": 1,
+   "sonda": {
+    "empresa": false,
+    "ano": true,
+    "ano_perto": true,
+    "palpite": "TUPY3",
+    "ano_palpite": 2021,
+    "confianca": 85,
+    "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free"
+   }
+  },
   "FRAS3|2022|0": {
    "classificacao": "aprovar_com_ressalvas",
    "motivo": "Lucro apresenta volatilidade cíclica e alta alavancagem, mas balanço permanece com caixa relevante e sem evidência de distribuição insustentável ou interferência do controlador.",
@@ -2010,6 +2433,16 @@
    "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
    "codigo": "EMPRESA-E77D5A",
    "hash_prompt": "a8e58af18d4b23df",
+   "tentativa": 1
+  },
+  "GOAU4|2024|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com balanço intacto (dívida líquida/PL 0,52; caixa R$ 4.841,3 mi em A-1) no vale do ciclo de materiais básicos, mas com lucro em queda (-46,8% no último trimestre vs ano anterior) e limitações de dados (dividendos duplicados, sem CVM indexado).",
+   "confianca": 65,
+   "score_qualitativo": 55,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-98BF7F",
+   "hash_prompt": "f0b5121e36a02582",
    "tentativa": 1
   },
   "GOLL4|2017|0": {
@@ -2159,6 +2592,16 @@
    "hash_prompt": "c7f2ee15fb69d4e7",
    "tentativa": 2
   },
+  "HYPE3|2018|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com dívida líquida negativa de R$ 981,8 mi em A-1 e margem de 26,5%, mas histórico de prejuízo de R$ 69,5 mi em A-7, salto de dividendo de R$ 0,6997 para R$ 3,4858 e ausência de documentos CVM indexados impedem aprovação irrestrita.",
+   "confianca": 60,
+   "score_qualitativo": 65,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-FCCC48",
+   "hash_prompt": "9f531fc3f3ca8fd3",
+   "tentativa": 1
+  },
   "IGTI11|2020|0": {
    "classificacao": "aprovar_com_ressalvas",
    "motivo": "Empresa mostra recuperação de lucro e margens após perdas cíclicas, mas apresenta alavancagem elevada (dívida/PL=0,8) e baixa liquidez de caixa.",
@@ -2167,6 +2610,36 @@
    "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
    "codigo": "EMPRESA-0E60EF",
    "hash_prompt": "feed22e08d06122b",
+   "tentativa": 1
+  },
+  "IGTI3|2018|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Cíclica de consumo em recuperação de margem, mas com caixa reduzido (52,9 R$ mi) e dívida líquida/PL de 1,49; sem evidência de mascaramento de lucro ou interferência do controlador, não há base para veto, apenas ressalvas.",
+   "confianca": 60,
+   "score_qualitativo": 50,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-D54580",
+   "hash_prompt": "4bb2175209c4c32f",
+   "tentativa": 1
+  },
+  "IGTI3|2019|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Lucro de 177.8 e margem de 15.2% em A-1 com FCO positivo de 627.8, mas dívida líquida/PL de 1.59, caixa de 39.2, histórico de prejuízos e ausência de documentos CVM indexados.",
+   "confianca": 55,
+   "score_qualitativo": 52,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-CED53B",
+   "hash_prompt": "f2f3efff38d22c46",
+   "tentativa": 1
+  },
+  "IGTI3|2020|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa em A-1 (R$ 167,4 mi) com recuperação de margem, mas alavancada (dívida líquida/PL de 1,57), com problemas de qualidade de dados (duplicação de proventos) e sem documentos CVM indexados; sem evidência de veto, apenas ressalvas.",
+   "confianca": 65,
+   "score_qualitativo": 58,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-A46CF6",
+   "hash_prompt": "a3b62dbc122c520e",
    "tentativa": 1
   },
   "ISAE3|2019|0": {
@@ -2404,6 +2877,55 @@
     "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
    }
   },
+  "ITSA3|2024|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Lucro consistente e balanço com caixa relevante, mas ausência de documentos CVM indexados e duplicação de proventos por classe limitam a confirmação da tese; não há evidência de interferência do controlador nem lucro insustentável.",
+   "confianca": 65,
+   "score_qualitativo": 70,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-6F4A98",
+   "hash_prompt": "02698648ee7e3582",
+   "tentativa": 1
+  },
+  "ITSA3|2025|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Lucro e patrimônio intactos no vale do ciclo financeiro, mas duplicação de proventos e ausência de documentos CVM impedem confirmação plena da tese.",
+   "confianca": 60,
+   "score_qualitativo": 65,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-503729",
+   "hash_prompt": "a3b92c274dbd9983",
+   "tentativa": 1,
+   "sonda": {
+    "empresa": false,
+    "ano": false,
+    "ano_perto": false,
+    "palpite": "ITUB4",
+    "ano_palpite": 2015,
+    "confianca": 85,
+    "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free"
+   }
+  },
+  "ITSA3|2025|1": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Lucro de A-1 (12.204,1 R$ mi) próximo da máxima histórica, balanço com dívida líquida de 8.862,8 R$ mi e múltiplos baixos (P/L 7,2), mas ausência de documentos CVM e duplicação de proventos impedem confirmação plena.",
+   "confianca": 68,
+   "score_qualitativo": 70,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-503729",
+   "hash_prompt": "a3b92c274dbd9983",
+   "tentativa": 1
+  },
+  "ITSA4|2018|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com balanço sólido (caixa de 4.248,6 mi em A-8 e dívida líquida de 5.004,7 mi em A-1) e múltiplos baixos (P/L 12,8; P/VP 2,0), mas sem documentos CVM indexados e com proventos possivelmente duplicados na ingestão, o que impede confirmação integral da tese.",
+   "confianca": 65,
+   "score_qualitativo": 65,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-86E090",
+   "hash_prompt": "120dea3b72a1a224",
+   "tentativa": 1
+  },
   "ITSA4|2019|0": {
    "classificacao": "aprovar",
    "motivo": "Lucro estável e dividendos sustentáveis, com alavancagem moderada e valuation atraente.",
@@ -2463,6 +2985,16 @@
    "hash_prompt": "a747b9af1cb8a873",
    "tentativa": 1
   },
+  "ITUB3|2018|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com PL e caixa crescentes, sem dívida líquida reportada e múltiplos baixos (P/L 12,3; P/VP 2,2), mas com receita e lucro abaixo do pico, duplicação de proventos na ingestão e ausência de documentos CVM indexados — tese de ciclo, não de preço.",
+   "confianca": 68,
+   "score_qualitativo": 66,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-6EACB8",
+   "hash_prompt": "5114eaa362d8aaa7",
+   "tentativa": 1
+  },
   "ITUB3|2019|0": {
    "classificacao": "aprovar_com_ressalvas",
    "motivo": "Sólido acúmulo patrimonial (PL de R$ 282.959,9 mi) e geração de caixa operacional positiva (FCO de R$ 44.567,3 mi em A-1), com ressalva ao EBIT persistentemente negativo no histórico estruturado.",
@@ -2471,6 +3003,26 @@
    "modelo": "gemini/gemini-3.6-flash",
    "codigo": "EMPRESA-B77B0D",
    "hash_prompt": "acc2a8d037652855",
+   "tentativa": 1
+  },
+  "ITUB3|2025|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa em todos os anos do dossiê, com PL crescente, caixa relevante e múltiplos baixos (P/L 7,2; P/VP 1,4), mas sem documentos CVM e com duplicação de proventos na ingestão, o que impede confirmar integralmente a tese.",
+   "confianca": 65,
+   "score_qualitativo": 70,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-55F7DA",
+   "hash_prompt": "11a6653b5d3ef5f7",
+   "tentativa": 1
+  },
+  "ITUB3|2025|1": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com PL de R$ 105.949,8 mi, caixa de R$ 18.132,8 mi, P/L de 7,2 e P/VP de 1,4, mas sem documentos CVM indexados e com proventos duplicados na ingestão, o que limita a confirmação da tese.",
+   "confianca": 68,
+   "score_qualitativo": 70,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-55F7DA",
+   "hash_prompt": "11a6653b5d3ef5f7",
    "tentativa": 1
   },
   "ITUB4|2019|0": {
@@ -2531,6 +3083,16 @@
    "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
    "codigo": "EMPRESA-1EEAFC",
    "hash_prompt": "b848345cff441bab",
+   "tentativa": 1
+  },
+  "JHSF3|2020|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa em A-1 com múltiplos baixos, mas resultado depende do ciclo (prejuízos em A-4 e A-3) e não há documentos CVM para verificação independente.",
+   "confianca": 65,
+   "score_qualitativo": 60,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-A08840",
+   "hash_prompt": "8ef7af80c6131902",
    "tentativa": 1
   },
   "JHSF3|2021|0": {
@@ -2650,6 +3212,16 @@
     "confianca": 70,
     "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
    }
+  },
+  "LCAM3|2018|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com salto de receita e lucro em A-1, mas dívida alta e múltiplos caros, sem documentos CVM.",
+   "confianca": 60,
+   "score_qualitativo": 55,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-8EE367",
+   "hash_prompt": "39a6153c3a7bfe18",
+   "tentativa": 1
   },
   "LCAM3|2021|0": {
    "classificacao": "aprovar_com_ressalvas",
@@ -3030,6 +3602,45 @@
     "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
    }
   },
+  "MGEL4|2022|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "A empresa voltou ao lucro em A-1 (R$ 153,8 mi) após anos de prejuízo, mas apresenta patrimônio líquido negativo (R$ -258,7 mi) e dívida líquida elevada (R$ 729,4 mi), de modo que o resultado depende do ciclo e o balanço ainda não se restaurou.",
+   "confianca": 55,
+   "score_qualitativo": 48,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-FE5788",
+   "hash_prompt": "a108170be1b9117c",
+   "tentativa": 1
+  },
+  "MGEL4|2023|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa em A-1 com receita crescente e múltiplos baixos, mas lucro líquido (269,0) excede EBIT (122,8) apesar de dívida líquida elevada (707,3) e juros altos, sugerindo itens não operacionais não detalhados; sem documentos CVM para confirmar a natureza do resultado.",
+   "confianca": 40,
+   "score_qualitativo": 38,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-59953C",
+   "hash_prompt": "acd558f6a6e672a3",
+   "tentativa": 1,
+   "sonda": {
+    "empresa": false,
+    "ano": false,
+    "ano_perto": false,
+    "palpite": null,
+    "ano_palpite": null,
+    "confianca": 0,
+    "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free"
+   }
+  },
+  "MGEL4|2024|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa em A-1 (lucro 41,8 R$ mi, PL 50,4 R$ mi, caixa 42,3 R$ mi) após histórico de prejuízos, sem red flag determinística confirmada, mas com dívida líquida elevada (712,3 R$ mi; razão 14,13) e lucro comprimido vs pico (318,2 R$ mi em A-2).",
+   "confianca": 55,
+   "score_qualitativo": 50,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-3F41CA",
+   "hash_prompt": "cdd6925a92c7a614",
+   "tentativa": 1
+  },
   "MGLU3|2017|0": {
    "classificacao": "aprovar",
    "motivo": "Empresa apresenta histórico de lucro volátil mas com balanço razoável e não há red flags confirmadas de insustentabilidade ou má governança.",
@@ -3284,6 +3895,16 @@
    "hash_prompt": "5f1b46ea13d2b2d5",
    "tentativa": 1
   },
+  "MOVI3|2020|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa e em crescimento de receita, mas com alavancagem elevada (dív.líq./PL 2,43), fluxo de caixa operacional negativo (FCO -884,0) e ausência de documentos CVM indexados para verificação de governança.",
+   "confianca": 60,
+   "score_qualitativo": 55,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-12E389",
+   "hash_prompt": "9ce704c7b3a98118",
+   "tentativa": 1
+  },
   "MOVI3|2022|0": {
    "classificacao": "aprovar",
    "motivo": "Lucro volátil mas balanço com dívida elevada; sem red flags confirmadas de insustentabilidade ou governança.",
@@ -3302,6 +3923,16 @@
     "confianca": 80,
     "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
    }
+  },
+  "MSPA3|2019|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com caixa líquido de R$ 33 mi e balanço intacto, mas lucro de R$ 2,7 mi em A-1 muito abaixo de picos históricos e dividendo dos últimos 12 meses (R$ 4,0196 por ação, DY 10,3%) não coberto pelo lucro do período, sem documentos CVM para comprovar sustentabilidade.",
+   "confianca": 50,
+   "score_qualitativo": 40,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-F4D675",
+   "hash_prompt": "0228463c2ce82d02",
+   "tentativa": 1
   },
   "MSPA4|2019|0": {
    "classificacao": "aprovar_com_ressalvas",
@@ -3519,6 +4150,26 @@
    "hash_prompt": "4d5d8bf022d6cf42",
    "tentativa": 1
   },
+  "MULT3|2021|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com caixa relevante e endividamento moderado, mas o lucro de A-1 parece incluir item não recorrente (margem 89,1%, EBIT acima da receita e FCO em queda), então a tese depende da normalização do resultado.",
+   "confianca": 65,
+   "score_qualitativo": 60,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-697611",
+   "hash_prompt": "089427efc7fb85e1",
+   "tentativa": 1
+  },
+  "MULT3|2021|1": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com balanço intacto (PL 5.642,4 R$ mi, caixa 1.108,1 R$ mi), mas salto do lucro de 426,6 (A-2) para 873,3 R$ mi (A-1) com margem de 89,1% e receita em queda não tem confirmação documental de recorrência.",
+   "confianca": 65,
+   "score_qualitativo": 60,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-697611",
+   "hash_prompt": "089427efc7fb85e1",
+   "tentativa": 1
+  },
   "MYPK3|2018|0": {
    "classificacao": "aprovar_com_ressalvas",
    "motivo": "Alavancagem elevada e lucro em declínio, embora dividendos sustentáveis, recomendam cautela.",
@@ -3556,6 +4207,16 @@
    "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
    "codigo": "EMPRESA-937990",
    "hash_prompt": "e634feb20ed008b9",
+   "tentativa": 1
+  },
+  "NEMO3|2022|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Cíclica de materiais básicos com lucro de R$ 3243.1 mi em A-1 após prejuízos acumulados, mas dívida líquida/PL de 15.87 e ausência de documentos CVM impedem confirmação de governança e sustentabilidade do dividendo.",
+   "confianca": 60,
+   "score_qualitativo": 50,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-9AD508",
+   "hash_prompt": "d6dbac790a5d0546",
    "tentativa": 1
   },
   "NUTR3|2017|0": {
@@ -3654,6 +4315,26 @@
    "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
    "codigo": "EMPRESA-640AF0",
    "hash_prompt": "3f4466fceb23fa7f",
+   "tentativa": 1
+  },
+  "OFSA3|2021|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Lucro de 54,0 R$ mi e ROE de 16,0% em A-1 com caixa acima da dívida líquida, mas ausência de documentos CVM e duplicação de proventos na ingestão impõem ressalvas.",
+   "confianca": 60,
+   "score_qualitativo": 58,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-052009",
+   "hash_prompt": "3cae8c1b6215802c",
+   "tentativa": 1
+  },
+  "OIBR3|2019|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Lucro de A-1 (21328,3) não é sustentado pelo EBIT negativo (-4569,3) e concentrou-se no T1 (26490,8), com prejuízos trimestrais recorrentes e alavancagem de 0,53; sem documentos CVM para verificar a natureza do resultado.",
+   "confianca": 55,
+   "score_qualitativo": 40,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-AC33E5",
+   "hash_prompt": "cb02f2cb8d45e7f8",
    "tentativa": 1
   },
   "OIBR4|2019|0": {
@@ -3831,6 +4512,26 @@
    "hash_prompt": "f7a6cda5ef3b8c7b",
    "tentativa": 1
   },
+  "PCAR3|2018|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa cíclica com balanço intacto (caixa de 4012,2 R$ mi e dívida líquida de 842,2 R$ mi em A-1) e lucro se recuperando (654,9 R$ mi em A-1 após prejuízo de -510,0 R$ mi em A-2), negociando a P/L 9,5 e P/VP 0,6; sem evidência de mascaramento de lucro ou interferência do controlador, o resultado depende do ciclo.",
+   "confianca": 68,
+   "score_qualitativo": 64,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-1DEAFD",
+   "hash_prompt": "e82d793866bfd424",
+   "tentativa": 1
+  },
+  "PCAR3|2019|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa cíclica com lucro se recuperando no ciclo (A-1: R$ 1.374,3 mi), balanço intacto (caixa R$ 5.033,1 mi; dívida líquida R$ 1.331,7 mi) e múltiplos muito baixos (P/L 5,1; P/VP 0,6), mas yield de 14,0% depende de dividendo elevado em A-1 (R$ 1,9121 vs R$ 0,3555 em A-2) e há lacunas de dados (proventos duplicados, sem CVM indexado).",
+   "confianca": 68,
+   "score_qualitativo": 66,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-4C4D14",
+   "hash_prompt": "ebf8d78f53baf2a5",
+   "tentativa": 1
+  },
   "PCAR3|2021|0": {
    "classificacao": "aprovar",
    "motivo": "Lucro recuperado, margem e ROE elevados, valuation atraente e alavancagem moderada.",
@@ -3869,6 +4570,26 @@
    "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
    "codigo": "EMPRESA-6C721A",
    "hash_prompt": "2c88cc9bd4adc27d",
+   "tentativa": 1
+  },
+  "PEAB3|2021|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Balança intacta (caixa de R$ 162,5 mi e dívida líquida negativa) e histórico de lucro, mas o resultado de A-1 depende de item não recorrente (EBIT de R$ 534,0 mi sobre receita de R$ 136,1 mi) e o dividendo de R$ 35,0497 por ação (DY 52,7%) é extraordinário, com prazo de validade; o último trimestre já apresentou prejuízo.",
+   "confianca": 45,
+   "score_qualitativo": 48,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-9561BF",
+   "hash_prompt": "4f262a632cb2faa1",
+   "tentativa": 1
+  },
+  "PEAB3|2022|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Balanço intacto com caixa líquida na maior parte da série e lucro histórico positivo, mas o yield de 19,7% depende de dividendos extraordinários de A-1 e o último trimestre apresentou prejuízo acentuado.",
+   "confianca": 65,
+   "score_qualitativo": 55,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-CD82E5",
+   "hash_prompt": "88e20628f85aad21",
    "tentativa": 1
   },
   "PEAB3|2023|0": {
@@ -4027,6 +4748,25 @@
    "codigo": "EMPRESA-585CE2",
    "hash_prompt": "df1b7f3c6dcc0041",
    "tentativa": 1
+  },
+  "POMO4|2017|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com balanço intacto (caixa de R$ 1.030,2 mi e dívida líquida de R$ 928,7 mi em A-1) e lucro de R$ 186,9 mi, mas resultado comprimido pelo ciclo e último trimestre negativo; sem red flag de governança ou lucro mascarado, aprovada com ressalvas por dependência cíclica e limitações de dados.",
+   "confianca": 60,
+   "score_qualitativo": 58,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-06C6EF",
+   "hash_prompt": "41ce78f657722bd0",
+   "tentativa": 1,
+   "sonda": {
+    "empresa": false,
+    "ano": true,
+    "ano_perto": true,
+    "palpite": "POSI3",
+    "ano_palpite": 2017,
+    "confianca": 90,
+    "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free"
+   }
   },
   "POMO4|2018|0": {
    "classificacao": "aprovar",
@@ -4380,6 +5120,26 @@
    "hash_prompt": "81e75f3b6c1354a9",
    "tentativa": 2
   },
+  "RADL3|2021|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com balanço intacto no fundo do ciclo (lucro de 487.3 em A-1, caixa de 885.7 e recuperação de +88.0% no lucro trimestral), mas múltiplos elevados (P/L 85.5; EV/EBIT 47.3) e limitações de dados (duplicação de proventos, sem documentos CVM) justificam ressalvas.",
+   "confianca": 65,
+   "score_qualitativo": 60,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-50525A",
+   "hash_prompt": "0aa175fc3b714edb",
+   "tentativa": 1
+  },
+  "RADL3|2022|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com balanço intacto e margem em recuperação após compressão cíclica, mas sem documentos CVM indexados e com duplicação de proventos na ingestão; não há evidência de insustentabilidade ou destruição de valor pelo controlador.",
+   "confianca": 60,
+   "score_qualitativo": 55,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-F7CD46",
+   "hash_prompt": "85144c5b60280c2b",
+   "tentativa": 1
+  },
   "RAIL3|2018|0": {
    "classificacao": "aprovar_com_ressalvas",
    "motivo": "Lucro volátil e alta alavancagem, mas operação gera EBIT positivo e balanço ainda possui caixa; não há evidência de mascaramento de lucro.",
@@ -4509,6 +5269,36 @@
    "hash_prompt": "dcf4099ae11a2fd3",
    "tentativa": 1
   },
+  "RAPT3|2021|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com patrimônio líquido positivo e múltiplos baixos, mas resultado depende do ciclo industrial e há limitações de dados (proventos possivelmente duplicados, sem CVM indexado).",
+   "confianca": 62,
+   "score_qualitativo": 58,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-F88235",
+   "hash_prompt": "39224fcca63623f9",
+   "tentativa": 1
+  },
+  "RAPT4|2017|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa de bens industriais em vale de ciclo: prejuízo em A-2 (-12,6 R$ mi) e A-1 (-34,5 R$ mi), mas caixa de 582,2 R$ mi e PL de 725,8 R$ mi em A-1; dividendos zerados nos últimos 12 meses e EV/EBIT de 139,0 refletem lucro comprimido por juros altos (dív.líq./PL 0,92), não insustentabilidade operacional.",
+   "confianca": 60,
+   "score_qualitativo": 50,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-444A02",
+   "hash_prompt": "201d927f15765d44",
+   "tentativa": 1
+  },
+  "RAPT4|2017|1": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Prejuízo em A-1 (-34.5 R$ mi) e A-2 (-12.6 R$ mi) com margem negativa, mas balanço com caixa relevante (582.2 R$ mi) e histórico de lucro; tese depende de reversão cíclica, não de mascaramento.",
+   "confianca": 55,
+   "score_qualitativo": 45,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-444A02",
+   "hash_prompt": "201d927f15765d44",
+   "tentativa": 1
+  },
   "RAPT4|2018|0": {
    "classificacao": "aprovar",
    "motivo": "Empresa apresenta balanço confortável e geração de caixa consistente, apesar da volatilidade cíclica do lucro, sem evidências de distribuição insustentável ou problemas de governança.",
@@ -4558,6 +5348,25 @@
    "codigo": "EMPRESA-25C6C6",
    "hash_prompt": "30339392777eea24",
    "tentativa": 1
+  },
+  "RENT3|2018|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa e com crescimento de receita, mas com alavancagem elevada (dívida líquida/PL de 4,01), fluxo de caixa operacional negativo em A-1 (R$ -1.298,6 mi) e múltiplos caros (P/L 60,5; EV/EBIT 42,4); sem documentos CVM para confirmar eventos societários.",
+   "confianca": 60,
+   "score_qualitativo": 55,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-CD00C5",
+   "hash_prompt": "415c921271b7bf6c",
+   "tentativa": 1,
+   "sonda": {
+    "empresa": false,
+    "ano": true,
+    "ano_perto": true,
+    "palpite": null,
+    "ano_palpite": 2018,
+    "confianca": 35,
+    "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free"
+   }
   },
   "RENT3|2019|0": {
    "classificacao": "aprovar_com_ressalvas",
@@ -4616,6 +5425,26 @@
    "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
    "codigo": "EMPRESA-0D319C",
    "hash_prompt": "1565bc54d80da1ee",
+   "tentativa": 1
+  },
+  "RIAA3|2018|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Cíclico de consumo com lucro se recuperando no ciclo (628.1 em A-1 ante 349.8 em A-2) e alavancagem moderada, mas proventos com duplicação de classe e ausência de documentos CVM reduzem a confiança na tese.",
+   "confianca": 70,
+   "score_qualitativo": 65,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-59FA90",
+   "hash_prompt": "21126fbbc7b4f23d",
+   "tentativa": 1
+  },
+  "RIAA3|2019|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com balanço intacto e recuperação de margem no ciclo, mas resultado depende do ciclo de consumo e há lacunas documentais (sem CVM indexado, duplicação de proventos e sem EBITDA).",
+   "confianca": 65,
+   "score_qualitativo": 65,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-F2B503",
+   "hash_prompt": "de4cec2910c35199",
    "tentativa": 1
   },
   "RLOG3|2017|0": {
@@ -4805,6 +5634,16 @@
    "hash_prompt": "3f83528188325e42",
    "tentativa": 1
   },
+  "RSUL3|2025|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "A empresa apresenta lucro e patrimônio positivos em A-1 com alavancagem moderada, mas o histórico de prejuízos e patrimônio negativo, o dividend yield anômalo de 1798.7% e a ausência de documentos CVM impedem aprovação irrestrita.",
+   "confianca": 45,
+   "score_qualitativo": 45,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-F5709D",
+   "hash_prompt": "ea9123d74e2ff554",
+   "tentativa": 1
+  },
   "RSUL4|2022|0": {
    "classificacao": "aprovar_com_ressalvas",
    "motivo": "Lucro recente forte e balanço melhorado, mas histórico volátil e ausência de documentos CVM limitam convicção.",
@@ -4842,6 +5681,16 @@
    "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
    "codigo": "EMPRESA-B5DFDF",
    "hash_prompt": "b48458cc2cc0c1cb",
+   "tentativa": 1
+  },
+  "RSUL4|2024|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa de bens industriais com balanço reparado (PL de 146,9 R$ mi e dívida líquida de 0,2 R$ mi em A-1) e lucro ainda positivo (42,1 R$ mi), mas com dividendo por ação saltando de 0,0265 (A-18) para 1,3687 (A-1) e lucro em queda no ciclo, o que exige ressalva sobre a recorrência da distribuição.",
+   "confianca": 60,
+   "score_qualitativo": 55,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-5F9740",
+   "hash_prompt": "97b3373b918e3293",
    "tentativa": 1
   },
   "RSUL4|2025|0": {
@@ -5467,6 +6316,16 @@
     "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
    }
   },
+  "SYNE3|2022|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Lucro e dividendo de A-1 concentrados em trimestre extraordinário (A-1T4), mas operação mantém lucro positivo e caixa relevante; tese depende de normalização cíclica e queda da Selic.",
+   "confianca": 60,
+   "score_qualitativo": 50,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-2CA313",
+   "hash_prompt": "6d48b4f630ebe74e",
+   "tentativa": 1
+  },
   "SYNE3|2024|0": {
    "classificacao": "aprovar",
    "motivo": "Lucro baixo refletindo ciclo, balanço sólido e ausência de red flags de distribuição ou governança.",
@@ -5857,6 +6716,16 @@
    "hash_prompt": "b274afaa23a30167",
    "tentativa": 1
   },
+  "TEND3|2021|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com geração de caixa, mas lucro e margem caíram no último ano (ciclo) e dívida líquida é alta (1,26x PL), sem documentos CVM para confirmar governança.",
+   "confianca": 60,
+   "score_qualitativo": 58,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-0FB9C1",
+   "hash_prompt": "fc07a24996ed2feb",
+   "tentativa": 1
+  },
   "TGMA3|2017|0": {
    "classificacao": "aprovar_com_ressalvas",
    "motivo": "Alavancagem elevada (dívida líquida/PL = 1,04) e volatilidade de lucro (quarto trimestre -423,1% a/a) recomendam ressalva apesar da valorização recente de preço.",
@@ -5965,6 +6834,16 @@
    "hash_prompt": "a0fcae85a4dea183",
    "tentativa": 1
   },
+  "TRIS3|2019|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa em A-1 com balanço intacto e dívida líquida baixa, mas sem documentos CVM indexados e com duplicação de proventos na ingestão, o que limita a confirmação da tese.",
+   "confianca": 62,
+   "score_qualitativo": 58,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-887F5F",
+   "hash_prompt": "d2307bdb54f8a357",
+   "tentativa": 1
+  },
   "TRIS3|2020|0": {
    "classificacao": "aprovar",
    "motivo": "Ausência de red flags confirmadas e valuation atrativo com melhora recente de lucro.",
@@ -5992,6 +6871,25 @@
     "ano_palpite": 2021,
     "confianca": 85,
     "modelo": "gemini/gemini-3.6-flash"
+   }
+  },
+  "TUPY3|2018|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa em A-1 (lucro 140.8, caixa 794.1, dívida líquida 693.9) em recuperação de prejuízo cíclico em A-2 (-166.5), mas sem documentos CVM indexados e com escala dos valores ocultada, o que impede confirmar governança e sustentabilidade do dividendo.",
+   "confianca": 60,
+   "score_qualitativo": 60,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-0AC56B",
+   "hash_prompt": "7d98e721dde7f8e1",
+   "tentativa": 1,
+   "sonda": {
+    "empresa": false,
+    "ano": true,
+    "ano_perto": true,
+    "palpite": "POMO3",
+    "ano_palpite": 2018,
+    "confianca": 70,
+    "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free"
    }
   },
   "UCAS3|2018|0": {
@@ -6168,6 +7066,16 @@
    "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
    "codigo": "EMPRESA-2398EB",
    "hash_prompt": "dfaa9ba2578ab4ea",
+   "tentativa": 1
+  },
+  "UNIP6|2020|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa com balanço intacto (caixa 537,7 e dívida líquida 670,5 em A-1) em vale de ciclo, mas lucro e margem dependem do ciclo e há lacunas de dados (sem CVM, duplicação de proventos).",
+   "confianca": 65,
+   "score_qualitativo": 60,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-ACD9C2",
+   "hash_prompt": "4d308c11ae6ea6ec",
    "tentativa": 1
   },
   "UNIP6|2021|0": {
@@ -6413,6 +7321,35 @@
     "confianca": 0,
     "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
    }
+  },
+  "VSPT4|2019|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa em A-1 (R$ 142,3 mi) com caixa líquido de R$ 33 mi e melhora trimestral, mas histórico de prejuízos cíclicos e ausência de documentos CVM e de valuation impedem convicção plena; o resultado depende do ciclo.",
+   "confianca": 60,
+   "score_qualitativo": 55,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-A248B2",
+   "hash_prompt": "37e9ff4b8a371f48",
+   "tentativa": 1,
+   "sonda": {
+    "empresa": false,
+    "ano": true,
+    "ano_perto": true,
+    "palpite": null,
+    "ano_palpite": 2019,
+    "confianca": 55,
+    "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free"
+   }
+  },
+  "VSPT4|2021|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Receita de R$ 1.344,9 mi em A-1 e caixa líquido de R$ 180,4 mi, mas lucro negativo de R$ 102,4 mi no último exercício e prejuízo de R$ 65,7 mi no último trimestre, sem dividendos e sem preço ou múltiplos disponíveis; tese depende de recuperação cíclica do resultado operacional.",
+   "confianca": 45,
+   "score_qualitativo": 38,
+   "modelo": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+   "codigo": "EMPRESA-B4A3D8",
+   "hash_prompt": "ed786a151c039f1f",
+   "tentativa": 1
   },
   "VULC3|2018|0": {
    "classificacao": "aprovar",
@@ -6789,5 +7726,8 @@
    "tentativa": 1
   }
  },
- "falhas_da_ultima_rodada": {}
+ "falhas_da_ultima_rodada": {
+  "sonda|PEAB3|2022": "ValueError: resposta vazia do provedor",
+  "sonda|RAPT4|2017": "TimeoutError: provedor não respondeu em 600 s"
+ }
 }

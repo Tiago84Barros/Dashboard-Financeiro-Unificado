@@ -298,6 +298,39 @@ def _sem_cor_literal(html: str) -> bool:
     return not re.search(r"#(?!\d+;)", html.replace("&#", ""))
 
 
+def test_lista_de_renda_fixa_sai_em_cards_e_nao_em_tabela(carteira):
+    ctx, an = carteira
+    b = next(b for b in rs.blocos(an, ctx) if b.chave in rs.GRUPOS_EM_LISTA)
+    html = tela.cartao_lista(b)
+    assert "<table" not in html and "\n" not in html
+    assert html.count('class="ia-tit"') == len(b.linhas) >= 1
+    assert html.count("<div") == html.count("</div>")
+    for ln in b.linhas:
+        assert ln.ticker in html
+    # a barra é a parte do título no grupo, e as partes somam 100%
+    larguras = [float(x) for x in re.findall(r'width:([\d.]+)%', html)]
+    assert len(larguras) == len(b.linhas)
+    assert sum(larguras) == pytest.approx(100, abs=0.2)
+    assert tela._parte_do_grupo(None, 10.0) is None
+    assert tela._parte_do_grupo(5.0, 0.0) is None
+
+
+def test_lista_sem_valor_de_um_titulo_nao_afirma_parte_do_grupo(carteira):
+    """Revisão do #746: o Bloco.valor soma ``valor_mercado or 0.0``; com um
+    título sem valoração, o outro sairia como "100% do grupo"."""
+    ctx, an = carteira
+    b = next(b for b in rs.blocos(an, ctx) if b.chave in rs.GRUPOS_EM_LISTA)
+    a0 = b.analises[0]
+    com = replace(a0, ativo=replace(a0.ativo, ticker="TIT1",
+                                    valor_mercado=1000.0))
+    sem = replace(a0, ativo=replace(a0.ativo, ticker="TIT2",
+                                    valor_mercado=None))
+    html = tela.cartao_lista(replace(b, valor=1000.0, analises=(com, sem)))
+    assert html.count('class="ia-tit"') == 2
+    assert "do grupo" not in html and "ia-tit-barra" not in html
+    assert "TIT1" in html and "TIT2" in html
+
+
 def test_cartoes_so_usam_tokens_e_nao_viram_link_perigoso(carteira):
     ctx, an = carteira
     a = _com_acao(_com_pares(_por(an, "BBAS3")), m.REDUZIR_CONCENTRACAO, "x")

@@ -30,17 +30,28 @@ def validation_supports_strategy(validation: dict[str, Any], strategy_id: str) -
 
 
 # Piso do limite inferior do IC 95% do excesso mensal sobre o IFIX. É AVISO,
-# não portão: `validate_methodology` continua sem exigir excesso positivo.
+# não portão: `validate_methodology` exige que a carteira ganhe do IFIX na
+# média (`PISO_EXCESSO_MEDIO`, abaixo), não que o ganho seja significativo.
 #
 # Medido no run 90 (v6.10.0, 70 períodos): excesso médio de +0,136 p.p./mês
 # com IC [−0,127; +0,380]. Os runs 88 e 89 dão o mesmo retrato (limite
-# inferior −0,112 e −0,141). Com o piso como bloqueio, os três reprovam e a
-# vitrine de FIIs, recém-destravada no PR #486, para de publicar. Endurecer o
-# portão é decisão humana; até lá o selo "Aprovado" sai acompanhado do IC e
-# da marca "excesso não significativo", para não ser lido como "bate o
-# índice". Os três leitores (card da carteira, aba de validação e
-# `core.validacao_motor`) leem esta constante: guarda duplicada diverge.
+# inferior −0,112 e −0,141). Com este piso como bloqueio, nenhum run da
+# história do app teria passado. Até que o usuário peça mais, o selo
+# "Aprovado" sai acompanhado do IC e da marca "excesso não significativo",
+# para não ser lido como "bate o índice com folga". Os três leitores (card da
+# carteira, aba de validação e `core.validacao_motor`) leem esta constante:
+# guarda duplicada diverge.
 PISO_IC_EXCESSO = 0.0
+
+# Piso do excesso MÉDIO mensal líquido sobre o IFIX, e este sim é portão.
+# Decisão do usuário de 19/11/2026: a validação só sai "passed" se a carteira
+# ganhou do IFIX na média do walk-forward. Antes o portão atestava só o
+# protocolo (integridade temporal, viabilidade, restrições), e o run 153
+# (v6.8, 116 períodos) saiu "passed" com excesso de −0,189 p.p./mês, e a
+# vitrine o publicou com o selo de aprovada. Estritamente maior: empatar com o
+# índice não é ganhar dele. A média é a da manchete (publicável + caixa a
+# Selic), a mesma que o card mostra -- o mês em caixa foi decisão da regra.
+PISO_EXCESSO_MEDIO = 0.0
 
 
 def leitura_do_excesso(metrics: dict[str, Any] | None) -> dict[str, Any]:
@@ -74,12 +85,41 @@ def leitura_do_excesso(metrics: dict[str, Any] | None) -> dict[str, Any]:
         "periodos": int(ci.get("n") or 0),
         "piso": PISO_IC_EXCESSO,
         "significativo": bool(disponivel and inferior > PISO_IC_EXCESSO),
+        # Achado D12 (17/11/2026): "não significativo" cobria do mesmo jeito o
+        # run que ganha do IFIX sem significância e o que PERDE dele -- o run 66
+        # saía "Aprovado · excesso não significativo" com média negativa. As
+        # duas marcas abaixo separam o lado do zero. Desde 19/11/2026 o portão
+        # também bloqueia média <= 0 (ver PISO_EXCESSO_MEDIO), então um run
+        # "passed" não chega mais aqui negativo; a marca fica para runs antigos.
+        "negativo": bool(disponivel and media is not None and media < 0.0),
+        # IC inteiro abaixo de zero: a carteira perde do índice, e isso É
+        # distinguível de acaso. Régua fixa em zero, não no piso: o piso é a
+        # exigência para "ganha"; perder é perder.
+        "perde_significativo": bool(disponivel and superior < 0.0),
     }
 
 
 def _pp(valor: float) -> str:
     """Retorno mensal em fração para pontos percentuais com vírgula."""
     return f"{valor * 100:+.3f}".replace(".", ",").replace("-", "−")
+
+
+def veredito_do_excesso(leitura: dict[str, Any]) -> str | None:
+    """Rótulo curto do excesso, o MESMO em todas as telas e no motor.
+
+    ``None`` quando o IC não existe -- ausência não vira veredito. Ordem:
+    ganha com significância > perde com significância > média negativa sem
+    significância > média positiva (ou ausente) sem significância.
+    """
+    if not leitura.get("disponivel"):
+        return None
+    if leitura.get("significativo"):
+        return "significativo"
+    if leitura.get("perde_significativo"):
+        return "perde do IFIX, significativo"
+    if leitura.get("negativo"):
+        return "excesso negativo, não significativo"
+    return "excesso não significativo"
 
 
 def texto_do_excesso(leitura: dict[str, Any]) -> str:
@@ -89,10 +129,8 @@ def texto_do_excesso(leitura: dict[str, Any]) -> str:
     media = leitura.get("media")
     prefixo = (f"excesso médio de {_pp(media)} p.p./mês sobre o IFIX, "
                if media is not None else "excesso sobre o IFIX, ")
-    veredito = ("significativo" if leitura["significativo"]
-                else "excesso não significativo")
     return (f"{prefixo}IC 95% de {_pp(leitura['inferior'])} a "
-            f"{_pp(leitura['superior'])} p.p. — {veredito}")
+            f"{_pp(leitura['superior'])} p.p. — {veredito_do_excesso(leitura)}")
 
 
 @dataclass(frozen=True)
@@ -344,12 +382,91 @@ def _metricas_da_coorte(bloco: pd.DataFrame) -> dict[str, Any]:
     }
 
 
+def _payload(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return dict(parsed) if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def ultimo_snapshot_na_data(
+    snapshots: pd.DataFrame,
+    decision: pd.Timestamp,
+    idade_max_dias: int | None = None,
+) -> pd.DataFrame:
+    """Último snapshot de cada fundo público em ``decision``.
+
+    ``snapshots`` com ``reference_date`` normalizada e ``available_at`` sem
+    fuso (o preparo de `robust_optimizer_point_in_time_backtest`): referência
+    e disponibilidade até a data, sem a linha de base da migração.
+
+    ``idade_max_dias`` descarta o snapshot com referência mais antiga que a
+    data menos esse prazo: o fundo que saiu da bolsa não gera snapshot novo e,
+    sem o corte, entraria com o do ano anterior. None mantém o comportamento
+    do backtest robusto, que não corta (mudá-lo altera o backtest de produção
+    e pede medição própria).
+    """
+    decision = pd.Timestamp(decision)
+    decision_cutoff = decision + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
+    s = snapshots
+    mask = (s["reference_date"] <= decision) & (s["available_at"] <= decision_cutoff)
+    if idade_max_dias is not None:
+        mask &= s["reference_date"] >= decision.normalize() - pd.Timedelta(days=int(idade_max_dias))
+    universe = s[mask]
+    if "availability_quality" in universe:
+        universe = universe[
+            universe["availability_quality"] != "migration_baseline"
+        ]
+    return (
+        universe.sort_values(["reference_date", "available_at"])
+        .drop_duplicates("ticker", keep="last")
+    )
+
+
+def preparar_snapshots(snapshots: pd.DataFrame) -> pd.DataFrame:
+    """Datas no formato que `ultimo_snapshot_na_data` compara."""
+    s = snapshots.copy()
+    s["reference_date"] = pd.to_datetime(s["reference_date"]).dt.normalize()
+    s["available_at"] = pd.to_datetime(s["available_at"], utc=True).dt.tz_localize(None)
+    return s
+
+
+def linhas_pit_na_data(latest: pd.DataFrame) -> list[dict[str, Any]]:
+    """Linhas de entrada da elegibilidade a partir de `ultimo_snapshot_na_data`.
+
+    Ponto único: o backtest robusto e a carteira de safras
+    (``scripts/medir_safras_fii.py``) montam as linhas daqui.
+    """
+    rows: list[dict[str, Any]] = []
+    for record in latest.to_dict("records"):
+        row = _payload(record.get("portfolio_input_json"))
+        if not row:
+            continue
+        row.update({
+            "ticker": str(record["ticker"]),
+            "tipo": row.get("tipo") or record.get("fii_type"),
+            "type_score": float(record["score"]),
+            "confidence": float(record["confidence"]),
+            "coverage": float(record.get("coverage") or 0.0),
+            # Neutraliza somente o gate recursivo de validação. Não altera pesos.
+            "publication_status": "validated",
+        })
+        rows.append(row)
+    return rows
+
+
 def robust_optimizer_point_in_time_backtest(
     snapshots: pd.DataFrame, returns: pd.DataFrame, benchmark: pd.Series,
     macro_scenarios: dict[str, dict[str, float]], *,
     top_n: int = 12, transaction_cost: float = .0015, slippage: float = .0010,
     correlation_penalty: float = .12, min_return_coverage: float = .80,
     correlation_lookback_months: int = 36, correlation_min_months: int = 12,
+    medir_rascunho: bool = False,
 ) -> dict[str, Any]:
     """Walk-forward do mesmo otimizador robusto usado pela carteira-modelo.
 
@@ -365,8 +482,32 @@ def robust_optimizer_point_in_time_backtest(
     de provento; sem a coluna ``price_return`` nos retornos ele não é
     calculado e ``ir_calculado`` sai ``False`` -- nunca um zero silencioso.
     O IFIX de comparação segue bruto: é o índice, não um investidor.
+
+    Período sem carteira publicável é CAIXA À SELIC (unificação com a
+    medição fora da amostra da Empresas B3, 18/11/2026). A tela só deixa
+    publicar a carteira que passa no portão de transparência; o rascunho
+    recusado aparece, mas ninguém o recebe como carteira-modelo. Quem seguia
+    a estratégia ficou em caixa naquele mês -- e também no mês em que o
+    otimizador não montou carteira nenhuma. Os dois casos rendem a Selic da
+    decisão (a do cenário macro, observável na data), pagam o giro e o IR de
+    zerar a posição anterior, e a recompra no período seguinte paga giro
+    cheio. Ficam FORA da curva, como antes: o aquecimento (períodos antes da
+    primeira carteira montada), a safra sem insumo (colunas ausentes, cenário
+    macro ausente, estágio ``data_prerequisites``) e o período sem datas de
+    retorno -- falta de dado não é decisão de ficar em caixa.
+
+    ``medir_rascunho=True`` mede o rascunho recusado com os próprios pesos,
+    como fazia a 1ª versão da correção. É SENSIBILIDADE: a chamada padrão a
+    roda sozinha quando há recusa e devolve o resumo em
+    ``sensibilidade_rascunho``. Mesma regra de
+    ``core.b3_oos_carteira.carteira_salvavel``.
     """
-    from core.backtest_liquido import IR_FII_GANHO, RastreadorIR, premissas_fii
+    from core.backtest_liquido import (
+        IR_FII_GANHO,
+        RastreadorIR,
+        premissas_fii,
+        renda_reinvestida,
+    )
     from core.fii_carteira_protegida import montar_carteira_com_concessao
     from core.fii_integrated_model import (
         ColunasDeElegibilidadeAusentes,
@@ -392,11 +533,9 @@ def robust_optimizer_point_in_time_backtest(
             "blockers": ["inputs PIT do otimizador robusto ausentes"],
         }
 
-    s = snapshots.copy()
+    s = preparar_snapshots(snapshots)
     r = returns.copy()
     b = benchmark.copy()
-    s["reference_date"] = pd.to_datetime(s["reference_date"]).dt.normalize()
-    s["available_at"] = pd.to_datetime(s["available_at"], utc=True).dt.tz_localize(None)
     r["date"] = pd.to_datetime(r["date"]).dt.normalize()
     b.index = pd.to_datetime(b.index).normalize()
     dates = sorted(set(s["reference_date"]))
@@ -422,25 +561,67 @@ def robust_optimizer_point_in_time_backtest(
     optimizer_input_skips = 0
     # Um periodo em que o otimizador ENTREGOU carteira e a publicacao foi
     # recusada nao e a mesma coisa que um periodo em que ele nao entregou
-    # nada. Os dois contam contra a fracao viavel -- do ponto de vista de quem
-    # investia naquele mes, o sistema nao tinha carteira para dar --, mas a
-    # causa e outra, e o bloqueador precisa dizer qual delas predomina.
+    # nada. Os dois contam contra a fracao viavel -- ela mede quantas vezes
+    # havia carteira PUBLICAVEL --, mas a causa e outra, e o bloqueador
+    # precisa dizer qual delas predomina. Na curva os dois viram caixa a
+    # Selic; so com `medir_rascunho` o recusado e medido com os pesos.
     publicacao_recusada: list[str] = []
     optimizer_failures: list[dict[str, Any]] = []
+    # Aquecimento: antes da primeira carteira montada a estrategia ainda nao
+    # existe, e caixa ali seria um periodo inventado. Igual nas duas cadeias
+    # (com e sem `medir_rascunho`), porque depende so de haver itens.
+    comecou = False
 
-    def payload(value: Any) -> dict[str, Any]:
-        if isinstance(value, dict):
-            return dict(value)
-        if isinstance(value, str):
-            try:
-                parsed = json.loads(value)
-                return dict(parsed) if isinstance(parsed, dict) else {}
-            except json.JSONDecodeError:
-                return {}
-        return {}
+    def _retorno_do_benchmark(inicio: pd.Timestamp, fim: pd.Timestamp | None) -> float:
+        periodo = b[b.index >= inicio]
+        if fim is not None:
+            periodo = periodo[periodo.index < fim]
+        periodo = periodo.dropna()
+        return float((1.0 + periodo).prod() - 1.0) if len(periodo) else np.nan
+
+    def _periodo_em_caixa(decision: pd.Timestamp, execution_date: pd.Timestamp,
+                          next_execution: pd.Timestamp | None, *,
+                          motivo: str, recusado: bool) -> None:
+        """Registra o periodo como caixa a Selic, com giro e IR de zerar."""
+        nonlocal previous
+        if not comecou:
+            return
+        valores = macro_scenarios.get(decision.date().isoformat()) or {}
+        selic = valores.get("selic")
+        if selic is None or not np.isfinite(float(selic)):
+            return
+        meses = [d for d in return_dates if d >= execution_date
+                 and (next_execution is None or d < next_execution)]
+        if not meses:
+            return
+        gross = float((1.0 + float(selic) / 100.0) ** (len(meses) / 12.0) - 1.0)
+        vazia = pd.Series(dtype=float)
+        turn = portfolio_turnover(previous, vazia) if not previous.empty else 0.0
+        after_costs = gross - turn * (transaction_cost + slippage)
+        ir_periodo = rastreador_ir.rebalancear({}) if ir_calculado else 0.0
+        observations.append({
+            "date": execution_date, "decision_date": decision,
+            "portfolio_return": after_costs - ir_periodo,
+            "benchmark_return": _retorno_do_benchmark(execution_date, next_execution),
+            "portfolio_return_bruto": gross,
+            "portfolio_return_apos_custos": after_costs,
+            "ir_periodo": ir_periodo,
+            # Sem carteira nao ha universo a cobrir: NaN fica fora da media de
+            # cobertura em vez de puxa-la para zero ou para um.
+            "coverage": np.nan, "turnover": turn,
+            "peso_ausente": 0.0,
+            "holdings": {},
+            "protecao_cedida": [],
+            "viability_notes": [],
+            "carteira_de_excecao": False,
+            "publicacao_recusada": bool(recusado),
+            "caixa": True,
+            "motivo_caixa": motivo,
+        })
+        turnovers.append(turn)
+        previous = vazia
 
     for position, decision in enumerate(dates):
-        decision_cutoff = decision + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
         possible_execution = [value for value in return_dates if value > decision]
         if not possible_execution:
             continue
@@ -451,32 +632,8 @@ def robust_optimizer_point_in_time_backtest(
             choices = [value for value in return_dates if value > next_decision]
             next_execution = choices[0] if choices else None
 
-        universe = s[
-            (s["reference_date"] <= decision) & (s["available_at"] <= decision_cutoff)
-        ]
-        if "availability_quality" in universe:
-            universe = universe[
-                universe["availability_quality"] != "migration_baseline"
-            ]
-        latest = (
-            universe.sort_values(["reference_date", "available_at"])
-            .drop_duplicates("ticker", keep="last")
-        )
-        rows: list[dict[str, Any]] = []
-        for record in latest.to_dict("records"):
-            row = payload(record.get("portfolio_input_json"))
-            if not row:
-                continue
-            row.update({
-                "ticker": str(record["ticker"]),
-                "tipo": row.get("tipo") or record.get("fii_type"),
-                "type_score": float(record["score"]),
-                "confidence": float(record["confidence"]),
-                "coverage": float(record.get("coverage") or 0.0),
-                # Neutraliza somente o gate recursivo de validação. Não altera pesos.
-                "publication_status": "validated",
-            })
-            rows.append(row)
+        latest = ultimo_snapshot_na_data(s, decision)
+        rows = linhas_pit_na_data(latest)
         try:
             eligible, eligibility = apply_integrated_eligibility(
                 rows, IntegratedEligibilityPolicy(),
@@ -502,6 +659,11 @@ def robust_optimizer_point_in_time_backtest(
                 "reason": "universo elegível vazio e sem candidatos à concessão",
                 "failure_stage": "data_prerequisites",
             })
+            if rows:
+                # Havia fundos com dado e nenhum passou na elegibilidade: a
+                # estrategia decidiu nao investir. Sem `rows` e falta de dado.
+                _periodo_em_caixa(decision, execution_date, next_execution,
+                                  motivo="sem_carteira", recusado=False)
             continue
         # Estrito vazio COM candidatos não é safra perdida: é exatamente o caso
         # em que a concessão existe. Pular aqui era desligar o mecanismo na
@@ -542,20 +704,13 @@ def robust_optimizer_point_in_time_backtest(
             optimizer_kwargs=_optimizer_kwargs,
             optimizer=optimize_diligence_portfolio,
         )
-        if not optimized.get("items") or not optimized.get("can_publish"):
-            failure_stage = str(optimized.get("failure_stage") or "optimizer")
-            if failure_stage == "data_prerequisites":
-                optimizer_input_skips += 1
-            else:
-                attempted_optimizer += 1
-                if optimized.get("items"):
-                    publicacao_recusada.append(decision.date().isoformat())
-            optimizer_failures.append({
+        def _registro_de_falha(stage: str) -> dict[str, Any]:
+            return {
                 "decision_date": decision.date().isoformat(),
                 "reason": " · ".join(
                     optimized.get("blockers") or ["otimização não publicável"]
                 ),
-                "failure_stage": failure_stage,
+                "failure_stage": stage,
                 "eligible_assets": len(eligible),
                 "dimension_coverage": optimized.get("dimension_coverage") or {},
                 "candidate_pool": optimized.get("candidate_pool")
@@ -569,10 +724,43 @@ def robust_optimizer_point_in_time_backtest(
                 "available_by_type": (
                     optimized.get("feasibility_diagnostics") or {}
                 ).get("available_by_type") or {},
-            })
+            }
+
+        if not optimized.get("items"):
+            failure_stage = str(optimized.get("failure_stage") or "optimizer")
+            if failure_stage == "data_prerequisites":
+                optimizer_input_skips += 1
+            else:
+                attempted_optimizer += 1
+            optimizer_failures.append(_registro_de_falha(failure_stage))
+            if failure_stage != "data_prerequisites":
+                # O otimizador tentou e nao montou carteira: caixa.
+                _periodo_em_caixa(decision, execution_date, next_execution,
+                                  motivo="sem_carteira", recusado=False)
             continue
         attempted_optimizer += 1
-        successful_optimizer += 1
+        comecou = True
+        # Carteira montada e publicacao recusada: a tela mostra o rascunho
+        # (`views/fiis.py`, "Rascunho nao publicavel", com pesos e motivos),
+        # mas nao deixa publica-lo -- quem seguia a carteira-modelo ficou em
+        # caixa. A manchete conta o periodo como caixa a Selic; os pesos do
+        # rascunho entram so na sensibilidade (`medir_rascunho`). A fracao
+        # viavel nao muda: o periodo continua fora de `successful_optimizer`,
+        # porque a fracao mede quantas vezes havia carteira PUBLICAVEL.
+        publicavel = bool(optimized.get("can_publish"))
+        if publicavel:
+            successful_optimizer += 1
+        else:
+            publicacao_recusada.append(decision.date().isoformat())
+            optimizer_failures.append(_registro_de_falha(
+                str(optimized.get("failure_stage") or "optimizer")))
+            if not medir_rascunho:
+                # Antes de registrar cessao, violacao e cobertura de
+                # correlacao: elas descrevem a carteira, e esta nao foi
+                # recebida por ninguem.
+                _periodo_em_caixa(decision, execution_date, next_execution,
+                                  motivo="publicacao_recusada", recusado=True)
+                continue
         if optimized.get("constraint_violations"):
             constraint_violation_periods += 1
             constraint_violation_details.append({
@@ -659,19 +847,17 @@ def robust_optimizer_point_in_time_backtest(
                 index="date", columns="ticker", values="price_return", aggfunc="last",
             ).reindex(index=matrix.index, columns=matrix.columns)
             total_por_ativo = (1.0 + matrix.fillna(0.0)).prod() - 1.0
-            preco_por_ativo = (1.0 + price_matrix.fillna(0.0)).prod() - 1.0
-            rastreador_ir.evoluir(
-                total_por_ativo.to_dict(),
-                (total_por_ativo - preco_por_ativo).to_dict(),
-            )
+            # provento mês a mês (`renda_reinvestida`): o composto do total
+            # menos o do preço isentaria a alta do provento reinvestido
+            renda_por_ativo = {}
+            for tk in matrix.columns:
+                renda_tk = renda_reinvestida(matrix[tk].tolist(),
+                                             price_matrix[tk].tolist())
+                if renda_tk is not None:
+                    renda_por_ativo[tk] = renda_tk
+            rastreador_ir.evoluir(total_por_ativo.to_dict(), renda_por_ativo)
         net = after_costs - ir_periodo
-        benchmark_period = b[b.index >= execution_date]
-        if next_execution is not None:
-            benchmark_period = benchmark_period[benchmark_period.index < next_execution]
-        benchmark_return = (
-            float((1.0 + benchmark_period.dropna()).prod() - 1.0)
-            if len(benchmark_period.dropna()) else np.nan
-        )
+        benchmark_return = _retorno_do_benchmark(execution_date, next_execution)
         observations.append({
             "date": execution_date, "decision_date": decision,
             "portfolio_return": net, "benchmark_return": benchmark_return,
@@ -692,6 +878,10 @@ def robust_optimizer_point_in_time_backtest(
             "carteira_de_excecao": str(
                 (optimized.get("shape_cession") or {}).get("nivel") or ""
             ) == "excecao",
+            # So chega aqui recusada com `medir_rascunho` (sensibilidade).
+            "publicacao_recusada": not publicavel,
+            "caixa": False,
+            "motivo_caixa": None,
         })
         if cessao:
             concession_periods += 1
@@ -725,6 +915,8 @@ def robust_optimizer_point_in_time_backtest(
             "optimizer_failure_summary": failure_summary,
             "missing_macro_periods": missing_macro_periods,
         }
+    em_caixa = result["caixa"].astype(bool)
+    recusada = result["publicacao_recusada"].astype(bool)
     excess = result["portfolio_return"] - result["benchmark_return"]
     excess_bruto = result["portfolio_return_bruto"] - result["benchmark_return"]
     excess_apos_custos = result["portfolio_return_apos_custos"] - result["benchmark_return"]
@@ -740,7 +932,9 @@ def robust_optimizer_point_in_time_backtest(
         float(valid_excess.mean() / valid_excess.std(ddof=1) * math.sqrt(12))
         if len(valid_excess) > 1 and valid_excess.std(ddof=1) > 0 else np.nan
     )
-    return {
+    cobertura_media = result["coverage"].astype(float).mean()
+    investidos = int((~em_caixa).sum())
+    saida = {
         "status": "calculated", "periods": len(result),
         "strategy_id": LIVE_PORTFOLIO_STRATEGY_ID,
         "mean_return": float(result["portfolio_return"].mean()),
@@ -757,7 +951,10 @@ def robust_optimizer_point_in_time_backtest(
         "mean_ir_periodo": float(result["ir_periodo"].mean()),
         "ir_calculado": bool(ir_calculado),
         "premissas_liquido": premissas_fii(transaction_cost, slippage),
-        "mean_coverage": float(result["coverage"].mean()),
+        # Media so dos periodos investidos (caixa tem cobertura NaN). Todo em
+        # caixa nao e cobertura perfeita: sai zero, e o portao bloqueia.
+        "mean_coverage": (float(cobertura_media)
+                          if np.isfinite(cobertura_media) else 0.0),
         # Mesmo bloco da versao simples. A tela (`views/fiis.py`, aviso
         # `fii.backtest_saida_de_campo`) ja o lia, mas so a versao simples o
         # produzia -- e ela nao roda em producao, entao o aviso nunca aparecia.
@@ -785,10 +982,21 @@ def robust_optimizer_point_in_time_backtest(
         # mais, o premio esta vindo da concentracao, e isso precisa aparecer.
         "curvas_por_padrao": {
             "padrao_da_casa": _metricas_da_coorte(
-                result[~result["carteira_de_excecao"].astype(bool)]),
+                result[~result["carteira_de_excecao"].astype(bool) & ~em_caixa]),
             "excecao": _metricas_da_coorte(
                 result[result["carteira_de_excecao"].astype(bool)]),
         },
+        # Portao de transparencia: a manchete e publicavel + caixa. As coortes
+        # separam o que rendeu a carteira publicada do que rendeu o caixa; o
+        # rascunho medido so existe com `medir_rascunho` (sensibilidade).
+        "curvas_por_publicacao": {
+            "publicavel": _metricas_da_coorte(result[~em_caixa & ~recusada]),
+            "caixa": _metricas_da_coorte(result[em_caixa]),
+            "rascunho_medido": _metricas_da_coorte(result[~em_caixa & recusada]),
+        },
+        "cash_periods": int(em_caixa.sum()),
+        "cash_periods_publication_refused": int((em_caixa & recusada).sum()),
+        "medir_rascunho": bool(medir_rascunho),
         "optimizer_attempted_periods": attempted_optimizer,
         "optimizer_successful_periods": successful_optimizer,
         "optimizer_feasible_fraction": (
@@ -806,8 +1014,9 @@ def robust_optimizer_point_in_time_backtest(
         "constraint_violation_periods": constraint_violation_periods,
         "constraint_violation_details": constraint_violation_details,
         "concession_periods": concession_periods,
+        # Sobre os periodos investidos: caixa nao tem carteira para ceder.
         "concession_period_fraction": (
-            concession_periods / len(result) if len(result) else 0.0
+            concession_periods / investidos if investidos else 0.0
         ),
         # Períodos que cederam proteção e foram descartados por falta de
         # retorno. Ficam fora da fração porque não estão no denominador, mas
@@ -830,6 +1039,29 @@ def robust_optimizer_point_in_time_backtest(
         "correlation_lookback_months": int(correlation_lookback_months),
         "observations": result.to_dict("records"),
     }
+    if not medir_rascunho and publicacao_recusada:
+        # Sensibilidade: a mesma cadeia, com o rascunho recusado medido pelos
+        # proprios pesos. Nao e manchete -- ninguem recebeu essa carteira --,
+        # mas mostra quanto o portao de transparencia custou ou poupou.
+        rascunho = robust_optimizer_point_in_time_backtest(
+            snapshots, returns, benchmark, macro_scenarios,
+            top_n=top_n, transaction_cost=transaction_cost, slippage=slippage,
+            correlation_penalty=correlation_penalty,
+            min_return_coverage=min_return_coverage,
+            correlation_lookback_months=correlation_lookback_months,
+            correlation_min_months=correlation_min_months,
+            medir_rascunho=True,
+        )
+        if rascunho.get("status") == "calculated":
+            saida["sensibilidade_rascunho"] = {
+                "periods": int(rascunho["periods"]),
+                "mean_return": rascunho["mean_return"],
+                "mean_excess": rascunho["mean_excess"],
+                "excess_bootstrap": rascunho["excess_bootstrap"],
+                "max_drawdown": rascunho["max_drawdown"],
+                "periodos_com_rascunho": list(publicacao_recusada),
+            }
+    return saida
 
 
 def evaluate_regime_performance(observations: Iterable[dict], macro_regimes: pd.DataFrame) -> dict[str, Any]:
@@ -857,6 +1089,28 @@ def evaluate_regime_performance(observations: Iterable[dict], macro_regimes: pd.
             "worst_period": float(group["portfolio_return"].min()),
         }
     return output
+
+
+def bloqueio_por_excesso(backtest: dict[str, Any]) -> list[str]:
+    """O bloqueador do portão quando a carteira não ganhou do IFIX na média.
+
+    Lista vazia quando o excesso médio líquido passa de ``PISO_EXCESSO_MEDIO``.
+    Sem média medida também bloqueia: ausência de número não é ganho. A
+    leitura é a mesma do card e do motor (`leitura_do_excesso`), para o
+    portão e a tela não discordarem sobre o número.
+    """
+    if (backtest or {}).get("status") != "calculated":
+        # Backtest que não calculou já bloqueia pelo próprio motivo; somar
+        # "excesso indisponível" só repetiria a causa com outro nome.
+        return []
+    media = leitura_do_excesso(backtest)["media"]
+    if media is None:
+        return ["excesso médio sobre o IFIX indisponível: sem ele não há como "
+                "afirmar que a carteira ganha do índice"]
+    if media <= PISO_EXCESSO_MEDIO:
+        return [f"carteira não ganha do IFIX: excesso médio líquido de "
+                f"{_pp(media)} p.p./mês no walk-forward"]
+    return []
 
 
 def validate_methodology(backtest: dict[str, Any], regime_results: dict[str, Any], *,
@@ -912,5 +1166,6 @@ def validate_methodology(backtest: dict[str, Any], regime_results: dict[str, Any
     ci = backtest.get("excess_bootstrap") or {}
     if pd.isna(ci.get("lower", np.nan)):
         blockers.append("intervalo bootstrap indisponível")
+    blockers.extend(bloqueio_por_excesso(backtest))
     return {"status": "passed" if not blockers else "blocked", "blockers": blockers,
             "thresholds": thresholds.__dict__, "backtest": backtest, "regimes": regime_results}

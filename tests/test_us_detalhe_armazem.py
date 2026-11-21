@@ -200,20 +200,56 @@ def test_contexto_da_llm_diz_quando_o_tunel_nao_existe(monkeypatch):
 
     monkeypatch.setattr(ur, "_db_is_local", lambda: False)
     monkeypatch.setattr(ar, "_config", lambda: ("", ""))
-    assert "túnel não configurado" in ctx.get_warehouse_detail_context(["AAPL"])
+    # Sem arquivo publicado: o resultado não pode depender de o
+    # data/public/detalhe_eua.json.gz real existir no checkout.
+    monkeypatch.setattr(det, "ler_do_arquivo", lambda _s: None)
+    texto = ctx.get_warehouse_detail_context(["AAPL"])
+    assert "túnel não configurado" in texto and "ainda não existe" in texto
+
+
+def _cai(_s):
+    raise ar.ArmazemRemotoIndisponivel("sem resposta — PC ou túnel desligado?")
 
 
 def test_contexto_da_llm_diz_quando_o_tunel_caiu(monkeypatch):
     import core.llm_context_us as ctx
     import core.us_read as ur
 
-    def _cai(_s):
-        raise ar.ArmazemRemotoIndisponivel("sem resposta — PC ou túnel desligado?")
+    monkeypatch.setattr(ur, "_db_is_local", lambda: False)
+    monkeypatch.setattr(ar, "detalhe_eua", _cai)
+    monkeypatch.setattr(det, "ler_do_arquivo", lambda _s: None)
+    texto = ctx.get_warehouse_detail_context(["AAPL"])
+    assert "indisponível agora" in texto and "PC ou túnel desligado" in texto
+
+
+def _publicado(_s):
+    detalhe = {"AAPL": {"precos": [], "trimestres": [], "exercicios": [], "proventos": []}}
+    return detalhe, "arquivo publicado em 2026-11-14, demonstrativos até 2026-11-13"
+
+
+def test_arquivo_publicado_nao_apaga_o_tunel_que_caiu(monkeypatch):
+    """Com o arquivo como reserva, a queda do túnel continua nomeada."""
+    import core.llm_context_us as ctx
+    import core.us_read as ur
 
     monkeypatch.setattr(ur, "_db_is_local", lambda: False)
     monkeypatch.setattr(ar, "detalhe_eua", _cai)
+    monkeypatch.setattr(det, "ler_do_arquivo", _publicado)
     texto = ctx.get_warehouse_detail_context(["AAPL"])
-    assert "indisponível agora" in texto and "PC ou túnel desligado" in texto
+    assert "arquivo publicado em 2026-11-14" in texto
+    assert "túnel indisponível agora" in texto and "PC ou túnel desligado" in texto
+
+
+def test_arquivo_publicado_diz_que_o_tunel_nao_existe(monkeypatch):
+    import core.llm_context_us as ctx
+    import core.us_read as ur
+
+    monkeypatch.setattr(ur, "_db_is_local", lambda: False)
+    monkeypatch.setattr(ar, "_config", lambda: ("", ""))
+    monkeypatch.setattr(det, "ler_do_arquivo", _publicado)
+    texto = ctx.get_warehouse_detail_context(["AAPL"])
+    assert "até 2026-11-13; túnel não configurado neste ambiente" in texto
+    assert "túnel túnel" not in texto
 
 
 def test_contexto_da_llm_le_direto_no_armazem(monkeypatch):

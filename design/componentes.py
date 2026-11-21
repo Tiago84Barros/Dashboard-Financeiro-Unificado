@@ -10,8 +10,11 @@ Uso padrão em cada página:
         with col1:
             card_metrica("Saldo", "R$ 12.300,00", delta="+5,2%", positivo=True)
 """
+import base64
 import re
+from functools import lru_cache
 from html import escape
+from pathlib import Path
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -47,6 +50,41 @@ def _iniciais(nome: str) -> str:
     return (partes[0][0] + partes[-1][0]).upper()
 
 
+LOGO_SVG = Path(__file__).resolve().parent / "assets" / "tsb_logo.svg"
+"""Monograma TSB dourado, sem fundo -- desenhado pelo dono do app em 15/11/2026."""
+
+LOGO_ICONE_PNG = Path(__file__).resolve().parent / "assets" / "tsb_icone.png"
+"""O mesmo monograma no ladrilho escuro, para o ícone da aba (``page_icon``)."""
+
+
+@lru_cache(maxsize=1)
+def _logo_data_uri() -> str:
+    """O SVG do monograma em data URI; vazio se o arquivo não existir."""
+    try:
+        dados = base64.b64encode(LOGO_SVG.read_bytes()).decode("ascii")
+    except OSError:
+        return ""
+    return f"data:image/svg+xml;base64,{dados}"
+
+
+def logo_img_html(tamanho: int = 30, classe: str = "app-brand-logo") -> str:
+    """``<img>`` com o monograma embutido em data URI, numa linha só.
+
+    Usado no card da marca do menu lateral e na tela de login. Data URI e não
+    SVG inline: o ``st.markdown`` quebra HTML com várias linhas e um ``id`` de
+    gradiente inline colidiria com outro SVG da página. Sem o arquivo, volta o
+    emoji antigo -- a marca nunca some.
+    """
+    uri = _logo_data_uri()
+    if not uri:
+        return "📊"
+    lado = int(tamanho)
+    return (
+        f'<img src="{uri}" alt="" class="{escape(classe, quote=True)}" '
+        f'width="{lado}" height="{lado}">'
+    )
+
+
 def marca_sidebar_html(usuario: str = "") -> str:
     """HTML do topo da sidebar: quem está logado e o card da marca.
 
@@ -71,7 +109,7 @@ def marca_sidebar_html(usuario: str = "") -> str:
         '<div class="app-brand">'
         '<div class="app-brand-glow" aria-hidden="true"></div>'
         '<div class="app-brand-head">'
-        '<div class="app-brand-mark" aria-hidden="true">📊</div>'
+        f'<div class="app-brand-mark" aria-hidden="true">{logo_img_html()}</div>'
         '<span class="app-brand-badge">Unificado</span>'
         '</div>'
         '<div class="app-brand-title">Dashboard Financeiro</div>'
@@ -568,8 +606,9 @@ def aviso_cobertura_do_universo(modulo: str) -> None:
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _carimbo_cacheado(modulo: str):
-    """Cache curto: o carimbo da B3 sai de `market_health_summary`, que varre a
-    tabela de metricas, e isso nao pode rodar a cada interacao de widget."""
+    """Cache curto: o carimbo da B3 e o `max(updated_at)` da tabela de metricas
+    (`core.frescor.carimbo_do_modulo`), que nao pode rodar a cada interacao de
+    widget."""
     from core.frescor import carimbo_do_modulo
     return carimbo_do_modulo(modulo)
 
@@ -637,18 +676,17 @@ def selo_de_frescor(modulo: str, dados: dict | None = None) -> None:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _atualidade_b3_cacheada(hoje_iso: str) -> dict | None:
-    """Cache de uma hora, chaveado pelo dia: a medição lê cerca de 200 kB do
-    Supabase (ver `core.b3_atualidade_trimestral.medir_banco`), e o egress está
-    acima da cota desde setembro."""
+    """Cache de uma hora, chaveado pelo dia: a medição lê cerca de 200 kB
+    (ver `core.b3_atualidade_trimestral.medir_banco`).
+
+    Lê pela fonte da B3 (`core.fonte_b3.ConexaoB3`): a mesma dos
+    demonstrativos da tela. Medida no Supabase congelado, ela avisaria
+    "trimestre defasado" sobre dado que o armazém já tem."""
     from datetime import date
 
     from core.b3_atualidade_trimestral import medir_banco
-    from core.database import get_engine
-    eng = get_engine()
-    if eng is None:
-        return None
-    with eng.connect() as conn:
-        return medir_banco(conn, date.fromisoformat(hoje_iso))
+    from core.fonte_b3 import ConexaoB3
+    return medir_banco(ConexaoB3(), date.fromisoformat(hoje_iso))
 
 
 def aviso_atualidade_trimestral_b3() -> None:
@@ -972,3 +1010,57 @@ def score_saude(score: int, label: str = "Saúde Financeira") -> None:
         </div>""",
         unsafe_allow_html=True,
     )
+
+
+def guardar_fonte_do_resultado_b3(chave_estado: str) -> None:
+    """Anota na sessão se o resultado que acabou de ser gerado pode ter lido a reserva.
+
+    Resultado que fica no ``st.session_state`` (portfólio gerado, análise)
+    não sai com a limpeza do cache de ``core.fonte_b3.conferir_volta``: o
+    aviso do topo some quando o armazém volta, e o resultado velho fica. Esta
+    marca deixa :func:`aviso_resultado_da_reserva_b3` dizer isso ao lado dele.
+    """
+    from core.fonte_b3 import aviso_reserva
+
+    st.session_state[chave_estado] = aviso_reserva()
+
+
+def aviso_resultado_da_reserva_b3(chave_estado: str, acao: str) -> None:
+    """Avisa que o resultado guardado foi feito com a reserva, se o armazém já voltou.
+
+    Enquanto o armazém não responde, o aviso do topo
+    (:func:`aviso_fonte_reserva_b3`) já cobre a tela; repetir seria ruído.
+    """
+    from core.fonte_b3 import aviso_reserva
+
+    motivo = st.session_state.get(chave_estado)
+    if not motivo or aviso_reserva():
+        return
+    st.warning(
+        "Este resultado foi gerado quando o armazém de dados não respondia e "
+        "pode usar a cópia guardada em 15/11/2026. O armazém já voltou: "
+        f"{acao} de novo para usar os dados atuais.")
+    detalhe_tecnico(f"Resultado gerado com a B3 da cópia congelada: {motivo}.",
+                    codigo="b3.resultado_da_reserva")
+
+
+def aviso_fonte_reserva_b3(slot) -> None:
+    """Preenche ``slot`` com o aviso se alguma leitura da B3 caiu na cópia congelada.
+
+    Chamado depois que a tela carregou (num ``finally``): as leituras que caem
+    na reserva acontecem durante o desenho, e o lugar do aviso é reservado no
+    topo antes. Vale para toda tela que lê a B3 por ``core.market_read`` --
+    Empresas B3 e, pelo roteador do ``app.py``, Dashboard Geral, Seleção de
+    FIIs e Portfólio Global (preços mensais das posições brasileiras).
+    """
+    from core.fonte_b3 import aviso_reserva
+
+    motivo = aviso_reserva()
+    if not motivo:
+        return
+    with slot.container():
+        st.warning(
+            "O armazém de dados não respondeu. Os dados da B3 desta tela podem "
+            "ser a cópia guardada em 15/11/2026 e estar desatualizados.")
+        detalhe_tecnico(f"B3 lida da cópia congelada do Supabase: {motivo}.",
+                        codigo="b3.fonte_reserva")
