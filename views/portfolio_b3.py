@@ -22,6 +22,7 @@ import core.b3_troca_codigo as _troca
 import core.b3_universo_pit as _upit
 import core.data_reconciliacao as _recon
 import core.market_read as _mr
+import core.pesos_por_score as _pps
 import views.portfolio_b3_nota_fatores as _nota_fatores
 from core.b3_evidence import sinal_significante, teste_t_unilateral
 from core.b3_methodology import (
@@ -1032,30 +1033,9 @@ def _aplicar_diversificacao_correlacao(
     return items, log
 
 
-def _rank_ticker(score_map: dict[str, float], ticker: str) -> int | None:
-    ranked = sorted(score_map.items(),
-                 key=lambda x: (-float(x[1]), str(x[0])))
-    for idx, (tk, _) in enumerate(ranked, start=1):
-        if tk == ticker:
-            return idx
-    return None
-
-
-def _pode_incluir_maior_participacao(
-    ticker: str,
-    ultimo_lid: dict[str, int],
-    score_proximo: dict[str, float],
-    ano_ref: int,
-    max_anos_lid: int,
-) -> tuple[bool, str, int | None, int | None]:
-    """Regra de entrada: maior participacao precisa ter recencia ou rank atual forte."""
-    ultimo = ultimo_lid.get(ticker)
-    rank_atual = _rank_ticker(score_proximo, ticker)
-    if ultimo is not None and (ano_ref - int(ultimo)) <= int(max_anos_lid):
-        return True, "Maior participacao com lideranca recente", ultimo, rank_atual
-    if rank_atual is not None and rank_atual <= 3:
-        return True, "Maior participacao ainda bem ranqueada no score atual", ultimo, rank_atual
-    return False, "Maior participacao descartada por lideranca antiga/baixo rank atual", ultimo, rank_atual
+# Ponto único em core.pesos_por_score (a carteira de safras FII usa as mesmas).
+_rank_ticker = _pps.rank_ticker
+_pode_incluir_maior_participacao = _pps.pode_incluir_maior_participacao
 
 
 def _processar_segmento(

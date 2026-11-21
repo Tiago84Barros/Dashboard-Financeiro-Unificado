@@ -382,6 +382,84 @@ def _metricas_da_coorte(bloco: pd.DataFrame) -> dict[str, Any]:
     }
 
 
+def _payload(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return dict(parsed) if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def ultimo_snapshot_na_data(
+    snapshots: pd.DataFrame,
+    decision: pd.Timestamp,
+    idade_max_dias: int | None = None,
+) -> pd.DataFrame:
+    """Último snapshot de cada fundo público em ``decision``.
+
+    ``snapshots`` com ``reference_date`` normalizada e ``available_at`` sem
+    fuso (o preparo de `robust_optimizer_point_in_time_backtest`): referência
+    e disponibilidade até a data, sem a linha de base da migração.
+
+    ``idade_max_dias`` descarta o snapshot com referência mais antiga que a
+    data menos esse prazo: o fundo que saiu da bolsa não gera snapshot novo e,
+    sem o corte, entraria com o do ano anterior. None mantém o comportamento
+    do backtest robusto, que não corta (mudá-lo altera o backtest de produção
+    e pede medição própria).
+    """
+    decision = pd.Timestamp(decision)
+    decision_cutoff = decision + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
+    s = snapshots
+    mask = (s["reference_date"] <= decision) & (s["available_at"] <= decision_cutoff)
+    if idade_max_dias is not None:
+        mask &= s["reference_date"] >= decision.normalize() - pd.Timedelta(days=int(idade_max_dias))
+    universe = s[mask]
+    if "availability_quality" in universe:
+        universe = universe[
+            universe["availability_quality"] != "migration_baseline"
+        ]
+    return (
+        universe.sort_values(["reference_date", "available_at"])
+        .drop_duplicates("ticker", keep="last")
+    )
+
+
+def preparar_snapshots(snapshots: pd.DataFrame) -> pd.DataFrame:
+    """Datas no formato que `ultimo_snapshot_na_data` compara."""
+    s = snapshots.copy()
+    s["reference_date"] = pd.to_datetime(s["reference_date"]).dt.normalize()
+    s["available_at"] = pd.to_datetime(s["available_at"], utc=True).dt.tz_localize(None)
+    return s
+
+
+def linhas_pit_na_data(latest: pd.DataFrame) -> list[dict[str, Any]]:
+    """Linhas de entrada da elegibilidade a partir de `ultimo_snapshot_na_data`.
+
+    Ponto único: o backtest robusto e a carteira de safras
+    (``scripts/medir_safras_fii.py``) montam as linhas daqui.
+    """
+    rows: list[dict[str, Any]] = []
+    for record in latest.to_dict("records"):
+        row = _payload(record.get("portfolio_input_json"))
+        if not row:
+            continue
+        row.update({
+            "ticker": str(record["ticker"]),
+            "tipo": row.get("tipo") or record.get("fii_type"),
+            "type_score": float(record["score"]),
+            "confidence": float(record["confidence"]),
+            "coverage": float(record.get("coverage") or 0.0),
+            # Neutraliza somente o gate recursivo de validação. Não altera pesos.
+            "publication_status": "validated",
+        })
+        rows.append(row)
+    return rows
+
+
 def robust_optimizer_point_in_time_backtest(
     snapshots: pd.DataFrame, returns: pd.DataFrame, benchmark: pd.Series,
     macro_scenarios: dict[str, dict[str, float]], *,
@@ -424,7 +502,12 @@ def robust_optimizer_point_in_time_backtest(
     ``sensibilidade_rascunho``. Mesma regra de
     ``core.b3_oos_carteira.carteira_salvavel``.
     """
-    from core.backtest_liquido import IR_FII_GANHO, RastreadorIR, premissas_fii
+    from core.backtest_liquido import (
+        IR_FII_GANHO,
+        RastreadorIR,
+        premissas_fii,
+        renda_reinvestida,
+    )
     from core.fii_carteira_protegida import montar_carteira_com_concessao
     from core.fii_integrated_model import (
         ColunasDeElegibilidadeAusentes,
@@ -450,11 +533,9 @@ def robust_optimizer_point_in_time_backtest(
             "blockers": ["inputs PIT do otimizador robusto ausentes"],
         }
 
-    s = snapshots.copy()
+    s = preparar_snapshots(snapshots)
     r = returns.copy()
     b = benchmark.copy()
-    s["reference_date"] = pd.to_datetime(s["reference_date"]).dt.normalize()
-    s["available_at"] = pd.to_datetime(s["available_at"], utc=True).dt.tz_localize(None)
     r["date"] = pd.to_datetime(r["date"]).dt.normalize()
     b.index = pd.to_datetime(b.index).normalize()
     dates = sorted(set(s["reference_date"]))
@@ -490,17 +571,6 @@ def robust_optimizer_point_in_time_backtest(
     # existe, e caixa ali seria um periodo inventado. Igual nas duas cadeias
     # (com e sem `medir_rascunho`), porque depende so de haver itens.
     comecou = False
-
-    def payload(value: Any) -> dict[str, Any]:
-        if isinstance(value, dict):
-            return dict(value)
-        if isinstance(value, str):
-            try:
-                parsed = json.loads(value)
-                return dict(parsed) if isinstance(parsed, dict) else {}
-            except json.JSONDecodeError:
-                return {}
-        return {}
 
     def _retorno_do_benchmark(inicio: pd.Timestamp, fim: pd.Timestamp | None) -> float:
         periodo = b[b.index >= inicio]
@@ -552,7 +622,6 @@ def robust_optimizer_point_in_time_backtest(
         previous = vazia
 
     for position, decision in enumerate(dates):
-        decision_cutoff = decision + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
         possible_execution = [value for value in return_dates if value > decision]
         if not possible_execution:
             continue
@@ -563,32 +632,8 @@ def robust_optimizer_point_in_time_backtest(
             choices = [value for value in return_dates if value > next_decision]
             next_execution = choices[0] if choices else None
 
-        universe = s[
-            (s["reference_date"] <= decision) & (s["available_at"] <= decision_cutoff)
-        ]
-        if "availability_quality" in universe:
-            universe = universe[
-                universe["availability_quality"] != "migration_baseline"
-            ]
-        latest = (
-            universe.sort_values(["reference_date", "available_at"])
-            .drop_duplicates("ticker", keep="last")
-        )
-        rows: list[dict[str, Any]] = []
-        for record in latest.to_dict("records"):
-            row = payload(record.get("portfolio_input_json"))
-            if not row:
-                continue
-            row.update({
-                "ticker": str(record["ticker"]),
-                "tipo": row.get("tipo") or record.get("fii_type"),
-                "type_score": float(record["score"]),
-                "confidence": float(record["confidence"]),
-                "coverage": float(record.get("coverage") or 0.0),
-                # Neutraliza somente o gate recursivo de validação. Não altera pesos.
-                "publication_status": "validated",
-            })
-            rows.append(row)
+        latest = ultimo_snapshot_na_data(s, decision)
+        rows = linhas_pit_na_data(latest)
         try:
             eligible, eligibility = apply_integrated_eligibility(
                 rows, IntegratedEligibilityPolicy(),
@@ -802,11 +847,15 @@ def robust_optimizer_point_in_time_backtest(
                 index="date", columns="ticker", values="price_return", aggfunc="last",
             ).reindex(index=matrix.index, columns=matrix.columns)
             total_por_ativo = (1.0 + matrix.fillna(0.0)).prod() - 1.0
-            preco_por_ativo = (1.0 + price_matrix.fillna(0.0)).prod() - 1.0
-            rastreador_ir.evoluir(
-                total_por_ativo.to_dict(),
-                (total_por_ativo - preco_por_ativo).to_dict(),
-            )
+            # provento mês a mês (`renda_reinvestida`): o composto do total
+            # menos o do preço isentaria a alta do provento reinvestido
+            renda_por_ativo = {}
+            for tk in matrix.columns:
+                renda_tk = renda_reinvestida(matrix[tk].tolist(),
+                                             price_matrix[tk].tolist())
+                if renda_tk is not None:
+                    renda_por_ativo[tk] = renda_tk
+            rastreador_ir.evoluir(total_por_ativo.to_dict(), renda_por_ativo)
         net = after_costs - ir_periodo
         benchmark_return = _retorno_do_benchmark(execution_date, next_execution)
         observations.append({
