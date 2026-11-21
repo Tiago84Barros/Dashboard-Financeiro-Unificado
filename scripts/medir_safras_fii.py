@@ -85,7 +85,8 @@ def coletar(conn) -> dict:
     falhas: dict[int, str] = {}
     contagem: dict[int, dict] = {}
     for d in datas:
-        linhas = linhas_pit_na_data(ultimo_snapshot_na_data(s, d))
+        # snapshots só em 31/03: o de outro ano é de fundo que saiu da bolsa
+        linhas = linhas_pit_na_data(ultimo_snapshot_na_data(s, d, idade_max_dias=0))
         try:
             eleg, info = apply_integrated_eligibility(linhas, IntegratedEligibilityPolicy())
         except ColunasDeElegibilidadeAusentes as exc:

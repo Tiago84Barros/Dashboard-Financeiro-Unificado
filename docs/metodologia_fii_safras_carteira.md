@@ -11,7 +11,10 @@ mensal da Seleção de FIIs.
    de 31/03 (`reconstruct_snapshots(..., decision_dates=...)`) dá o
    `type_score` de cada fundo com o que era público na data.
 2. **Universo:** elegibilidade integrada ESTRITA da data
-   (`apply_integrated_eligibility`), sem concessão de proteção.
+   (`apply_integrated_eligibility`), sem concessão de proteção. Só entra o
+   snapshot de 31/03/N (`ultimo_snapshot_na_data(..., idade_max_dias=0)`):
+   o fundo que saiu da bolsa não gera snapshot novo e não herda o do ano
+   anterior.
 3. **Segmento = tipo** (`tijolo`, `papel`, `fof`, `hibrido`).
 4. **Líderes por tipo** — o laço de `_processar_segmento` da B3, pelas mesmas
    funções (`core/pesos_por_score.py`): decaimento de 7% a.a. por ano
@@ -21,7 +24,9 @@ mensal da Seleção de FIIs.
    março/N: DCA mensal sobre retorno total com os líderes dos anos anteriores
    precisa superar o DCA na Selic em 15%; Rank-IC médio não pode ser < −0,05;
    teste de seleção (estratégia − Pesos Iguais, janela de 2 anos) não pode
-   ser CONTRA; liderança no máximo 5 anos atrás.
+   ser CONTRA; liderança no máximo 5 anos atrás. Sem Selic observável em
+   algum mês do DCA, o tipo reprova ("Selic ausente no período do portão"):
+   não há taxa suposta.
 6. **Seleção por tipo aprovado:** líder + maior participação no DCA
    (`selecao_do_segmento`), com a regra de recência.
 7. **Montagem:** orçamento igual por tipo aprovado, cap 0,25
@@ -29,11 +34,18 @@ mensal da Seleção de FIIs.
 8. **Regra D1 (`itens_da_cadeia`):** depois da primeira safra que respondeu,
    safra sem carteira salvável fica em CAIXA à Selic de 31/03/N.
 9. **Custos:** giro × (0,15% + 0,10%), giro cheio na entrada; IR de 20% sobre
-   ganho de capital realizado (`RastreadorIR`), provento isento.
+   ganho de capital realizado (`RastreadorIR`), provento isento. O provento
+   que entra no custo é o reinvestido mês a mês
+   (`core.backtest_liquido.renda_reinvestida`), a mesma conta do backtest
+   robusto: o composto do total menos o do preço isentaria a alta do próprio
+   provento reinvestido.
 10. **Retorno da safra:** composto mês a mês; mês ausente rende 0 (A-118);
     winsorização P1–P99 pelo universo elegível (mínimo 30 fundos).
 11. **Referências:** IFIX oficial (bruto), Pesos Iguais do universo elegível
-    winsorizado, Selic. Safra incompleta é contabilizada e não entra na média.
+    winsorizado, Selic. O IFIX precisa existir em cada mês observado da
+    carteira; faltando um, o excesso sobre o IFIX da safra fica indisponível
+    e não entra na média. Safra incompleta é contabilizada e não entra na
+    média.
 
 ## O que da B3 ficou de fora
 

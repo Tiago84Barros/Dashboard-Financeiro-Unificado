@@ -394,19 +394,30 @@ def _payload(value: Any) -> dict[str, Any]:
     return {}
 
 
-def ultimo_snapshot_na_data(snapshots: pd.DataFrame, decision: pd.Timestamp) -> pd.DataFrame:
+def ultimo_snapshot_na_data(
+    snapshots: pd.DataFrame,
+    decision: pd.Timestamp,
+    idade_max_dias: int | None = None,
+) -> pd.DataFrame:
     """Último snapshot de cada fundo público em ``decision``.
 
     ``snapshots`` com ``reference_date`` normalizada e ``available_at`` sem
     fuso (o preparo de `robust_optimizer_point_in_time_backtest`): referência
     e disponibilidade até a data, sem a linha de base da migração.
+
+    ``idade_max_dias`` descarta o snapshot com referência mais antiga que a
+    data menos esse prazo: o fundo que saiu da bolsa não gera snapshot novo e,
+    sem o corte, entraria com o do ano anterior. None mantém o comportamento
+    do backtest robusto, que não corta (mudá-lo altera o backtest de produção
+    e pede medição própria).
     """
     decision = pd.Timestamp(decision)
     decision_cutoff = decision + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
     s = snapshots
-    universe = s[
-        (s["reference_date"] <= decision) & (s["available_at"] <= decision_cutoff)
-    ]
+    mask = (s["reference_date"] <= decision) & (s["available_at"] <= decision_cutoff)
+    if idade_max_dias is not None:
+        mask &= s["reference_date"] >= decision.normalize() - pd.Timedelta(days=int(idade_max_dias))
+    universe = s[mask]
     if "availability_quality" in universe:
         universe = universe[
             universe["availability_quality"] != "migration_baseline"
@@ -491,7 +502,12 @@ def robust_optimizer_point_in_time_backtest(
     ``sensibilidade_rascunho``. Mesma regra de
     ``core.b3_oos_carteira.carteira_salvavel``.
     """
-    from core.backtest_liquido import IR_FII_GANHO, RastreadorIR, premissas_fii
+    from core.backtest_liquido import (
+        IR_FII_GANHO,
+        RastreadorIR,
+        premissas_fii,
+        renda_reinvestida,
+    )
     from core.fii_carteira_protegida import montar_carteira_com_concessao
     from core.fii_integrated_model import (
         ColunasDeElegibilidadeAusentes,
@@ -831,11 +847,15 @@ def robust_optimizer_point_in_time_backtest(
                 index="date", columns="ticker", values="price_return", aggfunc="last",
             ).reindex(index=matrix.index, columns=matrix.columns)
             total_por_ativo = (1.0 + matrix.fillna(0.0)).prod() - 1.0
-            preco_por_ativo = (1.0 + price_matrix.fillna(0.0)).prod() - 1.0
-            rastreador_ir.evoluir(
-                total_por_ativo.to_dict(),
-                (total_por_ativo - preco_por_ativo).to_dict(),
-            )
+            # provento mês a mês (`renda_reinvestida`): o composto do total
+            # menos o do preço isentaria a alta do provento reinvestido
+            renda_por_ativo = {}
+            for tk in matrix.columns:
+                renda_tk = renda_reinvestida(matrix[tk].tolist(),
+                                             price_matrix[tk].tolist())
+                if renda_tk is not None:
+                    renda_por_ativo[tk] = renda_tk
+            rastreador_ir.evoluir(total_por_ativo.to_dict(), renda_por_ativo)
         net = after_costs - ir_periodo
         benchmark_return = _retorno_do_benchmark(execution_date, next_execution)
         observations.append({

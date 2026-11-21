@@ -75,7 +75,7 @@ from core import pesos_por_score as _pps
 from core.b3_precos_saneamento import limites_winsor
 from core.b3_safras import WINSOR_MIN_PAPEIS, WINSOR_PCT_ALTO, WINSOR_PCT_BAIXO
 from core.b3_vigencia import REBAL_MONTH
-from core.backtest_liquido import IR_FII_GANHO, RastreadorIR
+from core.backtest_liquido import IR_FII_GANHO, RastreadorIR, renda_reinvestida
 from core.fii_methodology import VALID_TYPES
 from core.fii_validation import portfolio_turnover
 
@@ -105,10 +105,6 @@ PARAMS_DEFAULT: dict[str, Any] = {
     "teto_setor": 1.0,
     "teto_ciclico": 1.0,
 }
-
-#: Selic usada quando o mês não tem dado (mesmo default da tela B3).
-SELIC_FALLBACK_AA = 0.1075
-
 
 def ano_da_safra(data: pd.Timestamp) -> int:
     """A safra em vigor num mês: abril/N a março/N+1 é a safra N."""
@@ -196,12 +192,14 @@ def historico_do_segmento(scores_por_ano: Mapping[int, Mapping[str, float]], *,
 
 # ── DCA mensal (espelho de `_simular_seg_backtest`) ────────────────────────
 
-def _selic_do_mes(selic_mensal: pd.Series | None, data: pd.Timestamp) -> float:
+def _selic_do_mes(selic_mensal: pd.Series | None, data: pd.Timestamp) -> float | None:
+    """Selic a.a. observável no mês, ou None. Sem default: dado ausente
+    continua ausente (AGENTS.md), e o portão que dependeria dela reprova."""
     if selic_mensal is None or selic_mensal.empty:
-        return SELIC_FALLBACK_AA
+        return None
     anteriores = selic_mensal[selic_mensal.index <= data].dropna()
     if anteriores.empty:
-        return SELIC_FALLBACK_AA
+        return None
     return float(anteriores.iloc[-1])
 
 
@@ -211,8 +209,11 @@ def simular_segmento(matriz: pd.DataFrame, lids_por_ano: Mapping[int, list[str]]
                      aporte: float, custo_compra: float,
                      selic_mensal: pd.Series | None = None,
                      details_out: dict | None = None
-                     ) -> tuple[float, float, float, dict[str, float]]:
+                     ) -> tuple[float, float | None, float, dict[str, float]]:
     """DCA mensal do segmento: estratégia, Selic e Pesos Iguais.
+
+    O DCA na Selic volta None se algum mês da janela não tem Selic observável:
+    uma taxa suposta decidiria o portão sem ser histórica.
 
     ``matriz``: retorno total mensal (mês × fundo), NaN onde falta. Diferença
     para a B3, que simula com PREÇO: aqui o valor de cada posição cresce pelo
@@ -243,13 +244,18 @@ def simular_segmento(matriz: pd.DataFrame, lids_por_ano: Mapping[int, list[str]]
     val_ew: dict[str, float] = {}
     caixa_est = caixa_ew = 0.0
     selic_acum = 0.0
+    selic_completa = True
     pesos_est: dict[str, float] = {}
     ultimo_ano = None
     prev_est = prev_ew = prev_sel = None
     mensal: list[dict] = []
     for dt, linha in matriz.iterrows():
         dt = pd.Timestamp(dt)
-        taxa_m = (1.0 + _selic_do_mes(selic_mensal, dt)) ** (1.0 / 12.0) - 1.0
+        taxa_aa = _selic_do_mes(selic_mensal, dt)
+        if taxa_aa is None:
+            selic_completa = False
+            taxa_aa = 0.0
+        taxa_m = (1.0 + taxa_aa) ** (1.0 / 12.0) - 1.0
         selic_acum = selic_acum * (1.0 + taxa_m) + aporte
 
         for carteira in (val_est, val_ew):
@@ -305,7 +311,8 @@ def simular_segmento(matriz: pd.DataFrame, lids_por_ano: Mapping[int, list[str]]
         details_out["pending_cash_equal_weight"] = float(caixa_ew)
     total_est = caixa_est + sum(val_est.values())
     total_ew = caixa_ew + sum(val_ew.values())
-    return total_est, selic_acum, total_ew, dict(val_est)
+    return (total_est, selic_acum if selic_completa else None, total_ew,
+            dict(val_est))
 
 
 # ── retorno de uma safra por fundo ─────────────────────────────────────────
@@ -333,15 +340,57 @@ def meses_da_safra(matriz: pd.DataFrame, safra: int) -> int:
     return int(((matriz.index >= ini) & (matriz.index < fim)).sum()) if not matriz.empty else 0
 
 
-def retorno_do_benchmark(serie: pd.Series | None, safra: int) -> float | None:
-    """IFIX composto nos meses da vigência (bruto, é o índice)."""
+def meses_observados(matriz: pd.DataFrame, safra: int) -> list[pd.Timestamp]:
+    """Os meses da vigência presentes na matriz de retornos dos fundos."""
+    if matriz.empty:
+        return []
+    ini, fim = janela_da_safra(safra)
+    idx = pd.DatetimeIndex(matriz.index)
+    return [pd.Timestamp(d) for d in idx[(idx >= ini) & (idx < fim)]]
+
+
+def retorno_do_benchmark(serie: pd.Series | None, safra: int,
+                         meses: Iterable[pd.Timestamp] | None = None) -> float | None:
+    """IFIX composto nos meses da vigência (bruto, é o índice).
+
+    Com ``meses`` (os da carteira), exige o IFIX em CADA um deles: doze meses
+    de carteira contra nove de IFIX não são comparáveis, e o excesso fica
+    indisponível (None) em vez de entrar na média.
+    """
     if serie is None or serie.empty:
         return None
     s = serie.copy()
     s.index = pd.to_datetime(s.index).normalize()
+    s = s[~s.index.duplicated(keep="last")]
+    if meses is not None:
+        alvo = pd.DatetimeIndex([pd.Timestamp(m).normalize() for m in meses])
+        if alvo.empty:
+            return None
+        bloco = pd.to_numeric(s.reindex(alvo), errors="coerce")
+        if bloco.isna().any():
+            return None
+        return float((1.0 + bloco).prod() - 1.0)
     ini, fim = janela_da_safra(safra)
     bloco = s[(s.index >= ini) & (s.index < fim)].dropna()
     return float((1.0 + bloco).prod() - 1.0) if len(bloco) else None
+
+
+def renda_da_safra(total: pd.DataFrame, preco: pd.DataFrame,
+                   safra: int) -> dict[str, float]:
+    """Provento reinvestido de cada fundo na vigência (`renda_reinvestida`)."""
+    if total.empty or preco.empty:
+        return {}
+    ini, fim = janela_da_safra(safra)
+    bt = total[(total.index >= ini) & (total.index < fim)]
+    bp = preco.reindex(index=bt.index)
+    out: dict[str, float] = {}
+    for tk in bt.columns:
+        if tk not in bp.columns:
+            continue
+        r = renda_reinvestida(bt[tk].tolist(), bp[tk].tolist())
+        if r is not None:
+            out[str(tk)] = float(r)
+    return out
 
 
 # ── métricas PIT de um segmento na safra N (espelho de `metricas_pit`) ─────
@@ -373,7 +422,9 @@ def metricas_pit(hist: dict, safra: int, matriz: pd.DataFrame,
                 df_seg, lids, pesos, universo_por_ano, aporte=aporte,
                 custo_compra=custo, selic_mensal=selic_mensal)
             positivos = {tk: v for tk, v in contrib.items() if v > 0}
-            out.update(val_est=float(v_est), val_selic=float(v_sel), val_ew=float(v_ew),
+            out.update(val_est=float(v_est),
+                       val_selic=None if v_sel is None else float(v_sel),
+                       val_ew=float(v_ew),
                        maior=max(positivos, key=positivos.get) if positivos else None)
             fim = pd.Timestamp(df_seg.index.max())
             ini_val = pd.Timestamp(year=int(fim.year) - janela_val, month=REBAL_MONTH, day=1)
@@ -476,7 +527,12 @@ def medir_safras(elegiveis_por_safra: Mapping[int, list[dict]], retornos: pd.Dat
                 continue
             m = metricas_pit(hist, safra, total, universo_seg[tipo], ano_inicio=ano_inicio,
                              params=p, selic_mensal=selic_mensal)
-            aprovado, motivo = _oos.aprova_economico(m, p, safra)
+            if m.get("val_selic") is None and m.get("val_est", 0.0) > 0:
+                # sem Selic observável em algum mês do portão, a margem não
+                # existe: reprova com o motivo, em vez de supor uma taxa
+                aprovado, motivo = False, "Selic ausente no período do portão"
+            else:
+                aprovado, motivo = _oos.aprova_economico(m, p, safra)
             sel, pesos_seg, _ranking = _oos.selecao_do_segmento(
                 hist, m, safra, max_anos_lid=int(p["max_anos_lid"]),
                 pode_incluir_maior=_pps.pode_incluir_maior_participacao)
@@ -485,7 +541,8 @@ def medir_safras(elegiveis_por_safra: Mapping[int, list[dict]], retornos: pd.Dat
                 "n_lideres": len(hist["lids_por_ano"][safra]),
                 "n_universo": len(universo_seg[tipo].get(safra) or []),
                 "selecionados": sel, "maior": m.get("maior"),
-                "margem_selic_pct": _oos._margem_pct(m["val_est"], m["val_selic"]),
+                "margem_selic_pct": (None if m.get("val_selic") is None
+                                     else _oos._margem_pct(m["val_est"], m["val_selic"])),
                 "margem_ew_pct": _oos._margem_pct(m["val_est"], m["val_ew"]),
                 "rank_ic_mean": m.get("rank_ic_mean"),
                 "selecao": (m.get("selecao_excesso") or {}).get("veredito"),
@@ -504,11 +561,11 @@ def medir_safras(elegiveis_por_safra: Mapping[int, list[dict]], retornos: pd.Dat
         def _w(r: float) -> float:
             return min(max(r, limites[0]), limites[1]) if limites is not None else r
 
-        precos = retorno_composto(preco, safra) if ir_calculado else {}
         retornos_cart = {tk: _w(brutos[tk]) if tk in brutos else 0.0
                          for tk in carteira["pesos"]}
-        renda = {tk: brutos[tk] - precos[tk] for tk in carteira["pesos"]
-                 if tk in brutos and tk in precos}
+        renda_safra = renda_da_safra(total, preco, safra) if ir_calculado else {}
+        renda = {tk: renda_safra[tk] for tk in carteira["pesos"]
+                 if tk in brutos and tk in renda_safra}
         ew_vals = [_w(brutos[tk]) for tk in universo if tk in brutos]
         meses = meses_da_safra(total, safra)
         selic = selic_decisao.get(safra)
@@ -521,7 +578,7 @@ def medir_safras(elegiveis_por_safra: Mapping[int, list[dict]], retornos: pd.Dat
             "completa": meses >= 12,
             "meses": meses,
             "selic": None if selic is None else float(selic),
-            "ifix": retorno_do_benchmark(ifix, safra),
+            "ifix": retorno_do_benchmark(ifix, safra, meses_observados(total, safra)),
             "ew": float(np.mean(ew_vals)) if ew_vals else None,
             "n_elegiveis": len(universo),
         })

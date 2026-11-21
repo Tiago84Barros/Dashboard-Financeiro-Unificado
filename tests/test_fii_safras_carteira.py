@@ -138,6 +138,10 @@ def _universo(seed=0, n_por_tipo=8, anos=range(2017, 2024)):
     return pd.DataFrame(linhas), eleg
 
 
+def _selic(taxa=0.10):
+    return pd.Series(taxa, index=pd.date_range("2016-12-31", "2024-12-31", freq="ME"))
+
+
 def test_metricas_do_portao_nao_leem_depois_de_marco_da_safra():
     ret, eleg = _universo()
     total = fsc.matriz_de_retornos(ret)
@@ -160,8 +164,10 @@ def test_aprovacao_da_safra_nao_muda_com_o_futuro():
     futuro = ret.copy()
     futuro.loc[pd.to_datetime(futuro["date"]) >= pd.Timestamp("2022-04-01"), "total_return"] = -0.3
     sel = {a: 0.10 for a in eleg}
-    a = fsc.medir_safras(eleg, ret, None, selic_decisao=sel, params={"thr_selic": 0.0})
-    b = fsc.medir_safras(eleg, futuro, None, selic_decisao=sel, params={"thr_selic": 0.0})
+    kw = dict(selic_decisao=sel, selic_mensal=_selic(), params={"thr_selic": 0.0})
+    a = fsc.medir_safras(eleg, ret, None, **kw)
+    b = fsc.medir_safras(eleg, futuro, None, **kw)
+    assert any(g["aprovado"] for r in a["safras"] for g in r["segmentos"])  # não é vácuo
     for ra, rb in zip(a["safras"], b["safras"]):
         if ra["safra"] <= 2022:
             assert [s["aprovado"] for s in ra["segmentos"]] == [s["aprovado"] for s in rb["segmentos"]]
@@ -226,9 +232,77 @@ def test_um_segmento_aprovado_nao_basta_para_o_cap():
 def test_medicao_completa_marca_safra_em_curso_e_resume():
     ret, eleg = _universo()
     out = fsc.medir_safras(eleg, ret, None, selic_decisao={a: 0.10 for a in eleg},
-                           params={"thr_selic": 0.0})
+                           selic_mensal=_selic(), params={"thr_selic": 0.0})
     assert out["status"] == "ok" and out["versao"] == fsc.VERSAO
     por_safra = {s["safra"]: s for s in out["safras"]}
     assert por_safra[2023]["completa"] is True
     assert set(out["resumo"]) >= {"excesso_liquido_ifix", "excesso_liquido_ew"}
     assert "resiliência ROIC − Selic (FII não tem ROIC)" in out["fora_do_porte"]
+
+
+# ── achados da revisão do PR #790 ──────────────────────────────────────────
+
+
+def test_selic_ausente_reprova_o_portao_em_vez_de_supor_taxa():
+    ret, eleg = _universo()
+    out = fsc.medir_safras(eleg, ret, None, selic_decisao={a: 0.10 for a in eleg},
+                           params={"thr_selic": 0.0})
+    segs = [g for r in out["safras"] for g in r["segmentos"]]
+    assert segs and not any(g["aprovado"] for g in segs)
+    assert any(g["motivo"] == "Selic ausente no período do portão" for g in segs)
+
+
+def test_dca_na_selic_e_none_com_mes_sem_selic():
+    m = _matriz({"A11": [0.01] * 4, "B11": [0.01] * 4})
+    kw = dict(lids_por_ano={2020: ["A11", "B11"]},
+              pesos_por_ano={2020: {"A11": 0.5, "B11": 0.5}},
+              universo_por_ano={2020: ["A11", "B11"]}, aporte=100.0, custo_compra=0.0)
+    so_depois = pd.Series(0.10, index=pd.date_range("2020-06-30", periods=3, freq="ME"))
+    assert fsc.simular_segmento(m, selic_mensal=so_depois, **kw)[1] is None
+    assert fsc.simular_segmento(m, selic_mensal=_selic(), **kw)[1] is not None
+
+
+def test_ifix_com_menos_meses_que_a_carteira_fica_indisponivel():
+    carteira = _matriz({"A11": [0.01] * 12})
+    meses = fsc.meses_observados(carteira, 2020)
+    ifix = pd.Series(0.01, index=carteira.index[:9])
+    assert fsc.retorno_do_benchmark(ifix, 2020, meses) is None
+    cheio = pd.Series(0.01, index=carteira.index)
+    assert fsc.retorno_do_benchmark(cheio, 2020, meses) == pytest.approx(1.01 ** 12 - 1)
+
+
+def test_renda_reinvestida_nao_isenta_a_alta_do_provento():
+    from core.backtest_liquido import renda_reinvestida
+
+    # provento de 10% (preço parado) e depois alta de 20% só de preço:
+    # a renda é 10%, não os 12% de (composto total − composto preço)
+    assert renda_reinvestida([0.10, 0.20], [0.0, 0.20]) == pytest.approx(0.10)
+    # um mês só: as duas contas coincidem
+    assert renda_reinvestida([0.07], [0.03]) == pytest.approx(0.04)
+    assert renda_reinvestida([np.nan], [np.nan]) is None
+
+
+def test_renda_da_safra_e_a_do_backtest_robusto_usam_a_mesma_conta():
+    from core.backtest_liquido import renda_reinvestida
+
+    total = _matriz({"A11": [0.10, 0.20] + [0.0] * 10, "B11": [0.02] * 12})
+    preco = _matriz({"A11": [0.0, 0.20] + [0.0] * 10, "B11": [0.01] * 12})
+    renda = fsc.renda_da_safra(total, preco, 2020)
+    for tk in ("A11", "B11"):
+        assert renda[tk] == pytest.approx(renda_reinvestida(total[tk].tolist(),
+                                                            preco[tk].tolist()))
+    assert renda["A11"] == pytest.approx(0.10)
+
+
+def test_snapshot_de_outro_ano_nao_entra_com_corte_de_idade():
+    from core.fii_validation import preparar_snapshots, ultimo_snapshot_na_data
+
+    s = preparar_snapshots(pd.DataFrame([
+        {"ticker": "VIVO11", "reference_date": "2021-03-31",
+         "available_at": "2021-03-31T00:00:00Z"},
+        {"ticker": "SAIU11", "reference_date": "2020-03-31",
+         "available_at": "2020-03-31T00:00:00Z"},
+    ]))
+    d = pd.Timestamp("2021-03-31")
+    assert set(ultimo_snapshot_na_data(s, d)["ticker"]) == {"VIVO11", "SAIU11"}
+    assert set(ultimo_snapshot_na_data(s, d, idade_max_dias=0)["ticker"]) == {"VIVO11"}
