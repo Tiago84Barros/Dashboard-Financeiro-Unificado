@@ -230,6 +230,54 @@ def test_banda_respeita_o_cap_na_remontagem():
     assert max(adv["carteira"]["pesos"].values()) <= 0.25 + 1e-9
 
 
+def test_banda_escolhe_depois_da_conversao_em_caixa():
+    # Exemplo da revisão do Codex no #763: +50% e -10%, cap de 50% (pede dois
+    # ativos), Selic de 10%. Sem portão rende 20%. Vetar o -10% deixa a
+    # carteira com um ativo só -- inviável no cap -- e a safra vira caixa a
+    # 10%: no bruto (50%) ela parecia o veto "favorável", e a banda não
+    # continha o sem-portão.
+    segs = [_seg("S1", ["L1"], {"L1": 1.0}, ["L1"]),
+            _seg("S2", ["L2"], {"L2": 1.0}, ["L2"])]
+    rets = {"L1": 0.50, "L2": -0.10}
+    tetos = {"cap": 0.5, "teto_setor": 1.0, "teto_ciclico": 1.0}
+    sem = oos.montar_carteira(oos.vetar_na_carteira(segs, None)[0], **tetos)
+    assert not sem["inviavel"]
+
+    so_bruto = oos.escolher_veto(segs, rets, veta="pior", **tetos)
+    assert so_bruto["vetado"] == "L2" and so_bruto["carteira"]["inviavel"]
+
+    fav = oos.escolher_veto(segs, rets, veta="pior", **tetos, caixa=0.10)
+    adv = oos.escolher_veto(segs, rets, veta="melhor", **tetos, caixa=0.10)
+    assert fav["vetado"] is None and fav["efetivo"] == pytest.approx(0.20)
+    assert adv["vetado"] == "L1" and adv["efetivo"] == pytest.approx(0.10)
+    # O bruto da carteira montada continua saindo, para a conferência da medição.
+    assert adv["bruto"] == pytest.approx(-0.10)
+    contado_sem = oos.rendimento_contado(sem, 0.20, 0.10)
+    assert adv["efetivo"] <= contado_sem <= fav["efetivo"]
+
+
+def test_banda_contem_o_sem_portao_depois_da_conversao_em_qualquer_caso():
+    # Varre retornos e Selic: no rendimento contado a banda sempre contém o
+    # sem-portão, com ou sem opção inviável no cap.
+    segs = [_seg("S1", ["L1"], {"L1": 1.0}, ["L1", "R1"]),
+            _seg("S2", ["L2"], {"L2": 1.0}, ["L2"]),
+            _seg("S3", ["L3"], {"L3": 1.0}, ["L3"])]
+    tetos = {"cap": 0.34, "teto_setor": 1.0, "teto_ciclico": 1.0}
+    rng = np.random.default_rng(763)
+    for _ in range(200):
+        rets = dict(zip(["L1", "R1", "L2", "L3"], rng.normal(0.05, 0.4, 4)))
+        caixa = float(rng.uniform(0.0, 0.15))
+        sem = oos.montar_carteira(oos.vetar_na_carteira(segs, None)[0], **tetos)
+        bruto_sem = sum(w * rets[tk] for tk, w in sem["pesos"].items())
+        contado_sem = oos.rendimento_contado(sem, bruto_sem, caixa)
+        adv = oos.escolher_veto(segs, rets, veta="melhor", **tetos, caixa=caixa)
+        fav = oos.escolher_veto(segs, rets, veta="pior", **tetos, caixa=caixa)
+        assert adv["efetivo"] - 1e-12 <= contado_sem <= fav["efetivo"] + 1e-12
+        for esc in (adv, fav):
+            assert esc["efetivo"] == pytest.approx(
+                oos.rendimento_contado(esc["carteira"], esc["bruto"], caixa))
+
+
 # ── montagem ────────────────────────────────────────────────────────────────
 
 def test_orcamento_igual_por_segmento_e_duplicata_somada():
@@ -307,6 +355,154 @@ def test_safra_sem_carteira_fica_fora_e_zera_posicoes():
          {"safra": 2022, "pesos": {"AAAA3": 1.0}, "retornos": {"AAAA3": 0.0}}], CFG)
     assert out[1] == {"safra": 2021, "medida": False}
     assert out[2]["giro"] == pytest.approx(1.0)  # recompra a partir de caixa
+
+
+def test_safra_em_caixa_rende_a_selic_e_conta():
+    """Achado D1: sem carteira montável, o investidor fica em caixa a Selic --
+    a safra é medida, e a venda do que havia paga o custo de bolsa."""
+    out = oos.simular_custos(
+        [{"safra": 2020, "pesos": {"AAAA3": 1.0}, "retornos": {"AAAA3": 0.1}},
+         {"safra": 2021, "pesos": {}, "rendimento_caixa": 0.08},
+         {"safra": 2022, "pesos": {"AAAA3": 1.0}, "retornos": {"AAAA3": 0.0}}], CFG)
+    caixa = out[1]
+    assert caixa["medida"] and caixa["caixa"]
+    assert caixa["bruto"] == pytest.approx(0.08)
+    v1 = oos.CAPITAL_NOCIONAL * (1 + out[0]["liquido"])
+    venda = custo_venda("AAAA3", v1, 0.0, 0.0, CFG)[0]
+    assert caixa["custo_pct"] == pytest.approx(venda / v1, rel=1e-9)
+    assert caixa["liquido"] == pytest.approx((1 - venda / v1) * 1.08 - 1, rel=1e-9)
+    assert caixa["giro"] == pytest.approx(0.0, abs=1e-12)
+    # Sair do caixa é só a compra das ações, sem custo de resgate.
+    v2 = v1 * (1 + caixa["liquido"])
+    assert out[2]["giro"] == pytest.approx(1.0)
+    assert out[2]["custo_pct"] == pytest.approx(custo_compra("AAAA3", v2, CFG) / v2,
+                                                rel=1e-9)
+
+
+def test_caixa_em_sequencia_nao_paga_nada():
+    out = oos.simular_custos([{"safra": 2020, "pesos": {}, "rendimento_caixa": 0.05},
+                              {"safra": 2021, "pesos": {}, "rendimento_caixa": 0.10}],
+                             CFG)
+    assert [o["liquido"] for o in out] == pytest.approx([0.05, 0.10])
+    assert [o["liquido_com_ir"] for o in out] == pytest.approx([0.05, 0.10])
+    assert all(o["custo_pct"] == 0.0 for o in out)
+
+
+def _linha(safra, pesos, inviavel=False, mensuravel=True, selic=0.1, revisao=None):
+    return {"safra": safra, "pesos": pesos, "retornos": {tk: 0.0 for tk in pesos},
+            "inviavel_no_cap": inviavel,
+            "exige_revisao": inviavel if revisao is None else revisao,
+            "mensuravel": mensuravel, "selic": selic}
+
+
+def _carteira_de_tetos_que_nao_fecham():
+    # Três setores com teto de 20% cada não somam 100%: há ativos para o cap,
+    # mas os tetos não fecham -- a rota relaxada sem `inviavel`.
+    itens = [(f"S{i}", [f"T{i}", f"U{i}"], {f"T{i}": 0.5, f"U{i}": 0.5})
+             for i in range(3)]
+    return oos.montar_carteira(itens, cap=0.5, teto_setor=0.2, teto_ciclico=1.0)
+
+
+def test_tetos_que_nao_fecham_nao_dao_carteira_salvavel():
+    """Unificação 2.6.0: a tela desliga o salvar nos DOIS casos relaxados
+    (``disabled=(not _portfolio_viavel) or _rota_relaxada``); a medição
+    converte os dois em caixa, não só o inviável no cap."""
+    cart = _carteira_de_tetos_que_nao_fecham()
+    assert cart["pesos"] and not cart["inviavel"] and cart["exige_revisao"]
+    assert not oos.carteira_salvavel(cart["pesos"], inviavel=False, exige_revisao=True)
+    assert not oos.carteira_salvavel(cart["pesos"], inviavel=True, exige_revisao=True)
+    assert not oos.carteira_salvavel({}, inviavel=False, exige_revisao=False)
+    assert oos.carteira_salvavel(cart["pesos"], inviavel=False, exige_revisao=False)
+    assert oos.rendimento_contado(cart, 0.30, 0.10) == pytest.approx(0.10)
+    assert oos.rendimento_contado(cart, 0.30, None) == pytest.approx(0.30)
+
+
+def test_banda_e_cadeia_leem_a_mesma_regra_de_salvavel():
+    """`rendimento_contado` (banda do portão) e `itens_da_cadeia` (manchete)
+    convertem as mesmas safras em caixa -- a regra é uma função só."""
+    casos = [({"A3": 1.0}, False, False), ({"A3": 1.0}, True, True),
+             ({"A3": 1.0}, False, True), ({}, False, False)]
+    for pesos, inviavel, revisao in casos:
+        cart = {"pesos": pesos, "inviavel": inviavel, "exige_revisao": revisao}
+        na_banda = oos.rendimento_contado(cart, 0.5, 0.1) == pytest.approx(0.1)
+        item = oos.itens_da_cadeia(
+            [_linha(2017, {"Z3": 1.0}),
+             _linha(2018, pesos, inviavel=inviavel, revisao=revisao)])[1]
+        assert ("rendimento_caixa" in item) == na_banda, (pesos, inviavel, revisao)
+
+
+def test_safra_de_tetos_vira_caixa_e_pesos_da_tela_vao_a_sensibilidade():
+    linhas = [_linha(2018, {"AAAA3": 0.5, "BBBB3": 0.5}),
+              {**_linha(2019, {"AAAA3": 0.6, "BBBB3": 0.4}, revisao=True),
+               "retornos": {"AAAA3": 0.9, "BBBB3": 0.9}},
+              _linha(2020, {"AAAA3": 1.0}, inviavel=True),
+              _linha(2021, {})]
+    manchete = oos.simular_custos(oos.itens_da_cadeia(linhas), CFG)
+    assert [bool(c.get("caixa")) for c in manchete] == [False, True, True, True]
+    assert manchete[1]["bruto"] == pytest.approx(0.1)
+
+    tela = oos.simular_custos(oos.itens_da_cadeia(linhas, pesos_da_tela=True), CFG)
+    # Os pesos relaxados entram medidos; só a safra sem pesos fica em caixa.
+    assert [bool(c.get("caixa")) for c in tela] == [False, False, False, True]
+    assert tela[1]["bruto"] == pytest.approx(0.9)
+    # As safras salváveis rendem o mesmo nas duas cadeias.
+    assert tela[0]["liquido"] == pytest.approx(manchete[0]["liquido"])
+
+
+def test_itens_da_cadeia_caixa_so_depois_do_aquecimento():
+    itens = oos.itens_da_cadeia([
+        _linha(2016, {}),                                   # aquecimento: fora
+        # Primeira resposta, inviável no cap: já é decisão -> caixa, conta.
+        # Até o ajuste de 17/11 ainda era aquecimento e saía da média.
+        _linha(2017, {"AAAA3": 1.0}, inviavel=True),
+        _linha(2018, {"AAAA3": 0.5, "BBBB3": 0.5}),         # primeira montável
+        _linha(2019, {"AAAA3": 1.0}, inviavel=True),        # caixa
+        _linha(2020, {}),                                   # caixa
+        _linha(2021, {}, mensuravel=False),                 # fora
+        _linha(2022, {}, selic=None),                       # fora
+    ])
+    assert [("rendimento_caixa" in i, bool(i["pesos"])) for i in itens] == [
+        (False, False), (True, False), (False, True), (True, False),
+        (True, False), (False, False), (False, False)]
+    assert itens[1]["rendimento_caixa"] == pytest.approx(0.1)
+    assert itens[3]["rendimento_caixa"] == pytest.approx(0.1)
+
+
+def test_aquecimento_so_antes_da_primeira_resposta():
+    """Segmentos avaliados sem nenhum aprovado, antes de qualquer resposta,
+    é aquecimento (sem histórico para aprovar); depois da primeira, é caixa."""
+    itens = oos.itens_da_cadeia([_linha(2015, {}), _linha(2016, {}),
+                                 _linha(2017, {"AAAA3": 1.0}, inviavel=True),
+                                 _linha(2018, {})])
+    assert ["rendimento_caixa" in i for i in itens] == [False, False, True, True]
+
+
+def test_aquecimento_e_da_estrategia_e_nao_do_veto():
+    """Um veto que esvazia a primeira safra da estratégia a converte em caixa,
+    como em qualquer outra safra -- não a tira da média por "aquecimento"."""
+    sem_portao = [_linha(2016, {}), _linha(2017, {"AAAA3": 1.0}),
+                  _linha(2018, {"AAAA3": 1.0})]
+    vetada = [_linha(2016, {}), _linha(2017, {}), _linha(2018, {"BBBB3": 1.0})]
+    comeca = oos.primeira_resposta(sem_portao)
+    assert comeca == 2017 and oos.primeira_resposta(vetada) == 2018
+    itens = oos.itens_da_cadeia(vetada, comeca_em=comeca)
+    assert ["rendimento_caixa" in i for i in itens] == [False, True, False]
+    # Sem o início de fora, a variante calcula o próprio (o comportamento antigo).
+    assert ["rendimento_caixa" in i for i in oos.itens_da_cadeia(vetada)] == [
+        False, False, False]
+    assert oos.primeira_resposta([_linha(2016, {})]) is None
+    assert oos.itens_da_cadeia([_linha(2016, {})]) == [{"safra": 2016, "pesos": {}}]
+
+
+def test_safra_inviavel_vira_caixa_e_entra_na_media():
+    """A inviável não é medida com os pesos concentrados que a tela não
+    mostraria: rende a Selic, e o excesso sobre a Selic é ~0 nela."""
+    linhas = [_linha(2018, {"AAAA3": 0.5, "BBBB3": 0.5}),
+              {**_linha(2019, {"AAAA3": 1.0}, inviavel=True),
+               "retornos": {"AAAA3": 0.9}}]
+    cadeia = oos.simular_custos(oos.itens_da_cadeia(linhas), CFG)
+    assert all(c["medida"] for c in cadeia)
+    assert cadeia[1]["caixa"] and cadeia[1]["bruto"] == pytest.approx(0.1)
 
 
 def test_ir_compensa_prejuizo_anterior():
@@ -662,9 +858,11 @@ def test_comparar_mesmos_nomes_propaga_violacao_de_limites():
         linhas, CFG, lambda r: oos.carteira_iguais_mesmos_nomes(
             r["pesos"], setor_de=r["setor_de"], cap=0.25, teto_setor=0.30,
             teto_ciclico=1.0))
-    assert comp["safras_alternativa_fora_dos_limites"] == [2020, 2021]
+    # 2020: o motor exige revisão -> caixa (D1) nas duas cadeias, sem repesar.
+    assert comp["safras_alternativa_fora_dos_limites"] == [2021]
     assert comp["safras_motor_fora_dos_limites"] == [2020]
-    assert comp["safras"][0]["alternativa_avisos"]
+    assert comp["safras"][0]["motor_em_caixa"] is True
+    assert comp["safras"][1]["alternativa_inviavel_no_cap"] is True
     assert "ATENÇÃO" in comp["leitura"]
     assert comp["resumo_dentro_dos_limites"]["n_safras"] == 0
     # Pesos soltos (1/N puro) continuam aceitos e não marcam nada.
@@ -672,3 +870,45 @@ def test_comparar_mesmos_nomes_propaga_violacao_de_limites():
         linhas[1:], CFG, lambda r: oos.pesos_iguais_mesmos_nomes(r["pesos"]))
     assert puro["safras_alternativa_fora_dos_limites"] == []
     assert puro["resumo_dentro_dos_limites"]["n_safras"] == 1
+
+
+def _linhas_com_caixa():
+    return [
+        {"safra": 2018, "pesos": {}, "retornos": {}, "mensuravel": True,
+         "selic": 0.06},                                    # aquecimento
+        {"safra": 2019, "pesos": {"A": 0.6, "B": 0.4},
+         "retornos": {"A": 0.20, "B": -0.10}, "mensuravel": True, "selic": 0.05},
+        {"safra": 2020, "pesos": {"A": 0.5, "B": 0.5},
+         "retornos": {"A": -0.30, "B": 0.40}, "mensuravel": True, "selic": 0.03,
+         "inviavel_no_cap": False, "exige_revisao": True},  # não salvável
+        {"safra": 2021, "pesos": {"A": 0.7, "C": 0.3},
+         "retornos": {"A": 0.10, "C": 0.05}, "mensuravel": True, "selic": 0.08},
+    ]
+
+
+def test_motor_da_comparacao_e_a_cadeia_da_manchete():
+    # Gêmeos: o lado do motor rende o mesmo que `itens_da_cadeia` + custos,
+    # a conta que a manchete do sem portão usa -- caixa a Selic incluído.
+    linhas = _linhas_com_caixa()
+    comp = oos.comparar_mesmos_nomes(
+        linhas, CFG, lambda r: oos.pesos_iguais_mesmos_nomes(r["pesos"]))
+    manchete = oos.simular_custos(oos.itens_da_cadeia(linhas), CFG)
+    for linha, m in zip(comp["safras"], manchete):
+        if "motor_liquido" in linha:
+            assert linha["motor_liquido"] == pytest.approx(m["liquido"])
+    assert [t["safra"] for t in comp["safras"] if "excesso" in t] == [2019, 2021]
+
+
+def test_safra_em_caixa_e_igual_nas_duas_cadeias_e_sai_do_resumo():
+    linhas = _linhas_com_caixa()
+    comp = oos.comparar_mesmos_nomes(
+        linhas, CFG, lambda r: oos.pesos_iguais_mesmos_nomes(r["pesos"]))
+    caixa = comp["safras"][2]
+    assert caixa["motor_em_caixa"] is True and "excesso" not in caixa
+    assert comp["safras_motor_fora_dos_limites"] == [2020]
+    assert comp["resumo"]["n_safras"] == 2
+    # Contra si mesma, a alternativa dá excesso zero também depois do caixa:
+    # o giro de 2021 parte do caixa nos dois lados.
+    igual = oos.comparar_mesmos_nomes(linhas, CFG, lambda r: r["pesos"])
+    assert all(t["excesso"] == pytest.approx(0.0, abs=1e-12)
+               for t in igual["safras"] if "excesso" in t)

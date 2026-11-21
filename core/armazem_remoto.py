@@ -25,6 +25,13 @@ monta o contexto N+1 vezes em poucos minutos:
   desligado custava um timeout por empresa; com ela, custa um por relatório, e
   as chamadas seguintes levantam na hora com o mesmo motivo e a idade dele.
   Erro 4xx não entra: é defeito do pedido, não sinal de que o serviço caiu.
+
+E uma segunda chance: **resposta cortada no caminho tenta de novo uma vez**
+(``TENTATIVAS_REDE``). Em 20/11/2026 uma resposta da ``/sql`` chegou cortada
+(``ChunkedEncodingError``) com o PC, o armazém e o túnel de pé; sem a segunda
+tentativa, um corte só punha a B3 inteira na cópia congelada por 60 s e o
+aviso na tela por horas. Tempo de leitura esgotado **não** tenta de novo: o
+servidor já gastou a espera inteira, e repetir dobraria a espera da tela.
 """
 from __future__ import annotations
 
@@ -33,8 +40,17 @@ import threading
 import time
 
 TIMEOUT = (3.05, 10)
+#: A rota /sql roda SELECTs de até ``armazem_sql.TIMEOUT_MS`` (45 s) e devolve
+#: dezenas de milhares de linhas: a leitura espera mais que nas rotas prontas,
+#: e mais que o corte do servidor (senão o cliente desiste antes do erro dele).
+#: Abaixo dos 100 s em que o túnel da Cloudflare derruba a resposta.
+TIMEOUT_SQL = (3.05, 75)
 VALIDADE_S = 300
 PAUSA_APOS_FALHA_S = 60
+#: Quantas vezes um pedido vai ao túnel quando a conexão cai ou a resposta
+#: chega cortada. Os pedidos são todos de leitura: repetir não muda nada.
+TENTATIVAS_REDE = 2
+ESPERA_ENTRE_TENTATIVAS_S = 0.5
 
 _trava = threading.Lock()
 _respostas: dict[tuple, tuple[float, dict]] = {}
@@ -64,6 +80,45 @@ class OrdemIgnorada(ArmazemRemotoIndisponivel):
 
 def _relogio() -> float:
     return time.monotonic()
+
+
+def _esperar(segundos: float) -> None:
+    time.sleep(segundos)
+
+
+def _tempo_de_leitura_esgotado(exc: BaseException) -> bool:
+    """``ReadTimeout`` direto ou embrulhado.
+
+    Quando o servidor manda o cabeçalho e para no meio do corpo, o requests
+    levanta ``ConnectionError`` com o ``ReadTimeoutError`` do urllib3 dentro
+    -- não ``ReadTimeout``. Sem olhar dentro, a segunda tentativa gastaria de
+    novo os 75 s da rota ``/sql``.
+    """
+    import requests
+    from urllib3.exceptions import ReadTimeoutError
+
+    fila, vistos = [exc], set()
+    while fila:
+        atual = fila.pop()
+        if not isinstance(atual, BaseException) or id(atual) in vistos:
+            continue
+        vistos.add(id(atual))
+        if isinstance(atual, (requests.ReadTimeout, ReadTimeoutError)):
+            return True
+        fila.extend(a for a in getattr(atual, "args", ()) if isinstance(a, BaseException))
+        fila.extend((getattr(atual, "reason", None), atual.__cause__, atual.__context__))
+    return False
+
+
+def _vale_repetir(exc: Exception) -> bool:
+    """Queda de conexão ou resposta cortada; nunca tempo de leitura esgotado."""
+    import requests
+
+    if _tempo_de_leitura_esgotado(exc):
+        return False
+    return isinstance(exc, (requests.ConnectionError,
+                            requests.exceptions.ChunkedEncodingError,
+                            requests.exceptions.ContentDecodingError))
 
 
 def _limpar_memoria() -> None:
@@ -123,16 +178,30 @@ def _ler(caminho: str, params: dict | None = None, *,
     return copy.deepcopy(corpo)
 
 
-def _buscar(url: str, token: str, caminho: str, params: dict | None) -> dict:
+def _buscar(url: str, token: str, caminho: str, params: dict | None, *,
+            enviar: dict | None = None) -> dict:
     import requests
 
-    try:
-        resp = requests.get(f"{url}{caminho}", params=params or {},
-                            headers={"Authorization": f"Bearer {token}"},
-                            timeout=TIMEOUT)
-    except requests.RequestException as exc:
-        raise ArmazemRemotoIndisponivel(
-            f"sem resposta ({type(exc).__name__}) — PC ou túnel desligado?") from exc
+    cabecalho = {"Authorization": f"Bearer {token}"}
+    tentativa = 1
+    while True:
+        try:
+            if enviar is None:
+                resp = requests.get(f"{url}{caminho}", params=params or {},
+                                    headers=cabecalho, timeout=TIMEOUT)
+            else:
+                resp = requests.post(f"{url}{caminho}", json=enviar,
+                                     headers=cabecalho, timeout=TIMEOUT_SQL)
+        except requests.RequestException as exc:
+            if tentativa < TENTATIVAS_REDE and _vale_repetir(exc):
+                tentativa += 1
+                _esperar(ESPERA_ENTRE_TENTATIVAS_S)
+                continue
+            vezes = f", {tentativa} tentativas" if tentativa > 1 else ""
+            raise ArmazemRemotoIndisponivel(
+                f"sem resposta ({type(exc).__name__}{vezes}) — PC ou túnel "
+                "desligado?") from exc
+        break
     if resp.status_code != 200:
         try:
             motivo = str(resp.json().get("erro") or "")
@@ -301,3 +370,42 @@ def inventario_ativos(classe: str, tickers) -> dict | None:
     if not isinstance(inventario, dict):
         raise ArmazemRemotoIndisponivel("resposta sem o inventário por ativo")
     return inventario
+
+
+def consultar_sql(sql: str, params: dict | None = None):
+    """SELECT no armazém pela rota ``/sql``; ``None`` sem configuração.
+
+    Devolve o DataFrame que ``pd.read_sql_query`` daria lendo o banco direto
+    (``armazem_sql.montar_frame``). Não guarda a resposta aqui: quem chama
+    (``market_read``) já tem ``st.cache_data``, e copiar 100 mil linhas a cada
+    leitura custaria mais que a ida ao túnel. A pausa depois de queda vale como
+    nas outras rotas; erro do pedido (4xx: tabela fora do papel, teto de
+    linhas) levanta sem pausar.
+    """
+    from core.armazem_sql import montar_frame, params_para_json
+
+    url, token = _config()
+    if not (url and token):
+        return None
+    agora = _relogio()
+    with _trava:
+        falha = _falhas.get(url)
+    if falha is not None and agora - falha[0] < PAUSA_APOS_FALHA_S:
+        raise ArmazemRemotoIndisponivel(
+            f"{falha[1]} (falhou há {int(agora - falha[0])} s; nova tentativa "
+            f"depois de {PAUSA_APOS_FALHA_S} s)")
+    try:
+        corpo = _buscar(url, token, "/sql", None,
+                        enviar={"sql": sql, "params": params_para_json(params)})
+    except ArmazemRemotoIndisponivel as exc:
+        if exc.fora_do_ar:
+            with _trava:
+                _falhas[url] = (_relogio(), str(exc))
+        raise
+    with _trava:
+        _falhas.pop(url, None)
+    try:
+        return montar_frame(corpo)
+    except (ValueError, TypeError) as exc:
+        raise ArmazemRemotoIndisponivel(f"resposta da /sql inválida: {exc}",
+                                        fora_do_ar=False) from exc

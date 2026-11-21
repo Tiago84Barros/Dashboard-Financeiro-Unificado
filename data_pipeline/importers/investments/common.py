@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from typing import Any, Iterable
 
@@ -627,25 +628,53 @@ def ajustar_quantidades_dividendos(
     return mudou
 
 
+@contextmanager
+def conexao_de_escrita_compartilhada(conn: Connection, tabela: str):
+    """Conexão onde gravar numa tabela que é do app, e não de uma pessoa.
+
+    No banco principal é a própria ``conn``: a gravação entra na transação da
+    importação. Numa sessão de conta nova, ``tabela`` é estrangeira no banco
+    ``novos`` e o ``postgres_fdw`` recusa o ``ON CONFLICT DO UPDATE`` e manda
+    NULL nas colunas com padrão. Aí a gravação vai ao principal
+    (``core.database.engine_do_app``), numa transação própria que é
+    confirmada antes de a importação seguir. Um ativo ou instituição criado
+    assim fica no principal mesmo que a importação desfaça o resto -- é dado
+    de referência, como qualquer outro ticker do cadastro.
+    """
+    from core.database import engine_do_app, tabela_estrangeira
+
+    if not tabela_estrangeira(conn, tabela):
+        yield conn
+        return
+    engine = engine_do_app()
+    if engine is None:
+        raise RuntimeError(f"{tabela} é do banco principal, que não está configurado")
+    with engine.begin() as alvo:
+        yield alvo
+
+
 def get_or_create_institution(conn: Connection, name: str, inst_type: str) -> str:
     """
     Retorna o UUID da financial_institution. Cria se não existir.
     """
-    row = conn.execute(
-        text("SELECT id FROM financial_institutions WHERE name = :name LIMIT 1"),
-        {"name": name},
-    ).fetchone()
+    sql_busca = text("SELECT id FROM financial_institutions WHERE name = :name LIMIT 1")
+    row = conn.execute(sql_busca, {"name": name}).fetchone()
     if row:
         return str(row[0])
 
-    row = conn.execute(
-        text("""
-            INSERT INTO financial_institutions (name, type, active)
-            VALUES (:name, :type, TRUE)
-            RETURNING id
-        """),
-        {"name": name, "type": inst_type},
-    ).fetchone()
+    with conexao_de_escrita_compartilhada(conn, "financial_institutions") as alvo:
+        if alvo is not conn:  # outra conta pode ter criado; o fdw lê uma foto
+            row = alvo.execute(sql_busca, {"name": name}).fetchone()
+            if row:
+                return str(row[0])
+        row = alvo.execute(
+            text("""
+                INSERT INTO financial_institutions (name, type, active)
+                VALUES (:name, :type, TRUE)
+                RETURNING id
+            """),
+            {"name": name, "type": inst_type},
+        ).fetchone()
     return str(row[0])
 
 
@@ -713,15 +742,16 @@ def get_or_create_asset(
         return str(row[0])
 
     cls = asset_class or classify_ticker(t)
-    row = conn.execute(
-        text("""
-            INSERT INTO assets (ticker, name, class, currency)
-            VALUES (:t, :n, :c, :ccy)
-            ON CONFLICT (ticker) DO UPDATE SET name = EXCLUDED.name
-            RETURNING id
-        """),
-        {"t": t, "n": (name or t)[:200], "c": cls, "ccy": currency},
-    ).fetchone()
+    with conexao_de_escrita_compartilhada(conn, "assets") as alvo:
+        row = alvo.execute(
+            text("""
+                INSERT INTO assets (ticker, name, class, currency)
+                VALUES (:t, :n, :c, :ccy)
+                ON CONFLICT (ticker) DO UPDATE SET name = EXCLUDED.name
+                RETURNING id
+            """),
+            {"t": t, "n": (name or t)[:200], "c": cls, "ccy": currency},
+        ).fetchone()
     return str(row[0])
 
 
@@ -921,15 +951,16 @@ def batch_get_or_create_assets(
             params[f"t{i}"] = t
             params[f"n{i}"] = name[:200]
             params[f"c{i}"] = cls
-        rows = conn.execute(
-            text(f"""
-                INSERT INTO assets (ticker, name, class, currency)
-                VALUES {values_sql}
-                ON CONFLICT (ticker) DO UPDATE SET name = EXCLUDED.name
-                RETURNING ticker, id
-            """),
-            params,
-        ).fetchall()
+        with conexao_de_escrita_compartilhada(conn, "assets") as alvo:
+            rows = alvo.execute(
+                text(f"""
+                    INSERT INTO assets (ticker, name, class, currency)
+                    VALUES {values_sql}
+                    ON CONFLICT (ticker) DO UPDATE SET name = EXCLUDED.name
+                    RETURNING ticker, id
+                """),
+                params,
+            ).fetchall()
         for row in rows:
             result[row.ticker] = str(row.id)
 

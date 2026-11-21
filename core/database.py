@@ -43,10 +43,114 @@ def _fii_snapshot_connection_url(url: str):
     return parsed
 
 
-@st.cache_resource(show_spinner=False)
-def get_engine():
+#: Banco onde moram os perfis criados até 14/11/2026 e todas as vitrines.
+BANCO_PRINCIPAL = "principal"
+#: Banco das contas criadas pelo cadastro aberto da tela de login, desde
+#: 14/11/2026. O Supabase principal está perto dos 500 MB do plano Free; cada
+#: pessoa nova grava os próprios lançamentos aqui e enxerga o mercado do
+#: principal por ``postgres_fdw`` (ver ``scripts/preparar_supabase_novos.py``).
+BANCO_NOVOS = "novos"
+BANCOS = (BANCO_PRINCIPAL, BANCO_NOVOS)
+
+
+def banco_da_sessao() -> str:
+    """Banco da pessoa logada nesta sessão; o principal fora de sessão.
+
+    Jobs, CLI e testes sem ``ScriptRunContext`` caem sempre no principal, que
+    é onde moram as vitrines e o administrador. Sessão sem login também: a
+    tela de login lê os dois bancos explicitamente, por ``engine_do_banco``.
     """
-    Cria e cacheia o engine SQLAlchemy.
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+        if get_script_run_ctx(suppress_warning=True) is None:
+            return BANCO_PRINCIPAL
+        from core.user_context import principal
+        banco = principal().get("banco")
+    except Exception:
+        return BANCO_PRINCIPAL
+    return BANCO_NOVOS if banco == BANCO_NOVOS else BANCO_PRINCIPAL
+
+
+def get_engine():
+    """Engine do banco da pessoa logada; o principal fora de sessão.
+
+    Ponto único de roteamento: os ~170 chamadores continuam chamando
+    ``get_engine()`` e passam a cair no banco de quem está logado. Quem mora
+    no banco ``novos`` lê o mercado pelas tabelas estrangeiras que o
+    ``postgres_fdw`` monta lá apontando para o principal, então SQL que cruza
+    lançamento com ``assets`` ou ``market.*`` continua sendo uma consulta só.
+    Retorna None se o banco da sessão não estiver configurado.
+    """
+    return engine_do_banco(banco_da_sessao())
+
+
+def engine_do_banco(banco: str):
+    """Engine de um banco nomeado; None se ele não estiver configurado."""
+    if banco == BANCO_NOVOS:
+        return _engine_novos()
+    return _engine_principal()
+
+
+def engine_do_app():
+    """Engine onde se grava dado do app, e não de uma pessoa: o principal.
+
+    Ativos, instituições, registros de lacuna e de validação são de todos e
+    moram no principal. Numa sessão de conta nova o ``get_engine()`` aponta
+    para o banco ``novos``, onde essas tabelas são estrangeiras: o
+    ``postgres_fdw`` não aceita ``ON CONFLICT DO UPDATE`` e manda NULL nas
+    colunas com padrão (o ``IMPORT FOREIGN SCHEMA`` não traz os padrões).
+    Ler pelo ``get_engine()`` continua certo; gravar, não.
+    """
+    return engine_do_banco(BANCO_PRINCIPAL)
+
+
+def tabela_estrangeira(conn, tabela: str) -> bool:
+    """True quando ``tabela`` é estrangeira no banco desta conexão.
+
+    É o sinal de que a conexão é do banco ``novos`` e de que a gravação em
+    ``tabela`` precisa ir para :func:`engine_do_app`. Fora do Postgres
+    (SQLite, dublês de teste) é sempre False.
+    """
+    try:
+        if getattr(getattr(conn, "dialect", None), "name", None) != "postgresql":
+            return False
+        relkind = conn.execute(
+            text("SELECT relkind FROM pg_class WHERE oid = to_regclass(:t)"),
+            {"t": tabela if "." in tabela else f"public.{tabela}"},
+        ).scalar()
+    except Exception:
+        return False
+    return relkind == "f"
+
+
+def novos_configurado() -> bool:
+    """True quando o Supabase das contas novas tem URL nos Secrets."""
+    from core.config import settings
+    return bool(settings.db_url_novos)
+
+
+def _limpar_engines() -> None:
+    _engine_principal.clear()
+    _engine_novos.clear()
+
+
+get_engine.clear = _limpar_engines  # compatível com o antigo cache_resource
+
+
+@st.cache_resource(show_spinner=False)
+def _engine_novos():
+    from core.config import settings
+    url = settings.db_url_novos
+    if not url:
+        return None
+    # Sem SUPABASE_DB_HOSTADDR: o IP fixo é do pooler do principal.
+    return _criar_engine(url, hostaddr=None)
+
+
+@st.cache_resource(show_spinner=False)
+def _engine_principal():
+    """
+    Cria e cacheia o engine SQLAlchemy do banco principal.
     Retorna None se DATABASE_URL não estiver configurada.
     """
     from core.config import settings
@@ -54,6 +158,10 @@ def get_engine():
     url = settings.db_url
     if not url:
         return None
+    return _criar_engine(url, hostaddr=os.getenv("SUPABASE_DB_HOSTADDR"))
+
+
+def _criar_engine(url: str, *, hostaddr: str | None):
 
     is_sqlite = url.startswith("sqlite")
     is_local = "localhost" in url or "127.0.0.1" in url
@@ -65,8 +173,8 @@ def get_engine():
             connect_args["sslmode"] = "require"
             # Contorno operacional opcional para falha DNS do pooler. O host
             # lógico continua na URL; somente a resolução TCP usa o IP fornecido.
-            if os.getenv("SUPABASE_DB_HOSTADDR"):
-                connect_args["hostaddr"] = os.environ["SUPABASE_DB_HOSTADDR"]
+            if hostaddr:
+                connect_args["hostaddr"] = hostaddr
         # Streamlit pode manter vários processos/sessões simultâneos. Um pool pequeno,
         # LIFO e reciclável evita esgotar o Supavisor sem sacrificar concorrência curta.
         kwargs.update({"pool_size": 1, "max_overflow": 2, "pool_timeout": 10,
@@ -91,11 +199,11 @@ def get_fii_snapshot_read_engine():
 
     parsed = _fii_snapshot_connection_url(url)
     if parsed.drivername.startswith("sqlite"):
-        return get_engine()
+        return _engine_principal()
 
     is_local = parsed.host in {"localhost", "127.0.0.1", "::1"}
     if is_local:
-        return get_engine()
+        return _engine_principal()
 
     parsed = parsed.update_query_dict({"sslmode": "require"})
     connect_args: dict = {
@@ -182,8 +290,11 @@ def get_database_storage_status() -> dict:
     A consulta é somente leitura e não retorna URL, usuário, senha ou OWNER_USER_ID.
     O limite padrão acompanha o plano Free do Supabase, mas pode ser ajustado via
     SUPABASE_DB_LIMIT_MB quando o projeto mudar de plano.
+
+    Mede sempre o principal: o cache não leva o banco da sessão na chave, e é
+    o principal que está perto do limite.
     """
-    engine = get_engine()
+    engine = _engine_principal()
     limit_mb = _database_limit_mb()
     limit_bytes = int(limit_mb * 1024 * 1024)
 

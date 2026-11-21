@@ -22,7 +22,8 @@ Comandos:
     python run_us_ingest.py monthly      --warehouse --tickers SPY IWB QQQ  # só esses
 
 Opções: --tickers, --exchanges, --limit, --years, --budget, --dry-run, --offline,
---warehouse (usa 127.0.0.1:5433 lendo warehouse/.env), --json.
+--warehouse (usa 127.0.0.1:5433 com a senha do container, lida por docker inspect;
+warehouse/.env de reserva), --json.
 
 A CHAVE (FMP_API_KEY) só é usada aqui/na ingestão — NUNCA na interface. A view lê
 apenas o warehouse local e funciona offline após a carga.
@@ -49,31 +50,33 @@ log = logging.getLogger("us_ingest_cli")
 
 
 def _point_to_warehouse() -> bool:
-    """Aponta a engine para o Postgres local lendo warehouse/.env (sem expor senha)."""
-    import subprocess
+    """Aponta a engine para o Postgres local sem expor a senha.
 
+    O volume pode ter sido recriado com senha diferente do .env. Quando o
+    contêiner está ativo, sua variável é a fonte de verdade, lida por
+    ``senha_do_warehouse`` (``docker inspect``), o mesmo leitor do resto da
+    rotina. O ``docker compose exec ... printenv`` de antes falhou em 13/11 e
+    14/11/2026 com o container saudável. ``warehouse/.env`` fica de reserva.
+    """
     from dotenv import dotenv_values
-    env_paths = [_ROOT / "warehouse" / ".env"]
-    env_paths.extend(_ROOT.glob(".claude/worktrees/*/warehouse/.env"))
-    warehouse_file = next((p for p in env_paths if p.exists()), None)
+
+    from scripts.publish_fii_selection_from_local import senha_do_warehouse
+
     password = ""
-    # O volume pode ter sido recriado com senha diferente do .env. Quando o
-    # contêiner está ativo, sua variável é a fonte de verdade; capture_output
-    # impede que a credencial apareça no terminal/log.
     try:
-        proc = subprocess.run(
-            ["docker", "compose", "exec", "-T", "warehouse", "printenv",
-             "POSTGRES_PASSWORD"], cwd=str(_ROOT / "warehouse"),
-            capture_output=True, text=True, timeout=10, check=False)
-        if proc.returncode == 0:
-            password = (proc.stdout or "").strip()
-    except (OSError, subprocess.SubprocessError):
-        pass
+        password = senha_do_warehouse()
+    except RuntimeError as exc:
+        log.warning("senha do warehouse pelo docker inspect falhou: %s; "
+                    "tentando warehouse/.env", exc)
     if not password:
+        env_paths = [_ROOT / "warehouse" / ".env"]
+        env_paths.extend(_ROOT.glob(".claude/worktrees/*/warehouse/.env"))
+        warehouse_file = next((p for p in env_paths if p.exists()), None)
         password = str((dotenv_values(warehouse_file) if warehouse_file else {}).get(
             "WAREHOUSE_PASSWORD") or "").strip()
     if not password:
-        log.error("nenhum warehouse/.env com WAREHOUSE_PASSWORD encontrado")
+        log.error("senha do warehouse local indisponível "
+                  "(docker inspect e warehouse/.env)")
         return False
     os.environ["SUPABASE_UNIFICADO_URL"] = (
         "postgresql://postgres:" + quote(password, safe="") + "@127.0.0.1:5433/postgres")
@@ -505,15 +508,26 @@ def main() -> int:
         # Rotina diaria que leva 4 h nao termina — e foi assim que a vitrine
         # ficou parada em 20/08. `--completo` refaz tudo quando se quer reparar
         # a serie, e nao para o uso diario.
-        desde = {}
+        #
+        # Split guardado nos ultimos meses alarga a janela ate antes dele: o
+        # Yahoo retroajusta dias depois do split, e a barra comparada tem de
+        # estar na janela quando isso acontece (ingest.passado_retroajustado).
+        desde, vigiados = {}, {}
         if not args.completo:
+            from datetime import date, timedelta
+
+            from data_pipeline.us import repository as us_repo
             with engine.connect() as conn:
                 desde = ultima_data_por_simbolo(conn, symbols)
+                vigiados = us_repo.splits_vigiados(
+                    conn, symbols, desde=date.today() - timedelta(
+                        days=ingest.DIAS_DE_SPLIT_VIGIADO))
         resultado = ingest.ingest_prices_only(provider, engine, symbols,
-                                              desde=desde or None)
+                                              desde=desde or None,
+                                              splits_vigiados=vigiados)
         return out({"ok": True, "symbols": len(symbols),
                     "modo": "completo" if args.completo else "incremental",
-                    **resultado})
+                    "splits_vigiados": len(vigiados), **resultado})
 
     if args.command == "validate":
         from data_pipeline.us import quality

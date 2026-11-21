@@ -30,6 +30,7 @@ confiança.
 from __future__ import annotations
 
 import os
+import re
 from html import escape
 from urllib.parse import urlencode
 
@@ -471,6 +472,16 @@ def _tom_da_natureza(natureza: str) -> str:
             else "warning" if natureza == "Restrição" else "info")
 
 
+def mensagem_html(texto: str) -> str:
+    """Mensagem do log pronta para o cartão HTML.
+
+    O cartão é HTML cru, e o markdown não é lido dentro dele: o ``**BBSE3**``
+    que a tela escreve em negrito saía com os asteriscos à mostra. Escapa
+    primeiro e só depois troca o par ``**`` por ``<strong>``.
+    """
+    return re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escape(texto))
+
+
 def _campo_html(rotulo: str, valor: str) -> str:
     """Campo da ficha. ``valor`` já vem como HTML pronto e escapado."""
     return ('<div class="restr-campo">'
@@ -516,7 +527,7 @@ def _render_detalhe(item: dict) -> None:
 
     st.markdown(
         f'<div class="restr-item" style="--restr-tom:{_TOM[tom]}">'
-        f'<div class="restr-item-msg">{escape(item.get("ultima_mensagem") or "—")}</div>'
+        f'<div class="restr-item-msg">{mensagem_html(item.get("ultima_mensagem") or "—")}</div>'
         f'<div class="restr-item-tags">{tags_html}</div>'
         f'<div class="restr-campos">{"".join(campos)}</div>'
         "</div>",

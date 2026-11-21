@@ -121,7 +121,43 @@ US_SCHEMA_VERSION = 1
 # Em `share_count_cagr_3y` o mesmo defeito PREMIAVA -- a queda de escala virava
 # recompra liquida de -99,89%, o melhor valor do universo. Ia de -0,9989 a
 # +2.339.999; agora vai de -0,85 a +3,22, ao custo de 190 leituras (6%).
-US_FUNDAMENTAL_SCORE_VERSION = "0.9.0"
+# 0.9.1 (2026-11-17): valor ISOLADO no grupo passa a valer o neutro, e nao a
+# nota extrema. Gemeo do achado D2 da B3 (SCORE_VERSION 2.33.0). O percentil
+# por industria de uma metrica que so UMA empresa do grupo tem saia 1,0 -- ou
+# 0,0 depois do `1 - x` das metricas em que menor e melhor --, uma nota de
+# ponta tirada de uma observacao sem ninguem com quem comparar. O grupo e
+# grande (>= min_group empresas), entao o fallback para o universo nao
+# disparava: o que faltava era o VALOR, nao a industria. Um valor so nao tem
+# ordem; agora ele vale 0,5, como a ausencia.
+# Medido no armazem local sobre as 4.349 empresas do quadro corrente: 258
+# celulas (44 em interest_coverage, 32 em ev_ebitda, 26 em ev_ebit, 26 em
+# shareholder_yield, 22 em net_debt_ebitda...), 126 empresas mudam de nota,
+# variacao media -3,1 pontos e mediana -1,9 -- o extremo era mais vezes o
+# topo que o fundo. Maiores quedas: RADI -18,1, AXTA -12,3, ZD -11,5. No
+# top-20 saem CVS e IDXX e entram CF e HRMY; no top-50 trocam seis nomes.
+# Os gemeos da escala 0-100 (`core.us_advanced_lab._percentile`, qualidade
+# de caixa, e `core.us_estilos._percentil`, momento e P&D) recebem a mesma
+# regra; eles rankeiam no universo inteiro, onde valor isolado so aparece com
+# o universo quase vazio.
+# 0.9.2 (18/11/2026) -- completa a 0.9.1 no lado do grupo. A 0.9.1 tirou a
+# nota extrema do valor ISOLADO (um so valor no grupo -> neutro), mas o corte
+# "grupo pequeno usa o universo" seguia contando EMPRESAS da industria, nao
+# VALORES VALIDOS da metrica. Numa industria de cinco empresas em que so duas
+# ou tres publicam ROIC, o percentil ainda saia de dois ou tres pontos: o pior
+# ROIC do universo podia ser o melhor do grupo. Medido no armazem: 2.710 de
+# 73.558 pares empresa x metrica, em 686 das 4.349 empresas, eram ranqueados
+# em industria com menos de quatro valores. As tres empresas sem industria
+# saiam 50 em todas as metricas (o groupby descarta a chave nula). Agora a
+# metrica com menos de `min_group` valores na industria, ou sem industria, vai
+# ao universo -- numa funcao so (`percentil_winsorizado`), que o laboratorio
+# de Analise Avancada tambem usa (la o numero nao muda: ele ja ranqueia no
+# universo). Sobre a foto atual, contra a 0.9.1: 673 notas mudam (3 sem
+# industria), |delta| mediano 1,3 ponto, 14 caem mais de 10 e nenhuma sobe
+# tanto; Spearman 0,991; 15 do top-20 ficam; o grau (decision/research/
+# screen) nao muda em nenhuma empresa.
+# Vantagem OOS (walk-forward anual 2010-2025, top-20 por score, mesma regua):
+# ver docs/empresas_americanas.md, secao v0.9.2.
+US_FUNDAMENTAL_SCORE_VERSION = "0.9.2"
 
 # Score de assimetria da aba "Empresas Fora da Curva".
 US_ASYMMETRY_SCORE_VERSION = "0.1.0"

@@ -105,7 +105,13 @@ def estilos_da_empresa(symbol: str, momento: dict, pesquisa: dict) -> dict:
 
 
 def _percentil(valores: pd.Series) -> pd.Series:
-    """0–100 entre os valores observados; ausência continua ausência."""
+    """0–100 entre os valores observados; ausência continua ausência.
+
+    Um valor só não tem ordem: seria 100, a nota extrema tirada de uma
+    observação. Fica no meio (50), como no gêmeo do achado D2 de 17/11/2026.
+    """
+    if int(valores.notna().sum()) < 2:
+        return pd.Series(50.0, index=valores.index).where(valores.notna())
     return (valores.rank(pct=True, method="average") * 100).round(1)
 
 

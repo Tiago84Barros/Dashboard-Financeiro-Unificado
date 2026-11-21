@@ -1293,7 +1293,8 @@ def _tab_dossie(status: dict) -> None:
 def _intel_avaliar_us(tk: str):
     """Avaliação por regras da Inteligência dos Ativos (EUA), com cache de
     sessão. Falha não é guardada: o portão é fail-open e tenta de novo no rerun."""
-    cache = st.session_state.setdefault("us_intel_cache", {})
+    from core.fonte_b3 import cache_de_sessao
+    cache = cache_de_sessao("us_intel_cache")
     chave = str(tk).upper()
     if chave not in cache:
         cache[chave] = veredito.avaliar_ativo(chave, mercado="us")
@@ -1526,6 +1527,44 @@ def _salvar_carteira_padrao_us(holdings: pd.DataFrame, result: dict,
         metrics={**metrics, "macro_turnover": macro_info.get("turnover")},
         name=f"Portfolio EUA Modelo {pd.Timestamp.today().year}",
     )
+
+
+def _render_graficos_alocacao_us(holdings: pd.DataFrame) -> None:
+    """Pizza por ativo e barras por setor da carteira em tela.
+
+    Função única da carteira normal e da composição para revisão: até
+    15/11/2026 os dois gráficos ficavam só no corpo da carteira normal e a
+    revisão terminava sem eles. Os pesos não são reescalados: o capital que a
+    revisão deixa sem aplicar aparece como "Não alocado" nos dois gráficos.
+    """
+    if holdings is None or holdings.empty or not {"symbol", "weight"} <= set(holdings):
+        return
+    dados = holdings.assign(
+        sector_group=(holdings["sector_group"] if "sector_group" in holdings
+                      else pd.Series(index=holdings.index, dtype=object)
+                      ).fillna("Não classificado"))[["symbol", "sector_group", "weight"]]
+    sobra = 1.0 - float(dados["weight"].sum())
+    if sobra > 1e-3:
+        dados = pd.concat([dados, pd.DataFrame([{
+            "symbol": "Não alocado", "sector_group": "Não alocado", "weight": sobra}])],
+            ignore_index=True)
+    chart1, chart2 = st.columns(2)
+    with chart1:
+        fig = px.pie(
+            dados, names="symbol", values="weight", hole=.48,
+            title="Alocação por ativo", labels={"symbol": "Ticker", "weight": "Peso"},
+        )
+        fig.update_layout(**_PLOT_LAYOUT, height=410)
+        st.plotly_chart(fig, width="stretch", key="us_create_pie")
+    with chart2:
+        sector_weights = dados.groupby("sector_group", dropna=False)["weight"].sum().reset_index()
+        fig = px.bar(
+            sector_weights.sort_values("weight"), x="weight", y="sector_group",
+            orientation="h", title="Alocação por setor",
+            labels={"sector_group": "Setor", "weight": "Peso"},
+        )
+        fig.update_layout(**_PLOT_LAYOUT, height=410, xaxis_tickformat=".0%")
+        st.plotly_chart(fig, width="stretch", key="us_create_sector")
 
 
 def _tab_criacao_portfolio(status: dict) -> None:
@@ -1850,6 +1889,8 @@ def _tab_criacao_portfolio(status: dict) -> None:
         from design.portfolio_review import render_portfolio_review
 
         render_portfolio_review(result["review_portfolio"], key="us_review")
+        _render_graficos_alocacao_us(
+            pd.DataFrame(result["review_portfolio"].get("items") or []))
         return
     # Bloqueio antes de qualquer número: sem liquidez verificada não existe
     # carteira publicável, e mostrar auditoria de indústria abaixo faria parecer
@@ -2112,23 +2153,7 @@ def _tab_criacao_portfolio(status: dict) -> None:
             f"Treasury de referência {metrics.get('risk_free_rate', 0):.2%}."
         )
 
-    chart1, chart2 = st.columns(2)
-    with chart1:
-        fig = px.pie(
-            holdings, names="symbol", values="weight", hole=.48,
-            title="Alocação por ativo", labels={"symbol": "Ticker", "weight": "Peso"},
-        )
-        fig.update_layout(**_PLOT_LAYOUT, height=410)
-        st.plotly_chart(fig, width="stretch", key="us_create_pie")
-    with chart2:
-        sector_weights = holdings.groupby("sector_group", dropna=False)["weight"].sum().reset_index()
-        fig = px.bar(
-            sector_weights.sort_values("weight"), x="weight", y="sector_group",
-            orientation="h", title="Alocação por setor",
-            labels={"sector_group": "Setor", "weight": "Peso"},
-        )
-        fig.update_layout(**_PLOT_LAYOUT, height=410, xaxis_tickformat=".0%")
-        st.plotly_chart(fig, width="stretch", key="us_create_sector")
+    _render_graficos_alocacao_us(holdings)
 
     secao_titulo("Relação entre Score e Cobertura", "🔭")
     fig = px.scatter(
@@ -2215,13 +2240,14 @@ def _render_us_estilos(holdings: pd.DataFrame) -> None:
                            for c in ("Momento 12m (%)", "Nota momento",
                                      "P&D / valor de mercado (%)", "Nota P&D")})
         st.caption(
-            "Momento: retorno total de 12 meses até 1 mês antes do último pregão. P&D: "
-            "despesa de pesquisa e desenvolvimento do último exercício sobre o valor de "
-            "mercado. As notas são o percentil no universo elegível; vazio é neutro (50) "
-            "na nota de entrada -- a empresa não declara P&D ou não tem 12 meses de preço. "
-            "Nos EUA, de 1927 a 2025, o terço com mais momento rendeu 4,1% a.a. acima do "
-            "mercado e o terço com mais P&D, 3,7% a.a. (base acadêmica sem viés de "
-            "sobrevivência, antes de custos).")
+            "Momento: retorno total de 12 meses, até 1 mês antes do último pregão. P&D: "
+            "despesa com pesquisa e desenvolvimento do último exercício, dividida pelo "
+            "valor de mercado. As notas são o percentil no universo elegível (posição "
+            "da empresa entre as demais, de 0 a 100). Campo vazio vale 50, neutro, na "
+            "nota de entrada. Isso acontece quando a empresa não declara P&D ou não "
+            "tem 12 meses de preço. Nos EUA, de 1927 a 2025, o terço com mais momento "
+            "rendeu 4,1% ao ano acima do mercado. O terço com mais P&D rendeu 3,7% ao "
+            "ano acima do mercado (base acadêmica sem viés de sobrevivência, antes de custos).")
 
 
 # ── Criação de Portfólio ──────────────────────────────────────────────────────
@@ -2342,10 +2368,10 @@ def _tab_backtests(status: dict) -> None:
     _bloco_liquido_us(res)
 
     secao_titulo("Desempenho bruto em dólar versus pesos iguais", "📈")
-    st.caption("Retorno total em USD, sem custo, imposto nem câmbio: é a "
+    st.caption("Retorno total em USD, sem custo, imposto nem câmbio. É a "
                "régua da ordenação (Rank-IC, a correlação de ranking acima, e o "
-               "excesso guardado na medição "
-               "fora da amostra), não o que sobra no bolso.")
+               "excesso guardado na medição fora da amostra). Não é o que "
+               "sobra no bolso.")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         card_metrica("Retorno anual.", _p(p["ann_return"]))

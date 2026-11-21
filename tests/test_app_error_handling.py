@@ -99,6 +99,10 @@ class _FakeStreamlit(ModuleType):
         # apareceria aqui — mantido para o teste poder acusar a regressão.
         self.errors_shown.append(str(msg))
 
+    def empty(self):
+        # Vaga do aviso da fonte da B3 (``app.py::_ROTAS_QUE_LEEM_B3``).
+        return SimpleNamespace(container=nullcontext)
+
 
 def test_excecao_ao_carregar_modulo_nao_vaza_para_a_tela_e_log_recebe_detalhe(
     monkeypatch, caplog,
@@ -124,6 +128,7 @@ def test_excecao_ao_carregar_modulo_nao_vaza_para_a_tela_e_log_recebe_detalhe(
             mensagem_erro=fake_mensagem_erro,
             transicao_de_pagina=lambda *_args: None,
             marca_sidebar_html=lambda *_args: "",
+            aviso_fonte_reserva_b3=lambda _slot: None,
         ),
             transicao_de_pagina=lambda *_args: None,
     )
@@ -188,6 +193,7 @@ def test_quem_nao_e_admin_ve_so_a_mensagem_amigavel(monkeypatch, caplog):
             ),
             transicao_de_pagina=lambda *_args: None,
             marca_sidebar_html=lambda *_args: "",
+            aviso_fonte_reserva_b3=lambda _slot: None,
         ),
         core_user_context=SimpleNamespace(
             principal=lambda: dict(USUARIO_SINTETICO),
@@ -213,6 +219,7 @@ def test_modulo_carregado_com_sucesso_nao_aciona_o_handler_de_erro(monkeypatch, 
     fake_st = _FakeStreamlit(selected_menu="📊 Dashboard Geral")
     mensagens_amigaveis: list[tuple[str, str]] = []
     fake_view = SimpleNamespace(render=lambda: None)
+    vagas_do_aviso_b3: list[object] = []
 
     instalar_stubs_de_bootstrap(
         monkeypatch,
@@ -223,6 +230,7 @@ def test_modulo_carregado_com_sucesso_nao_aciona_o_handler_de_erro(monkeypatch, 
             ),
             transicao_de_pagina=lambda *_args: None,
             marca_sidebar_html=lambda *_args: "",
+            aviso_fonte_reserva_b3=vagas_do_aviso_b3.append,
         ),
     )
     monkeypatch.setattr(importlib, "import_module", lambda _name: fake_view)
@@ -233,3 +241,6 @@ def test_modulo_carregado_com_sucesso_nao_aciona_o_handler_de_erro(monkeypatch, 
     assert mensagens_amigaveis == []
     assert fake_st.errors_shown == []
     assert not any(record.exc_info for record in caplog.records)
+    # O Dashboard Geral le a B3 por ``core.market_read``: o roteador abre a
+    # vaga antes da view e preenche o aviso da fonte de reserva no fim.
+    assert len(vagas_do_aviso_b3) == 1

@@ -5,7 +5,9 @@ Score fundamentalista americano — RELATIVO por indústria (não copia pesos do
 Metodologia (alinhada ao rigor do B3, adaptada aos EUA):
   1. Winsorização intra-grupo (apara caudas antes de ranquear).
   2. Percentil intra-INDÚSTRIA por métrica (grupo estruturalmente comparável);
-     grupos pequenos caem para setor e, por fim, universo (flag de fallback).
+     a métrica com menos de quatro valores válidos na indústria -- ou a
+     empresa sem indústria -- é ranqueada no universo inteiro (0.9.2).
+     Percentil de menos de dois valores é neutro: valor sem par não tem ordem.
   3. Ausência preserva neutralidade estatística, mas reduz explicitamente a
      confiança e puxa a trilha incompleta para 50 (não mascara cobertura baixa).
   4. Seis trilhas de fatores → média das métricas da trilha → soma ponderada → 0–100.
@@ -228,22 +230,48 @@ def _weights_for(sector: str | None) -> dict[str, float]:
     return {k: v / total for k, v in w.items()}  # renormaliza
 
 
-def _winsorized_percentile(s: pd.Series, lower: float = 0.05,
-                           upper: float = 0.95) -> pd.Series:
-    """Winsoriza e devolve o percentil (0–1) na ordem 'maior é melhor'."""
+def percentil_winsorizado(s: pd.Series, lower: float = 0.05,
+                          upper: float = 0.95, *,
+                          maior_melhor: bool = True) -> pd.Series:
+    """Winsoriza e devolve o percentil (0–1); ausência vale o neutro.
+
+    Única conta de percentil do motor americano: o score (``_rank_within``) e o
+    laboratório de Análise Avançada (``core.us_advanced_lab._percentile``)
+    passam por aqui.
+
+    Com menos de dois valores não há ordem, e o percentil é neutro. Antes da
+    0.9.1 o valor solitário saía 1,0 -- o melhor do grupo por ser o único --,
+    ou 0,0 quando menor é melhor (gêmeo nos EUA do achado D2 da B3). Na 0.9.2
+    a cópia que o laboratório tinha desta conta passou a chamar esta função.
+    """
     valid = s.dropna()
-    if valid.empty:
-        return pd.Series(NEUTRAL, index=s.index)
+    if len(valid) < 2:
+        return pd.Series(NEUTRAL, index=s.index, dtype=float)
     lo, hi = valid.quantile(lower), valid.quantile(upper)
     clipped = s.clip(lower=lo, upper=hi)
     pct = clipped.rank(pct=True, method="average")
+    if not maior_melhor:
+        pct = 1.0 - pct
     return pct.fillna(NEUTRAL)
 
 
+# Nome antigo, mantido para quem já o importa.
+_winsorized_percentile = percentil_winsorizado
+
+
 def _rank_within(df: pd.DataFrame, group_col: str, min_group: int) -> pd.DataFrame:
-    """Percentil por métrica dentro do grupo; grupos pequenos usam o universo."""
+    """Percentil por métrica dentro do grupo; grupo sem ordem usa o universo.
+
+    "Grupo pequeno" é contado em VALORES VÁLIDOS DA MÉTRICA, não em empresas
+    (0.9.2). Uma indústria de cinco empresas em que só duas publicam ROIC não
+    ordena ROIC: contar empresas deixava o pior dos dois virar o percentil 0,5
+    e o melhor o 1,0 da indústria, mesmo sendo os piores ROIC do universo (a
+    0.9.1 já neutralizava o valor solitário, não o par). A empresa sem
+    indústria também vai ao universo -- o ``groupby`` descarta a chave nula, e
+    ela saía neutra em todas as métricas.
+    """
     out = pd.DataFrame(index=df.index)
-    counts = df.groupby(group_col)[group_col].transform("size") if group_col in df else None
+    grupo = df[group_col] if group_col in df.columns else None
     for metric in _ALL_METRICS:
         if metric not in df.columns:
             out[metric] = NEUTRAL
@@ -254,16 +282,16 @@ def _rank_within(df: pd.DataFrame, group_col: str, min_group: int) -> pd.DataFra
             # 1/0 seria infinito; o múltiplo zerado não diz nada sobre preço.
             col = (1.0 / col.where(col != 0)).replace([float("inf"),
                                                        float("-inf")], None)
-        base = df.assign(**{metric: col})
-        if group_col in df.columns:
-            ranked = base.groupby(group_col)[metric].transform(_winsorized_percentile)
-            # grupos pequenos: rank no universo inteiro
-            small = counts < min_group
-            if small.any():
-                universe = _winsorized_percentile(col)
-                ranked = ranked.where(~small, universe)
+        if grupo is not None:
+            ranked = col.groupby(grupo).transform(percentil_winsorizado)
+            validos = col.notna().groupby(grupo).transform("sum")
+            # Sem indústria ou com menos de `min_group` valores da métrica:
+            # rank no universo inteiro.
+            sem_ordem = grupo.isna() | (validos < min_group)
+            if sem_ordem.any():
+                ranked = ranked.where(~sem_ordem, percentil_winsorizado(col))
         else:
-            ranked = _winsorized_percentile(col)
+            ranked = percentil_winsorizado(col)
         # O recíproco já inverteu o sentido: EBIT/EV maior é melhor.
         if metric in LOWER_IS_BETTER and not reciproco:
             ranked = 1.0 - ranked

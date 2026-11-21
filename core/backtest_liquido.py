@@ -137,6 +137,31 @@ def _finito(valor: Any) -> float | None:
     return numero if math.isfinite(numero) else None
 
 
+def renda_reinvestida(totais, precos) -> float | None:
+    """Provento reinvestido num período de vários meses, como fração do valor
+    no início dele -- a ``renda`` que `RastreadorIR.evoluir` soma ao custo.
+
+    Mês a mês: (valor acumulado antes do mês) × (retorno total − retorno de
+    preço do mês). A diferença dos compostos do período (total − preço)
+    incluiria a valorização do próprio provento reinvestido e isentaria parte
+    do ganho de capital: provento de 10% seguido de alta de 20% dá 12% em vez
+    de 10%. Num período de um mês as duas contas coincidem.
+
+    Mês sem retorno total rende 0 (A-118) e não paga provento; mês com total
+    e sem preço não tem provento separável e conta 0 (mais IR, nunca menos).
+    None quando não há nenhum mês com os dois retornos.
+    """
+    acumulado, renda, algum = 1.0, 0.0, False
+    for rt, rp in zip(totais, precos):
+        t = _finito(rt)
+        pr = _finito(rp)
+        if t is not None and pr is not None:
+            renda += acumulado * (t - pr)
+            algum = True
+        acumulado *= 1.0 + (t if t is not None else 0.0)
+    return renda if algum else None
+
+
 class RastreadorIR:
     """Custo de aquisição e IR realizado de uma carteira de pesos, sem escala.
 

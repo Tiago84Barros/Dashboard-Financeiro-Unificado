@@ -17,6 +17,17 @@ OTHER = "22222222-2222-2222-2222-222222222222"
 PASSWORD = "Test#8Ab"
 
 
+def _kpis_logados(app):
+    """(rótulo, valor) dos cards KPI de "Usuários logados agora".
+
+    A seção trocou ``st.metric`` pelos cards CSS de ``card_metrica`` em
+    15/11/2026; o número passou a morar no HTML do card.
+    """
+    import re
+    padrao = re.compile(r'app-kpi-label">([^<]*)</div><div class="app-kpi-value">([^<]*)<')
+    return [m.groups() for el in app.markdown for m in padrao.finditer(el.value)]
+
+
 @pytest.fixture
 def user_state(monkeypatch):
     state = {}
@@ -104,18 +115,20 @@ def postgres(monkeypatch):
                 cursor.execute((schema / filename).read_text(encoding="utf-8"))
         conn.execute(text("INSERT INTO profiles (id, name, email, password_hash) VALUES (:uid, 'Administrador teste', 'admin@example.test', :pw)"),
                      {"uid": ADMIN, "pw": accounts.hash_password(PASSWORD)})
-    monkeypatch.setattr(accounts, "get_engine", lambda: engine)
+    # Uma base só faz o papel dos dois bancos: os testes daqui medem sessão e
+    # isolamento por pessoa; os dois bancos de verdade estão em
+    # tests/test_supabase_novos.py.
+    monkeypatch.setattr(accounts, "engine_do_banco", lambda banco: engine)
+    monkeypatch.setattr(accounts, "novos_configurado", lambda: True)
     yield engine
     engine.dispose()
     admin.dispose()
 
 
 def test_cadastro_login_bloqueio_e_revogacao(postgres, user_state):
-    login_as(user_state, OTHER)
-    with pytest.raises(PermissionError):
-        accounts.create_user("Pessoa", "person@example.test", PASSWORD)
-    login_as(user_state, ADMIN)
-    uid = accounts.create_user("Pessoa", "Person@example.test", PASSWORD)
+    # Cadastro aberto: quem cria a conta ainda não tem sessão.
+    user_state.clear()
+    uid = accounts.cadastrar_usuario("Pessoa", "Person@example.test", PASSWORD)
     login = accounts.authenticate("person@example.test", PASSWORD)
     assert login["id"] == uid and uid != ADMIN
     assert accounts.session_valid(login)
@@ -165,7 +178,7 @@ def test_memoria_privada_restaurada_oculta_e_limpeza(postgres, user_state):
         visible_chat_history,
     )
     login_as(user_state, ADMIN)
-    uid = accounts.create_user("Outra", "other@example.test", PASSWORD)
+    uid = accounts.cadastrar_usuario("Outra", "other@example.test", PASSWORD)
     original = [{"role": "user", "content": "Contexto sintético A"}]
     save_chat_history("chat", original, session_state=user_state)
     login_as(user_state, uid)
@@ -189,7 +202,7 @@ def test_memoria_privada_restaurada_oculta_e_limpeza(postgres, user_state):
 
 def test_contas_financeiras_sao_criadas_para_a_pessoa_autenticada(postgres, user_state):
     login_as(user_state, ADMIN)
-    uid = accounts.create_user("Outra", "other@example.test", PASSWORD)
+    uid = accounts.cadastrar_usuario("Outra", "other@example.test", PASSWORD)
     login_as(user_state, uid)
     accounts.create_account("Conta sintética", "checking")
     with postgres.connect() as conn:
@@ -201,7 +214,7 @@ def test_sql_transacoes_rejeita_conta_de_outra_pessoa(postgres, user_state):
     from core.controle import _SQL_INSERT_TX, _SQL_UPDATE_TX
 
     login_as(user_state, ADMIN)
-    uid = accounts.create_user("Outra", "other@example.test", PASSWORD)
+    uid = accounts.cadastrar_usuario("Outra", "other@example.test", PASSWORD)
     accounts.create_account("Conta A", "checking")
     login_as(user_state, uid)
     accounts.create_account("Conta B", "checking")
@@ -288,22 +301,97 @@ render_chat_ativo(mercado='b3', ticker='AAAA3', build_context=lambda q: 'Dados s
     assert len(app.chat_message) == 2
 
 
-def test_criar_usuario_tem_formulario_so_para_admin(monkeypatch):
+def test_configuracoes_nao_cria_conta_e_so_admin_ve_logados_e_exclusao(monkeypatch):
+    """O cadastro saiu de Configurações para a tela de login.
+
+    Em Configurações ninguém mais cria conta; quem administra vê quem está
+    logado e o painel de excluir conta. Os demais veem só a legenda.
+    """
     from streamlit.testing.v1 import AppTest
+
+    import core.presenca as presenca
+    import design.user_accounts as ui
     monkeypatch.setattr(settings, "ADMIN_USER_ID", ADMIN)
+    # monkeypatch aqui, não no script: atribuição feita dentro do AppTest
+    # sobrevive ao teste e contamina os seguintes.
+    monkeypatch.setattr(presenca, "usuarios_logados", lambda: [
+        {"id": "B", "name": "Pessoa B", "banco": "novos", "desde": 0.0, "visto": 0.0, "abas": 2}])
+    monkeypatch.setattr(ui, "list_users", lambda falhas=None: [
+        {"id": ADMIN, "name": "Administrador teste", "email": "admin@example.test",
+         "banco": "principal"},
+        {"id": "B", "name": "Pessoa B", "email": "b@example.test", "banco": "novos"},
+    ])
     app = AppTest.from_string('''
-import streamlit as st
-from design.user_accounts import render_user_accounts
-render_user_accounts()
+import design.user_accounts as ui
+ui.render_user_accounts()
+ui.render_logged_users()
+ui.render_delete_user()
 ''')
     app.session_state['_app4_user'] = {'id': OTHER, 'expires_at': time.time() + 100}
     app.run(timeout=20)
     assert not app.exception
     assert not any(item.label == "Cadastrar usuário" for item in app.button)
+    assert _kpis_logados(app) == []
+    assert len(app.selectbox) == 0
+
     app.session_state['_app4_user'] = {'id': ADMIN, 'expires_at': time.time() + 100}
-    app.run()
+    app.run(timeout=20)
     assert not app.exception
-    assert any(item.label == "Cadastrar usuário" for item in app.button)
+    assert not any(item.label == "Cadastrar usuário" for item in app.button)
+    kpis = _kpis_logados(app)
+    assert kpis[:2] == [("Pessoas logadas", "1"), ("Abas abertas", "2")]
+    assert kpis[2][0] == "Última atividade"
+    assert len(app.selectbox) == 1
+    # A conta do próprio administrador não é oferecida para exclusão.
+    assert all("Administrador" not in opcao for opcao in app.selectbox[0].options)
+
+
+def test_tela_de_login_oferece_criar_conta(monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    app = AppTest.from_string('''
+import streamlit as st
+from core.auth import verificar_autenticacao
+verificar_autenticacao()
+st.write("conteúdo protegido")
+''')
+    app.run(timeout=20)
+    assert not app.exception
+    assert [t.label for t in app.tabs] == ["Entrar", "Criar conta"]
+    assert not any("conteúdo protegido" in str(m.value) for m in app.markdown)
+
+
+def test_presenca_conta_pessoas_e_abas_e_esquece_conta_excluida(monkeypatch, user_state):
+    import core.presenca as presenca
+    presenca._registro.clear()
+    sessoes = iter(["s1", "s2", "s3"])
+    atual = {"sessao": None}
+    monkeypatch.setattr(presenca, "_sessao_atual", lambda: atual["sessao"])
+    monkeypatch.setattr(presenca, "_ativa_no_runtime", lambda sessao: None)
+    futuro = time.time() + 600
+    for uid, nome in (("A", "Ana"), ("A", "Ana"), ("B", "Bruno")):
+        atual["sessao"] = next(sessoes)
+        presenca.registrar({"id": uid, "name": nome, "banco": "principal", "expires_at": futuro})
+
+    login_as(user_state, OTHER)
+    with pytest.raises(PermissionError):
+        presenca.usuarios_logados()
+
+    login_as(user_state, ADMIN)
+    logados = presenca.usuarios_logados()
+    assert [(p["name"], p["abas"]) for p in logados] == [("Ana", 2), ("Bruno", 1)]
+
+    presenca.esquecer_usuario("A")
+    assert [p["name"] for p in presenca.usuarios_logados()] == ["Bruno"]
+
+    atual["sessao"] = "s3"
+    presenca.remover()
+    assert presenca.usuarios_logados() == []
+
+    # Identidade expirada some mesmo com a aba aberta.
+    atual["sessao"] = "s4"
+    presenca.registrar({"id": "C", "name": "Caio", "expires_at": time.time() - 1})
+    assert presenca.usuarios_logados() == []
+    presenca._registro.clear()
 
 
 def test_lista_de_usuarios_recusa_quem_nao_e_admin(postgres, user_state):
@@ -314,7 +402,7 @@ def test_lista_de_usuarios_recusa_quem_nao_e_admin(postgres, user_state):
     outro lugar tem que levar ``PermissionError``.
     """
     login_as(user_state, ADMIN)
-    uid = accounts.create_user("Pessoa", "person@example.test", PASSWORD)
+    uid = accounts.cadastrar_usuario("Pessoa", "person@example.test", PASSWORD)
     perfis = accounts.list_users()
     assert {str(item["id"]) for item in perfis} == {ADMIN, uid}
     assert all("password_hash" not in item for item in perfis)
@@ -333,7 +421,7 @@ def test_usuarios_cadastrados_aparecem_so_para_o_admin(monkeypatch):
     app = AppTest.from_string('''
 import streamlit as st
 import design.user_accounts as ui
-ui.list_users = lambda: [{"id": "11111111-1111-1111-1111-111111111111",
+ui.list_users = lambda falhas=None: [{"id": "11111111-1111-1111-1111-111111111111",
                           "name": "Administrador teste",
                           "email": "admin@example.test",
                           "created_at": None, "active": True}]

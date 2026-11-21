@@ -153,6 +153,10 @@ def load_selic_macro(*a, **k):
     return _legacy.load_selic_macro(*a, **k)
 
 
+def load_selic_mensal(*a, **k):
+    return _legacy.load_selic_mensal(*a, **k)
+
+
 def load_macro_history(*a, **k):
     return _legacy.load_macro_history(*a, **k)
 

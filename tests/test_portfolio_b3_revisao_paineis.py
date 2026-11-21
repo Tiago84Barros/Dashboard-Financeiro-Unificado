@@ -144,3 +144,50 @@ def test_rota_revisao_com_aprovados_mantem_a_base_das_safras(monkeypatch):
         vetados=set(), df_precos_all=pd.DataFrame(), selic_hist={},
     )
     assert chamadas and chamadas[0]["safras_base"] is None
+
+
+def test_rota_revisao_passa_aprovados_e_portao_da_inteligencia(monkeypatch):
+    import views.portfolio_b3 as pb3
+
+    recebidos = {}
+    rotas = types.ModuleType("core.portfolio_review_routes")
+    rotas.b3_review = lambda *a, **k: recebidos.update(k) or {"items": []}
+    tela = types.ModuleType("design.portfolio_review")
+    tela.render_portfolio_review = lambda p, key: None
+    monkeypatch.setitem(sys.modules, "core.portfolio_review_routes", rotas)
+    monkeypatch.setitem(sys.modules, "design.portfolio_review", tela)
+    monkeypatch.setattr(pb3, "_render_analises_da_carteira", lambda *a, **k: None)
+    aprovado = {"setor": "X", "score_proximo": {}}
+    pb3._rota_revisao(
+        resultados=[aprovado], aprovados=[aprovado], proximos_uniq=[],
+        df_mult_todos=pd.DataFrame(), df_set=pd.DataFrame(), entry_guard={},
+        cap=0.2, teto_setor=1.0, teto_ciclico=1.0, taxa_selic_aa=0.15,
+        vetados=set(), df_precos_all=pd.DataFrame(), selic_hist={},
+    )
+    assert recebidos["approved"] == [aprovado]
+    assert recebidos["barrado"] is pb3._barrado_inteligencia
+
+
+def test_barrado_inteligencia_usa_o_mesmo_veto_da_rota_normal(monkeypatch):
+    import views.portfolio_b3 as pb3
+
+    monkeypatch.setattr(pb3, "_intel_avaliar_cached", lambda tk, setor: tk)
+    monkeypatch.setattr(pb3.veredito, "limite",
+                        lambda av: (pb3.veredito.VETA_SELECAO[0], "x") if av == "RUIM3"
+                        else ("livre", ""))
+    assert pb3._barrado_inteligencia("RUIM3", "S") is True
+    assert pb3._barrado_inteligencia("BOM3", "S") is False
+
+
+def test_itens_da_revisao_usa_o_segmento_de_onde_saiu_o_ticker():
+    import views.portfolio_b3 as pb3
+
+    origem = {"setor": "S1", "subsetor": "A", "segmento": "A",
+              "score_proximo": {"DUPL3": 90}}
+    maior = {"setor": "S2", "subsetor": "B", "segmento": "B",
+             "score_proximo": {"DUPL3": 95}}
+    proposta = {"items": [{"ticker": "DUPL3", "weight": .5, "quality": 3.0,
+                           "score_segmento": 90, "setor": "S1", "subsetor": "A",
+                           "segmento": "A"}]}
+    itens = pb3._itens_da_revisao(proposta, [], [origem, maior], pd.DataFrame())
+    assert itens[0]["segmento"] == "A" and itens[0]["score"] == 90

@@ -451,6 +451,40 @@ def load_selic_macro() -> dict[int, float]:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def load_selic_mensal() -> dict[tuple[int, int], float]:
+    """
+    Retorna {(ano, mes): selic_decimal} com a Selic REALIZADA de cada mes:
+    `Selic_Media` de public.info_economica_mensal, a media da meta ao longo
+    do mes (o CDI anda ~0,1 p.p. abaixo dela). Retorna {} sem a tabela.
+
+    Existe porque `load_selic_macro` traz a meta do FIM do ano, que em ano
+    de ciclo erra por pontos a Selic de quem ficou em caixa (achado D13).
+    Quem compoe Selic de uma janela usa esta; a meta anual fica como
+    reserva para os meses sem dado.
+    """
+    df = _q("""
+        SELECT data, "Selic_Media" AS selic
+        FROM public.info_economica_mensal
+        WHERE "Selic_Media" IS NOT NULL
+        ORDER BY data
+    """)
+    if df.empty:
+        return {}
+    result: dict[tuple[int, int], float] = {}
+    for _, row in df.iterrows():
+        try:
+            data = pd.Timestamp(row["data"])
+            selic = float(row["selic"])
+            if abs(selic) > 1:
+                selic = selic / 100.0
+            if 0 <= selic <= 1:
+                result[(int(data.year), int(data.month))] = selic
+        except Exception:
+            pass
+    return result
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_macro_history() -> dict[int, dict[str, float]]:
     """
     Retorna indicadores macro anuais da public.macro.

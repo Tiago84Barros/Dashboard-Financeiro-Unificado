@@ -6,6 +6,11 @@ Dashboard Geral e Configurações não saem nunca -- o primeiro é a porta de
 entrada, o segundo é onde a escolha se desfaz. Sem Configurações no menu, quem
 escondesse tudo não teria como voltar.
 
+Desde 15/11/2026 a conta nova nasce com o menu enxuto
+(:data:`VISIVEIS_CONTA_NOVA`): ``core.user_accounts.cadastrar_usuario`` grava
+:func:`ocultas_conta_nova` como a escolha inicial, e a pessoa liga o resto em
+Configurações → Geral, pelos mesmos interruptores.
+
 **Esconder não é apagar.** A tela continua no repositório, o módulo continua
 em ``app.py::_ROTAS``, os dados, as carteiras salvas e as conversas com a LLM
 continuam no banco. Muda só o que o menu lateral oferece a ESTA conta, e a
@@ -80,6 +85,25 @@ OPCIONAIS: tuple[str, ...] = tuple(s.modulo for s in SECOES if not s.fixa)
 FIXAS: tuple[str, ...] = tuple(s.modulo for s in SECOES if s.fixa)
 #: Todos, para quem precisa do "nada oculto".
 TODAS: frozenset[str] = frozenset(s.modulo for s in SECOES)
+
+#: O menu com que uma conta NOVA nasce (pedido do dono do app em 15/11/2026):
+#: o essencial de quem chega -- o próprio dinheiro e a própria carteira. O
+#: resto é estudo de mercado, que a pessoa liga em Configurações → Geral quando
+#: quiser. Vale só para quem se cadastra daqui em diante: conta que já existia
+#: não perde seção nenhuma.
+#:
+#: A lista é do que FICA, e não do que sai, de propósito: uma tela que entrar
+#: no app depois também nasce desligada para a conta nova, em vez de aparecer
+#: sem ninguém ter decidido. Já a preferência gravada continua guardando o que
+#: saiu (ver ``core/user_preferences.py``), e é isso que faz a tela nova
+#: aparecer para as contas que já existem.
+VISIVEIS_CONTA_NOVA: frozenset[str] = frozenset(
+    {"dashboard_geral", "controle_financeiro", "investimentos", "configuracoes"})
+
+
+def ocultas_conta_nova() -> tuple[str, ...]:
+    """O que uma conta criada agora começa sem ver, na ordem do menu."""
+    return tuple(m for m in OPCIONAIS if m not in VISIVEIS_CONTA_NOVA)
 
 _POR_MODULO = {s.modulo: s for s in SECOES}
 

@@ -191,6 +191,7 @@ def _model_from_connection(conn, owner: str, *,
                 for key in (
                     "peso_fundamental", "macro_impact",
                     "macro_score_adjustment", "score_contextual",
+                    "score_sem_par",
                 )
                 if key in meta
             })
@@ -334,6 +335,9 @@ def save_b3_portfolio_model(
                 "macro_impact": item.get("macro_impact"),
                 "macro_score_adjustment": item.get("macro_score_adjustment"),
                 "score_contextual": item.get("score_contextual"),
+                # Grupo de uma empresa só: a nota gravada (0,0) não compara
+                # ninguém e a leitura do modelo salvo precisa saber disso.
+                "score_sem_par": bool(item.get("score_sem_par")),
             })
             conn.execute(
                 text("""
@@ -421,7 +425,8 @@ def load_active_b3_portfolio_model() -> dict:
         rows = conn.execute(
             text("""
                 SELECT ticker, nome, setor, subsetor, segmento, weight, score,
-                       alpha_selic, alpha_ew, rank_score, ano_lider, motivos_json
+                       alpha_selic, alpha_ew, rank_score, ano_lider, motivos_json,
+                       meta_json
                 FROM b3_portfolio_model_items
                 WHERE model_id = :mid
                 ORDER BY weight DESC, score DESC, ticker
@@ -434,6 +439,14 @@ def load_active_b3_portfolio_model() -> dict:
         d = dict(r)
         for k in ("weight", "score", "alpha_selic", "alpha_ew"):
             d[k] = float(d[k] or 0)
+        meta = d.pop("meta_json", None) or {}
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except json.JSONDecodeError:
+                meta = {}
+        if isinstance(meta, dict) and meta.get("score_sem_par"):
+            d["score_sem_par"] = True
         items.append(d)
 
     model = dict(header)

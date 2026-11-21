@@ -5,11 +5,16 @@ from scripts import apply_b3_schema
 
 
 def test_market_cli_prefere_senha_efetiva_do_container(monkeypatch):
+    import json
+
+    from scripts import publish_fii_selection_from_local as pub
+
     monkeypatch.setattr(
-        cli.subprocess,
+        pub.subprocess,
         "run",
         lambda *args, **kwargs: SimpleNamespace(
-            returncode=0, stdout="senha sintetica com espaco\n"),
+            returncode=0, stderr="",
+            stdout=json.dumps(["POSTGRES_PASSWORD=senha sintetica com espaco"])),
     )
     for key in ("SUPABASE_UNIFICADO_URL", "DATABASE_URL", "SUPABASE_DB_URL"):
         monkeypatch.delenv(key, raising=False)

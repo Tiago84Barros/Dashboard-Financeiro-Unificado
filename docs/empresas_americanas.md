@@ -69,6 +69,96 @@ Para recomputar o histórico PIT com a nova versão:
 python run_us_ingest.py score-history
 ```
 
+## Valor isolado no grupo vale o neutro (v0.9.1, 17/11/2026)
+
+O score é o percentil de cada métrica dentro da indústria. Quando só **uma**
+empresa de uma indústria grande (≥ `min_group`) tinha a métrica, o percentil
+dela saía 1,0 (ou 0,0 nas métricas em que menor é melhor): nota de ponta tirada
+de uma observação sem par. Um valor só não tem ordem, então agora ele vale 0,5,
+como a ausência. É o gêmeo do achado D2 da B3 (`SCORE_VERSION` 2.33.0).
+
+Medido no armazém local sobre 4.349 empresas: 258 células, 126 empresas mudam de
+nota (média −3,1 pontos, mediana −1,9), CVS e IDXX saem do top-20 e CF e HRMY
+entram. A mesma regra vale para os percentis 0–100 de `core/us_advanced_lab.py`
+(qualidade de caixa) e `core/us_estilos.py` (momento e P&D), que rankeiam no
+universo inteiro.
+
+As safras da 0.9.1 foram recalculadas em 17/11/2026
+(`python run_us_ingest.py score-history --warehouse --start-year 2006`, 29.394
+linhas) e a vantagem fora da amostra foi remedida. Com a mesma régua (top 20,
+pesos pelo score), o excesso sobre o equal-weight foi de −7,56%, com IC 95% de
+−14,22% a −0,94%, e o Rank-IC foi de 0,088. A medição de 08/09, da 0.9.0, dava
+−4,05%. Para separar a regra do dado, as duas regras foram rodadas sobre o dado
+de hoje:
+
+| Regra | Excesso | Rank-IC |
+|---|---|---|
+| Antiga | −9,28% | 0,086 |
+| Nova | −7,56% | 0,088 |
+
+A regra melhora o resultado. A piora em relação a setembro vem dos balanços e
+preços novos.
+
+## Score sem par na indústria (v0.9.2, 18/11/2026)
+
+A 0.9.1 tirou a nota de ponta do valor **isolado**. Mas o corte "grupos
+pequenos usam o universo" seguia contando **empresas** da indústria, não
+**valores válidos da métrica**. Numa indústria de cinco empresas em que só duas
+publicam ROIC, o percentil saía de dois pontos: o pior dos dois valia 0,5 e o
+melhor 1,0, mesmo sendo os dois piores ROIC do universo. A empresa **sem
+indústria** tinha o defeito simétrico: o `groupby` descarta a chave nula, e ela
+saía neutra (0,5) em todas as métricas.
+
+Correção, em `core/us_score.py`: a métrica com menos de quatro valores válidos
+na indústria, ou de empresa sem indústria, é ranqueada no universo. O neutro
+abaixo de dois valores, da 0.9.1, continua valendo. As duas regras moram numa
+função só, `percentil_winsorizado`, que o laboratório de indicadores avançados
+(`core/us_advanced_lab._percentile`) também passou a chamar: ele já ranqueava
+no universo, e o número dele não muda. O percentil de momentum dos estilos
+(`core/us_estilos._percentil`) não tem grupo e fica com a regra da 0.9.1.
+
+Medido no armazém local sobre o corte transversal de 4.349 empresas:
+
+- **Alcance.** 2.710 dos 73.558 pares empresa×métrica estavam em indústria com
+  menos de quatro valores da métrica, em 686 empresas. Três empresas estavam
+  sem indústria.
+- **Contra a 0.9.1.** Mudam 673 notas, as três sem indústria entre elas. A
+  mediana de |Δ| é 1,3 ponto (p95 7,5). Catorze caem mais de 10 pontos; nenhuma
+  sobe tanto.
+- **Ordem e status.** Spearman 0,991 entre as duas notas. Ficam 15 do top 20,
+  40 do top 50 e 86 do top 100. Nenhuma empresa muda de status de decisão.
+
+Vantagem fora da amostra, walk-forward anual de 2010 a 2025 (16 períodos, top
+20 por score), com as três regras rodadas sobre o mesmo dado:
+
+| Regra | Excesso médio (IC 95%) | Rank-IC (t) |
+|---|---|---|
+| 0.9.0 | −9,28% (−17,2% a −1,3%) | 0,086 (3,36) |
+| 0.9.1 | −7,56% (−14,2% a −0,9%) | 0,088 (3,44) |
+| **0.9.2** | **−5,21% (−13,5% a +2,4%)** | **0,089 (3,53)** |
+
+A 0.9.2 melhora o excesso em mais 2,3 pontos sem piorar o Rank-IC. O IC do
+excesso passa a cruzar o zero: o motor deixa de perder de forma
+estatisticamente clara para o equal-weight, mas não passa a ganhar. Nada no
+universo nem na medição foi afrouxado.
+
+A medição também roda sem escrever no armazém:
+`medir_vantagem_oos.py --motor us --em-memoria`. As safras saem do mesmo
+gerador que a regeneração usa, `scoring_history.safras_pit`, numa transação só
+de leitura.
+
+Achado lateral: o registro de 08/09/2026 da 0.9.0 (−4,05%) saiu de safras
+anteriores aos PRs #705 e #711, que mudaram o score sem subir a versão.
+Recalculadas hoje, aquelas safras diferem das gravadas em 1,1 ponto na mediana
+(Spearman 0,944); com os preços de hoje, as gravadas ainda dão −4,07%. O que
+divergiu foram as safras, não o backtest.
+
+As safras da 0.9.2 foram gravadas em 18/11/2026
+(`python run_us_ingest.py score-history --warehouse --start-year 2006 --end-year 2025`).
+O comando só apaga linhas da própria versão: as da 0.9.0 e da 0.9.1 ficam. A
+tela passa a mostrar a 0.9.2 quando a rotina regenerar o snapshot
+(`python run_us_ingest.py snapshot --warehouse`) e publicar `us_vintages`.
+
 ## Indicadores avançados
 
 `core/us_advanced.py`, determinístico e puro. Deu nome à subaba Análise
@@ -278,17 +368,52 @@ primeira versão para sempre. Medido depois: **144 símbolos/min contra 4,7**.
 
 Duas condições que a janela não pode violar:
 
-- **Split dentro da janela devolve o símbolo ao histórico completo.** O Yahoo
-  retroajusta a série toda após um desdobramento; uma janela de dias deixaria as
-  barras antigas com o preço da era anterior. O resultado do comando reporta
-  `historico_refeito` — na passagem de 07/09/2026 foram 17 símbolos.
+- **Passado que mudou no Yahoo devolve o símbolo ao histórico completo.** O
+  Yahoo retroajusta a série toda a cada split e a cada provento; uma janela de
+  dias deixaria as barras antigas com o ajuste velho. Por isso as barras já
+  guardadas da janela são comparadas com as que acabaram de chegar
+  (`ingest.passado_retroajustado`): diferença acima de 0,05% numa barra que não
+  seja uma das duas mais novas refaz o histórico. As duas mais novas ficam de
+  fora porque o Yahoo as revisa (a última guardada pode ser de um pregão ainda
+  aberto: SLND estava 16% fora). O resultado do comando reporta
+  `historico_refeito`; numa amostra de 60 símbolos em 18/11/2026, foram 2.
+
+  Até 18/11/2026 a regra era "split dentro da janela refaz o histórico", e ela
+  falhava de dois jeitos. (1) O Yahoo ajusta o split alguns dias **depois**
+  dele: a descida completa do dia ainda vinha sem ajuste e, quando o Yahoo
+  corrigia, o split já tinha saído da janela. Grupamentos de julho a outubro
+  ficaram guardados sem ajuste (AEHL 0,51 contra 8,16; BRTX 0,206 contra 4,12).
+  (2) Provento não refazia nada: o ajustado guardado antes da data ex ficava
+  acima do Yahoo pelo tamanho do provento (KO 0,6% em todo o histórico, O 1,6%),
+  e o retorno total perdia cada provento pago depois da carga inicial.
+
+  Para o caso (1), split guardado nos últimos 180 dias alarga a janela até 30
+  dias antes dele (`splits_vigiados`), e o retroajuste tardio cai numa barra
+  comparada. Erro antigo, fora de qualquer janela, só sai com `--completo`.
+- **Quebra de ajuste do próprio Yahoo é corrigida na chegada.** Nos
+  grupamentos de setembro e outubro de 2026, o Yahoo aplicou o fator só às
+  barras do ano do split: tudo até 31/12/2025 ficou sem ajuste, com um salto
+  falso de 1/razão em 02/01/2026 (BRTX 20,8x num 1:20, OPTT 32x num 1:30).
+  Num backtest mensal isso é um retorno de +2.000% em janeiro, que infla a
+  carteira de peso igual. Ele também demora alguns dias para ajustar um split
+  novo, e aí a quebra cai no próprio dia do split (VSEE 90x num 1:80).
+  `prices_yf.corrigir_quebra_de_ajuste` roda dentro de `get_prices_daily`:
+  para split de fator 2 ou mais, procura no fechamento, só no dia do split e no
+  primeiro pregão do ano dele, um salto de 1/razão (tolerância de 30%, que
+  cobre o retorno do próprio dia). Achando, as barras de antes recebem o fator
+  (preço ÷ razão, volume × razão). Janela e histórico completo passam pela
+  mesma regra, então `passado_retroajustado` compara barras corrigidas igual.
+  Varrida sobre os 1.624 ativos com split grande do armazém em 18/11/2026,
+  disparou em 17, todos quebras de verdade, e em nenhum salto antigo.
 - **Preço, provento e split pedem a mesma janela.** A memoização do provedor é
   por `(símbolo, start, end)`; divergir aqui faria duas descidas por símbolo, o
   oposto do pretendido. Por isso `get_dividends`/`get_splits` passaram a aceitar
   `start`/`end` no contrato de `MarketDataProvider`.
 
 `--completo` restaura a descida integral, para reparar série — não para o dia a
-dia. Coberto por `tests/test_us_daily_incremental.py`, que verifica a **janela
+dia. O backtest e o painel leem `prices_monthly`, derivado do diário pelo
+comando `monthly`: o alvo `us_prices` da rotina deriva antes de publicar, para
+que o diário refeito chegue ao painel. Coberto por `tests/test_us_daily_incremental.py`, que verifica a **janela
 pedida ao provedor**, não tempo de parede: lentidão não falha um teste, ela
 aparece dias depois como série parada.
 

@@ -6,6 +6,7 @@ líderes sem ter contraparte no book. Estes testes fixam a regra nova.
 """
 from unittest.mock import patch
 
+import pandas as pd
 import pytest
 
 from views.portfolio_b3 import (
@@ -16,49 +17,21 @@ from views.portfolio_b3 import (
 )
 
 
-class _FakeRow:
-    def __init__(self, ticker, mediana):
-        self.ticker = ticker
-        self.mediana = mediana
+def _quadro(linhas, **erro):
+    """O que ``core.market_read._q_b3`` devolve: quadro, ou vazio com o erro."""
+    df = pd.DataFrame(linhas, columns=["ticker", "mediana"])
+    df.attrs.update(erro)
+    return df
 
 
-class _FakeConn:
-    def __init__(self, rows):
-        self._rows = rows
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def execute(self, *_a, **_kw):
-        class _Res:
-            def __init__(self, rows):
-                self._rows = rows
-
-            def fetchall(self):
-                return self._rows
-
-        return _Res(self._rows)
-
-
-class _FakeEngine:
-    def __init__(self, rows):
-        self._rows = rows
-
-    def connect(self):
-        return _FakeConn(self._rows)
-
-
-def _run_load_adtv(rows):
-    with patch("core.database.get_engine", return_value=_FakeEngine(rows)):
+def _run_load_adtv(linhas, **erro):
+    with patch("views.portfolio_b3._mr._q_b3", return_value=_quadro(linhas, **erro)):
         return _load_adtv.__wrapped__()
 
 
 def test_adtv_converte_volume_mensal_em_diario():
     # R$ 21 milhões negociados no mês típico => R$ 1 mi/dia (21 pregões).
-    result = _run_load_adtv([_FakeRow("PETR4", 21_000_000.0)])
+    result = _run_load_adtv([("PETR4", 21_000_000.0)])
 
     assert result["PETR4"] == pytest.approx(21_000_000.0 / _PREGOES_MES)
     assert result["PETR4"] == pytest.approx(1_000_000.0)
@@ -66,9 +39,9 @@ def test_adtv_converte_volume_mensal_em_diario():
 
 def test_adtv_normaliza_ticker_e_descarta_nao_finitos():
     result = _run_load_adtv([
-        _FakeRow("wege3.sa", 42_000_000.0),
-        _FakeRow("VAZIO3", None),
-        _FakeRow("ZERO3", 0.0),
+        ("wege3.sa", 42_000_000.0),
+        ("VAZIO3", None),
+        ("ZERO3", 0.0),
     ])
 
     assert "WEGE3" in result
@@ -78,19 +51,13 @@ def test_adtv_normaliza_ticker_e_descarta_nao_finitos():
 
 def test_adtv_propaga_falha_em_vez_de_devolver_mapa_vazio():
     """Falha de consulta NUNCA pode ser lida como 'todo mundo ilíquido'."""
-    class _BrokenEngine:
-        def connect(self):
-            raise RuntimeError("conexão caiu")
-
-    with patch("core.database.get_engine", return_value=_BrokenEngine()):
-        with pytest.raises(LiquidezDataError):
-            _load_adtv.__wrapped__()
+    with pytest.raises(LiquidezDataError, match="OperationalError"):
+        _run_load_adtv([], load_error="query_failed", error_type="OperationalError")
 
 
 def test_adtv_sem_engine_levanta_erro_tipado():
-    with patch("core.database.get_engine", return_value=None):
-        with pytest.raises(LiquidezDataError):
-            _load_adtv.__wrapped__()
+    with pytest.raises(LiquidezDataError, match="database_unavailable"):
+        _run_load_adtv([], load_error="database_unavailable")
 
 
 def test_cobertura_separa_ausente_de_abaixo_do_piso():

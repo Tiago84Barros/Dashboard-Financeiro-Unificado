@@ -15,6 +15,7 @@ Este módulo é usado pela CLI (run_us_ingest.py). A view não o importa.
 from __future__ import annotations
 
 import logging
+import math
 import time
 from datetime import date, timedelta
 from pathlib import Path
@@ -329,8 +330,69 @@ def _janela(desde, sym, *, overlap_dias: int = OVERLAP_DIAS):
     return (ultima - timedelta(days=max(0, int(overlap_dias)))).isoformat()
 
 
+#: Diferença relativa entre o ajustado guardado e o do Yahoo, na mesma data,
+#: a partir da qual o passado foi retroajustado. Um provento trimestral típico
+#: fica entre 0,2% e 2%; ruído de ponto flutuante fica abaixo de 1e-6.
+TOLERANCIA_RETROAJUSTE = 5e-4
+#: Barras guardadas mais novas que ficam fora da comparação: o Yahoo revisa o
+#: fechamento recente (é o motivo da sobreposição), e revisão não é retroajuste.
+BARRAS_REVISAVEIS = 2
+#: Split guardado há menos que isto alarga a janela até antes dele.
+DIAS_DE_SPLIT_VIGIADO = 180
+#: Quanto a janela alargada recua antes do split vigiado.
+DIAS_ANTES_DO_SPLIT = 30
+
+
+def _como_data(d):
+    if isinstance(d, date):
+        return d
+    try:
+        return date.fromisoformat(str(d)[:10])
+    except ValueError:
+        return None
+
+
+def passado_retroajustado(guardado: Mapping, baixado: Iterable[Mapping]) -> date | None:
+    """Primeira data guardada cujo ajustado o Yahoo hoje dá diferente.
+
+    ``guardado`` é {data: adjusted_close} do armazém na janela; ``baixado`` são
+    as linhas do provedor (``date`` e ``adjClose``, ou ``close`` na falta dele).
+    O Yahoo retroajusta o histórico inteiro a cada split e a cada provento: se
+    uma barra antiga da janela mudou, as anteriores à janela também mudaram, e
+    só a descida completa as corrige. As ``BARRAS_REVISAVEIS`` mais novas não
+    contam. ``None`` quando nada mudou.
+    """
+    por_data = {}
+    for d, v in (guardado or {}).items():
+        dd = _como_data(d)
+        if dd is not None:
+            por_data[dd] = v
+    datas = sorted(por_data)
+    if BARRAS_REVISAVEIS:
+        datas = datas[:-BARRAS_REVISAVEIS]
+    alvo = set(datas)
+    achadas = []
+    for linha in baixado or ():
+        d = _como_data(linha.get("date") or "")
+        if d not in alvo:
+            continue
+        novo = linha.get("adjClose")
+        if novo is None:
+            novo = linha.get("close")
+        try:
+            novo, velho = float(novo), float(por_data[d])
+        except (TypeError, ValueError):
+            continue
+        if math.isnan(novo) or math.isnan(velho) or novo <= 0 or velho <= 0:
+            continue
+        if abs(velho / novo - 1) > TOLERANCIA_RETROAJUSTE:
+            achadas.append(d)
+    return min(achadas) if achadas else None
+
+
 def ingest_prices_only(provider, engine, symbols: Iterable[str], *,
-                       desde: Mapping[str, date] | None = None) -> dict:
+                       desde: Mapping[str, date] | None = None,
+                       splits_vigiados: Mapping[str, date] | None = None) -> dict:
     """Passagem incremental de PREÇOS (yfinance) para símbolos já com fundamentos.
 
     Desacopla o gargalo do yfinance da carga de fundamentos (EDGAR). Uma falha de
@@ -344,31 +406,56 @@ def ingest_prices_only(provider, engine, symbols: Iterable[str], *,
     que a vitrine ficou parada em 20/08 e a Criação de Portfólio bloqueou o
     universo inteiro por negociabilidade não verificada.
 
-    Split dentro da janela devolve o símbolo ao histórico completo: o Yahoo
-    retroajusta a série toda depois de um desdobramento, e uma janela de dias
-    deixaria as barras antigas com o preço da era anterior — o defeito que este
-    projeto já conhece como "preço bilionário é retroajuste, não lixo".
+    O Yahoo retroajusta o histórico inteiro a cada split e a cada provento, e a
+    janela só reescreve os últimos dias. Por isso as barras já guardadas da
+    janela são comparadas com as que acabaram de chegar
+    (``passado_retroajustado``): se o passado mudou, o símbolo volta ao
+    histórico completo.
+
+    Até 18/11/2026 a regra era "split dentro da janela refaz o histórico", e ela
+    falhava de dois jeitos:
+
+    - o Yahoo retroajusta o split alguns dias DEPOIS dele. A descida completa
+      do dia do split ainda vinha sem ajuste e, quando o Yahoo corrigia, o split
+      já tinha saído da janela; a sobreposição reescrevia só a última semana e
+      deslocava o degrau. Grupamentos de julho a outubro ficaram guardados sem
+      ajuste (AEHL 0,51 contra 8,16 no Yahoo; BRTX 0,206 contra 4,12);
+    - provento não refazia nada, e o ajustado guardado antes dele ficava acima
+      do Yahoo pelo tamanho do provento (KO 0,6%, VZ 1,6%): o retorno total
+      perdia cada provento pago depois da carga inicial.
+
+    ``splits_vigiados`` (símbolo → split guardado mais antigo ainda vigiado)
+    alarga a janela até ``DIAS_ANTES_DO_SPLIT`` antes do split, para que o
+    retroajuste tardio caia numa barra comparada.
     """
     symbols = [identity.normalize_symbol(s) for s in symbols if s]
+    vigiados = {identity.normalize_symbol(k): _como_data(v)
+                for k, v in (splits_vigiados or {}).items() if k and v}
     ok = err = rows = 0
     completos = 0
     for sym in symbols:
         try:
             start = _janela(desde, sym)
-            splits = provider.get_splits(sym, start, None) if start else None
-            if start and splits:
-                # Retroajuste: a janela não corrige as barras anteriores.
-                logger.info("prices %s: split na janela, refazendo histórico", sym)
-                start, splits, completos = None, None, completos + 1
+            vigiado = vigiados.get(sym)
+            if start and vigiado:
+                antes = vigiado - timedelta(days=DIAS_ANTES_DO_SPLIT)
+                start = min(start, antes.isoformat())
             with engine.begin() as conn:
-                n = repo.upsert_prices_daily(
-                    conn, sym, provider.get_prices_daily(sym, start, None))
+                precos = provider.get_prices_daily(sym, start, None)
+                if start:
+                    mudou = passado_retroajustado(
+                        repo.ajustados_guardados(conn, sym, start), precos)
+                    if mudou is not None:
+                        logger.info("prices %s: ajustado de %s mudou no Yahoo, "
+                                    "refazendo histórico", sym, mudou)
+                        start, completos = None, completos + 1
+                        precos = provider.get_prices_daily(sym, None, None)
+                n = repo.upsert_prices_daily(conn, sym, precos)
                 if n:
                     n += repo.upsert_dividends(
                         conn, sym, provider.get_dividends(sym, start, None))
-                    if splits is None:
-                        splits = provider.get_splits(sym, start, None)
-                    n += repo.upsert_splits(conn, sym, splits)
+                    n += repo.upsert_splits(
+                        conn, sym, provider.get_splits(sym, start, None))
             rows += n
             ok += 1 if n else 0
             err += 0 if n else 1

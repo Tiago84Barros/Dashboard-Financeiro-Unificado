@@ -30,7 +30,12 @@ from core.publicacao_agenda import POR_CHAVE
 ALVO_DO_MODULO = {
     "fii": "fii_selection",
     "us": "us_snapshot",
-    "b3": "b3_metrics",
+    # Era `b3_metrics`, que saiu da rotina em 15/11/2026: o Supabase não
+    # recebe mais atualização. `b3_brapi_anual` tem a mesma cadência semanal,
+    # então o limite do selo continua em 7 + 3 dias. O carimbo continua sendo
+    # o `updated_at` da vitrine que a tela lê, então uma vitrine congelada
+    # aparece vencida, e é isso que tem de aparecer.
+    "b3": "b3_brapi_anual",
     "noticias": "noticias_vitrine",
     "espelho": "espelho_supabase",
     "macro": "macro_insumos",
@@ -43,7 +48,7 @@ ALVO_DO_MODULO = {
 TOLERANCIA_DIAS = 3
 
 # Qual alvo traz o PREÇO que a tela mostra, quando ele não é o mesmo que
-# publica a vitrine. Na B3 são dois: `b3_metrics` republica as métricas toda
+# publica a vitrine. Na B3 eram dois: `b3_metrics` republicava as métricas toda
 # semana a partir do armazém, e `b3_brapi` traz a cotação. Entre 30/10 e
 # 07/11/2026 a brapi recusou toda cotação e `b3_metrics` seguiu republicando:
 # o carimbo de publicação renovava, o preço ficou em 29/10, e o selo dizia "em
@@ -237,6 +242,19 @@ def resumo_curto(dados: dict) -> str:
     return rotulo
 
 
+def _escalar_b3(sql: str):
+    """Primeiro valor da consulta na fonte da B3, ou ``None`` (vazio ou falha)."""
+    import pandas as pd
+
+    from core.market_read import _q_b3
+
+    df = _q_b3(sql)
+    if df.attrs.get("load_error") or df.empty:
+        return None
+    valor = df.iat[0, 0]
+    return None if pd.isna(valor) else valor
+
+
 def carimbo_do_modulo(modulo: str):
     """Quando a vitrine do módulo foi publicada, lida da fonte de cada um.
 
@@ -257,9 +275,10 @@ def carimbo_do_modulo(modulo: str):
         # uma delas faria o selo mentir no outro ambiente.
         return us_read.data_status().get("last_update")
     if modulo == "b3":
-        from core.market_health import market_health_summary
-
-        return ((market_health_summary() or {}).get("frescor") or {}).get("ultimo_calc")
+        # Lido na fonte da B3 (`core.fonte_b3`), a mesma das telas: o Supabase
+        # parou de receber a B3 em 15/11/2026, e o carimbo dele mediria a
+        # cópia congelada enquanto a tela mostra o armazém.
+        return _escalar_b3("SELECT max(updated_at) FROM market.calculated_metrics")
     if modulo == "fii":
         import core.market_read as mr
 
@@ -271,17 +290,18 @@ def data_do_preco(modulo: str, engine=None):
     """Data do preço que a tela do módulo mostra, ou ``None``.
 
     Só para módulo em `ALVO_DO_PRECO`; os outros devolvem ``None`` e o selo
-    fica com a publicação. Lê o mesmo banco que a tela lê (`get_engine`).
+    fica com a publicação. Lê a mesma fonte que a tela lê (`core.fonte_b3`);
+    ``engine`` explícito mede uma base específica.
     """
     if modulo not in ALVO_DO_PRECO:
         return None
     from sqlalchemy import text
 
     if engine is None:
-        from core.database import get_engine
-        engine = get_engine()
-    if engine is None:
-        return None
+        # Sem engine explícito: a fonte da B3, a mesma que a tela lê.
+        if _escalar_b3("SELECT to_regclass('market.b3_cotacao_atual') IS NOT NULL"):
+            return _escalar_b3(SQL_DATA_DO_PRECO_B3_VIGENTE)
+        return _escalar_b3(SQL_DATA_DO_PRECO_B3)
     with engine.connect() as conn:
         # Sem a tabela (089 não aplicada) vale a última barra, como antes.
         if conn.execute(text("SELECT to_regclass('market.b3_cotacao_atual') IS NOT NULL")).scalar():

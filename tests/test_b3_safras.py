@@ -1178,3 +1178,263 @@ def test_vies_de_universo_aparece_quando_ha_segmento_reprovado():
     assert ret_aprovados == pytest.approx(100.0)
     assert ret_todos == pytest.approx(25.0)      # (100 + (-50)) / 2
     assert abs(ret_aprovados - ret_todos) > 1.0
+
+
+# ── D13 (17/11/2026): janela de 12 meses e Selic realizada ──────────────────
+
+
+def _carteira_2024(pesos=None, universo=("AAAA3",)):
+    return SafraCarteira(
+        safra=2024, ano_base=2023,
+        inicio=pd.Timestamp("2024-04-01"), fim=pd.Timestamp("2025-03-31"),
+        completa=True, pesos=pesos or {"AAAA3": 1.0}, universo=universo,
+        segmentos=1,
+    )
+
+
+def test_d13_janela_comeca_no_fechamento_de_31_03():
+    """A carteira e comprada no fechamento de 31/03. Com a ponta na
+    primeira data DENTRO da janela (30/04), o ganho de abril ficava de
+    fora: 10 -> 12 em abril e 12 -> 15 depois daria +25% em vez de +50%."""
+    df = _precos(["2024-03-31", "2024-04-30", "2024-12-31", "2025-03-31"],
+                 {"AAAA3": [10.0, 12.0, 13.0, 15.0]})
+    out = retorno_da_safra(_carteira_2024(), df, selic_por_ano={},
+                           taxa_selic_aa=0.0)
+    assert out["retorno_estrategia"] == pytest.approx(0.5)
+
+
+def test_d13_selic_da_safra_cheia_cobre_365_dias():
+    """31/03/2024 -> 31/03/2025 = 365 dias (o 29/02 fica antes). A Selic
+    de 12% a.a. nos dois anos tem que render 12%, nao 12%^(335/365)."""
+    df = _precos(pd.date_range("2024-03-31", "2025-03-31", freq="ME"),
+                 {"AAAA3": [10.0] * 13})
+    assert (pd.Timestamp("2025-03-31") - pd.Timestamp("2024-03-31")).days == 365
+    out = retorno_da_safra(_carteira_2024(), df,
+                           selic_por_ano={2024: 0.12, 2025: 0.12},
+                           taxa_selic_aa=0.0)
+    assert out["retorno_selic"] == pytest.approx(0.12, abs=1e-9)
+
+
+def test_d13_preco_alem_da_tolerancia_nao_vira_ponta_inicial():
+    """15/02/2024 fica 46 dias antes de 01/04 (`TOLERANCIA_DIAS` = 45): nao
+    e o fechamento de compra. A ponta volta a ser a primeira data dentro
+    da janela, como num feed que comeca atrasado."""
+    df = _precos(["2024-02-15", "2024-04-30", "2025-03-31"],
+                 {"AAAA3": [1.0, 10.0, 15.0]})
+    assert (pd.Timestamp("2024-04-01") - pd.Timestamp("2024-02-15")).days == 46
+    out = retorno_da_safra(_carteira_2024(), df, selic_por_ano={},
+                           taxa_selic_aa=0.0)
+    assert out["retorno_estrategia"] == pytest.approx(0.5)
+
+
+def test_d13_safras_seguidas_se_encadeiam_sem_buraco_nem_sobreposicao():
+    """O fechamento de 31/03/2025 e a venda da safra 2024 e a compra da
+    2025: o produto dos dois retornos e o retorno do periodo inteiro."""
+    df = _precos(["2024-03-31", "2024-09-30", "2025-03-31", "2025-09-30",
+                  "2026-03-31"],
+                 {"AAAA3": [10.0, 11.0, 12.0, 15.0, 18.0]})
+    res = [_resultado("A", {2024: ["AAAA3"], 2025: ["AAAA3"]},
+                      {2024: {"AAAA3": 1.0}, 2025: {"AAAA3": 1.0}}, ["AAAA3"])]
+    tabela = tabela_de_safras(res, df, selic_por_ano={}, taxa_selic_aa=0.0,
+                              hoje=pd.Timestamp("2026-09-21"))
+    r = dict(zip(tabela["Safra"], tabela["Estratégia (%)"] / 100.0))
+    assert r[2024] == pytest.approx(0.2)
+    assert r[2025] == pytest.approx(0.5)
+    assert (1 + r[2024]) * (1 + r[2025]) == pytest.approx(18.0 / 10.0)
+
+
+def test_d13_dias_por_mes_reparte_a_janela():
+    dias = b3_safras._dias_por_mes(pd.Timestamp("2024-03-31"),
+                                   pd.Timestamp("2024-05-31"))
+    assert dias == {(2024, 3): 1, (2024, 4): 30, (2024, 5): 30}
+    assert sum(b3_safras._dias_por_mes(pd.Timestamp("2024-03-31"),
+                                       pd.Timestamp("2025-03-31")).values()) == 365
+
+
+def test_d13_selic_mensal_compoe_mes_a_mes_e_nomeia_o_fallback():
+    """Maio sem dado mensal cai na meta do ano e e nomeado; ano sem meta
+    cai em `taxa_selic_aa` e vai para os anos estimados."""
+    ret, anos, meses = b3_safras._retorno_selic_mensal(
+        pd.Timestamp("2024-03-31"), pd.Timestamp("2024-05-31"),
+        {(2024, 3): 0.10, (2024, 4): 0.11}, {2024: 0.12}, 0.05)
+    esperado = 1.10 ** (1 / 365) * 1.11 ** (30 / 365) * 1.12 ** (30 / 365) - 1
+    assert ret == pytest.approx(esperado, abs=1e-12)
+    assert anos == []
+    assert meses == ["2024-05"]
+
+    ret, anos, meses = b3_safras._retorno_selic_mensal(
+        pd.Timestamp("2024-03-31"), pd.Timestamp("2024-05-31"),
+        {(2024, 3): 0.10, (2024, 4): 0.11}, {}, 0.05)
+    esperado = 1.10 ** (1 / 365) * 1.11 ** (30 / 365) * 1.05 ** (30 / 365) - 1
+    assert ret == pytest.approx(esperado, abs=1e-12)
+    assert anos == [2024]
+    assert meses == ["2024-05"]
+
+
+def test_d13_selic_mensal_constante_igual_a_meta_constante():
+    """Equivalencia entre os dois caminhos: a serie mensal com a mesma taxa
+    em todo mes tem que dar o mesmo que a meta anual com essa taxa."""
+    df = _precos(pd.date_range("2024-03-31", "2025-03-31", freq="ME"),
+                 {"AAAA3": [10.0] * 13})
+    mensal = {(a, m): 0.11 for a in (2024, 2025) for m in range(1, 13)}
+    pela_meta = retorno_da_safra(_carteira_2024(), df,
+                                 selic_por_ano={2024: 0.11, 2025: 0.11},
+                                 taxa_selic_aa=0.0)
+    realizada = retorno_da_safra(_carteira_2024(), df,
+                                 selic_por_ano={2024: 0.99, 2025: 0.99},
+                                 taxa_selic_aa=0.0, selic_mensal=mensal)
+    assert realizada["retorno_selic"] == pytest.approx(
+        pela_meta["retorno_selic"], abs=1e-12)
+    assert realizada["selic_meses_pela_meta"] == []
+    assert pela_meta["selic_meses_pela_meta"] == []
+
+
+def test_d13_selic_realizada_difere_da_meta_de_fim_de_ano():
+    """Ano de ciclo: meta de dezembro 12%, mas a taxa media do ano 8%. A
+    realizada tem que ficar em 8%, nao em 12%."""
+    df = _precos(pd.date_range("2024-03-31", "2025-03-31", freq="ME"),
+                 {"AAAA3": [10.0] * 13})
+    mensal = {(a, m): 0.08 for a in (2024, 2025) for m in range(1, 13)}
+    out = retorno_da_safra(_carteira_2024(), df,
+                           selic_por_ano={2024: 0.12, 2025: 0.12},
+                           taxa_selic_aa=0.0, selic_mensal=mensal)
+    assert out["retorno_selic"] == pytest.approx(0.08, abs=1e-9)
+
+
+def test_d13_tabela_declara_a_fonte_da_selic_e_os_meses_pela_meta():
+    res = [_resultado("A", {2024: ["AAAA3"]}, {2024: {"AAAA3": 1.0}}, ["AAAA3"])]
+    df = _precos(["2024-03-31", "2025-03-31"], {"AAAA3": [10.0, 12.0]})
+
+    sem = tabela_de_safras(res, df, selic_por_ano={2024: 0.1, 2025: 0.1},
+                           taxa_selic_aa=0.0, hoje=HOJE)
+    assert sem.attrs["selic_fonte"] == "meta"
+    assert sem.attrs["selic_meses_pela_meta_por_safra"] == {2024: []}
+
+    mensal = {(2024, m): 0.1 for m in range(3, 13)}  # 2025 sem dado mensal
+    com = tabela_de_safras(res, df, selic_por_ano={2024: 0.1, 2025: 0.1},
+                           taxa_selic_aa=0.0, hoje=HOJE, selic_mensal=mensal)
+    assert com.attrs["selic_fonte"] == "realizada"
+    assert com.attrs["selic_meses_pela_meta_por_safra"][2024] == [
+        "2025-01", "2025-02", "2025-03"]
+
+
+def test_d13_oos_usa_a_mesma_janela_da_tabela():
+    """`core.b3_oos_carteira.retornos_por_ticker` e `retorno_benchmark`
+    medem nas MESMAS pontas de `retorno_da_safra` -- se um dos caminhos
+    voltar a comecar em 30/04, o ganho de abril some so dele."""
+    from core import b3_oos_carteira as oos
+    df = _precos(["2024-03-31", "2024-04-30", "2025-03-31"],
+                 {"AAAA3": [10.0, 12.0, 15.0], "BBBB3": [20.0, 18.0, 30.0]})
+    carteira = _carteira_2024(pesos={"AAAA3": 1.0},
+                              universo=("AAAA3", "BBBB3"))
+    out = retorno_da_safra(carteira, df, selic_por_ano={}, taxa_selic_aa=0.0)
+    por_ticker = oos.retornos_por_ticker(["AAAA3"], ["AAAA3", "BBBB3"], df, 2024)
+    assert por_ticker["AAAA3"] == pytest.approx(out["retorno_estrategia"])
+    assert por_ticker["AAAA3"] == pytest.approx(0.5)
+    assert oos.retorno_benchmark(df["BBBB3"], df, 2024) == pytest.approx(0.5)
+
+
+# ── Acumulado das safras (R$ 1 encadeado): resultado, não prova ──
+
+def test_acumulado_usa_so_safras_com_todas_as_series():
+    from core.b3_safras import acumulado_das_safras
+    acum = acumulado_das_safras({
+        "a": {2017: 0.10, 2018: 0.20, 2019: -0.10, 2020: 0.05},
+        "b": {2017: 0.05, 2018: None, 2019: 0.00, 2020: float("nan")},
+    })
+    assert acum["safras"] == [2017, 2019] and acum["n"] == 2
+    assert acum["pulados"] == [2018] and acum["fora"] == [2020]
+    a = acum["series"]["a"]
+    assert a["caminho"] == pytest.approx([1.10, 1.10 * 0.90])
+    assert a["valor_final"] == pytest.approx(1.10 * 0.90)
+    assert a["anual"] == pytest.approx((1.10 * 0.90) ** 0.5 - 1)
+    assert acum["series"]["b"]["valor_final"] == pytest.approx(1.05)
+
+
+def test_acumulado_perda_total_nao_tem_taxa_e_vazio_nao_quebra():
+    from core.b3_safras import acumulado_das_safras
+    acum = acumulado_das_safras({"a": {2020: -1.0, 2021: 0.5}})
+    assert acum["series"]["a"]["valor_final"] == 0.0
+    assert acum["series"]["a"]["anual"] is None
+    assert acum_vazio_ok(acumulado_das_safras({}))
+    assert acum_vazio_ok(acumulado_das_safras(None))
+    sem = acumulado_das_safras({"a": {2020: 0.1}, "b": {2021: 0.1}})
+    assert sem["n"] == 0 and sem["fora"] == [2020, 2021]
+
+
+def acum_vazio_ok(acum):
+    return acum["n"] == 0 and acum["series"] == {} and acum["safras"] == []
+
+
+def test_fmt_e_legenda_do_acumulado():
+    from core.b3_safras import (
+        acumulado_das_safras,
+        fmt_ao_ano,
+        fmt_reais,
+        legenda_acumulado,
+    )
+    assert fmt_reais(3.5184) == "R$ 3,52"
+    assert fmt_reais(1234.5) == "R$ 1.234,50"
+    assert fmt_reais(None) == "—"
+    assert fmt_ao_ano(0.15) == "+15,0% ao ano"
+    assert fmt_ao_ano(-0.031) == "-3,1% ao ano"
+    assert fmt_ao_ano(None) == "—"
+    acum = acumulado_das_safras({"a": {2017: 0.1, 2018: None, 2019: 0.1, 2020: None}})
+    txt = legenda_acumulado(acum, base="tudo bruto")
+    assert "abril/2017" in txt and "março/2020" in txt and "2 safras" in txt
+    assert "2018" in txt and "2020" in txt and "tudo bruto" in txt
+    assert "não a prova" in txt
+    assert "não há o que encadear" in legenda_acumulado(acumulado_das_safras({}), base="x")
+
+
+def test_acumulado_duas_perdas_acima_de_100_nao_viram_lucro():
+    """Achado do Codex no #781: -150% e -150% davam 0,25 positivo. O fator
+    da safra é max(1 + r, 0): perdeu tudo, fica em zero."""
+    from core.b3_safras import acumulado_das_safras
+    acum = acumulado_das_safras({"a": {2020: -1.5, 2021: -1.5, 2022: 0.3}})
+    a = acum["series"]["a"]
+    assert a["caminho"] == [0.0, 0.0, 0.0]
+    assert a["valor_final"] == 0.0 and a["anual"] is None
+
+
+def test_acumulado_safra_curta_anualiza_pelo_tempo_observado():
+    """Achado do Codex no #781: safra de 31/05/2024 a 31/03/2025 não é um
+    ano. A taxa ao ano usa os dias observados; as outras contam um ano."""
+    from core.b3_safras import (
+        acumulado_das_safras,
+        legenda_acumulado,
+        rotulos_do_caminho,
+    )
+    ini, fim = pd.Timestamp("2024-05-31"), pd.Timestamp("2025-03-31")
+    acum = acumulado_das_safras({"a": {2023: 0.10, 2024: 0.75}},
+                                janelas_curtas={2024: (ini, fim), 2019: (ini, fim)})
+    anos = 1.0 + (fim - ini).days / 365.25
+    assert acum["anos"] == pytest.approx(anos)
+    assert list(acum["curtas"]) == [2024]  # 2019 não foi encadeada
+    assert acum["series"]["a"]["anual"] == pytest.approx((1.10 * 1.75) ** (1 / anos) - 1)
+    assert rotulos_do_caminho(acum) == ["abr/2023", "mar/2024", "mar/2025"]
+    txt = legenda_acumulado(acum, base="bruto")
+    assert "2024 (de 31/05/2024 a 31/03/2025)" in txt and "tempo observado" in txt
+    # Começo curto na primeira safra: o rótulo inicial é o mês observado.
+    so = acumulado_das_safras({"a": {2024: 0.75}}, janelas_curtas={2024: (ini, fim)})
+    assert rotulos_do_caminho(so) == ["mai/2024", "mar/2025"]
+    assert "maio/2024" in legenda_acumulado(so, base="bruto")
+    # Sem janela curta, nada muda: cada safra é um ano.
+    cheio = acumulado_das_safras({"a": {2023: 0.10, 2024: 0.75}})
+    assert cheio["anos"] == 2.0 and cheio["curtas"] == {}
+
+
+def test_tabela_marca_safra_com_preco_que_comeca_atrasado():
+    """O feed só começa em 31/05/2024: a safra 2024 é medida, mas cobre 10
+    meses. A tabela entrega as pontas para o acumulado não chamar de ano."""
+    from core.b3_safras import janela_observada_curta
+    res = [_resultado("A", {2024: ["AAAA3"]}, {2024: {"AAAA3": 1.0}}, ["AAAA3"])]
+    df = _precos(["2024-05-31", "2025-03-31"], {"AAAA3": [10.0, 17.5]})
+    tabela = tabela_de_safras(res, df, selic_por_ano={}, taxa_selic_aa=0.0, hoje=HOJE)
+    assert tabela.attrs["safras_completas"] == [2024]
+    assert tabela.attrs["janelas_curtas_por_safra"] == {
+        2024: (pd.Timestamp("2024-05-31"), pd.Timestamp("2025-03-31"))}
+    # Ano coberto (compra no fechamento de 31/03): não é curta.
+    cheio = _precos(["2024-03-28", "2025-03-31"], {"AAAA3": [10.0, 17.5]})
+    assert janela_observada_curta(cheio, pd.Timestamp("2024-04-01"),
+                                  pd.Timestamp("2025-03-31")) is None

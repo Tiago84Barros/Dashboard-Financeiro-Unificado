@@ -13,7 +13,8 @@ Configurações do sistema — nove abas organizadas por finalidade.
        🏢 CNPJ                — extrato da conta da empresa (Controle CNPJ)
   🔄 Dados de mercado     — CVM, YFinance, Banco Central, macro (orquestração)
   🗄️ Banco de dados       — conexão, capacidade, schema e diagnóstico técnico
-  🔒 Segurança            — sessão e autenticação
+  🔒 Segurança            — sessão, autenticação e, só para o administrador,
+                            usuários cadastrados, logados agora e exclusão de conta
   🗺️ Mapa do App          — fluxograma de todas as telas, em linguagem simples
   📚 Documentação         — fluxogramas e explicações do app (era rota da sidebar)
 
@@ -2003,7 +2004,12 @@ def _render_import_result(summary: dict) -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _render_seguranca() -> None:
-    from design.user_accounts import render_registered_users, render_user_accounts
+    from design.user_accounts import (
+        render_delete_user,
+        render_logged_users,
+        render_registered_users,
+        render_user_accounts,
+    )
     render_user_accounts()
     with st.container(border=True, key="cfg_security_session"):
         _render_workflow_header(
@@ -2057,3 +2063,22 @@ def _render_seguranca() -> None:
             "Somente leitura", "Lista restrita ao admin",
         )
         render_registered_users()
+
+    with st.container(border=True, key="cfg_security_online"):
+        _render_workflow_header(
+            "04", "Usuários logados agora",
+            "Quantas pessoas estão com o aplicativo aberto neste momento, e quem são.",
+            "Tempo real", "Lista restrita ao admin",
+        )
+        render_logged_users()
+
+    # Cadastrar pessoas saiu de Configurações em 14/11/2026 e foi para a tela
+    # de login, aberta a qualquer pessoa. O que fica aqui é o oposto: tirar uma
+    # conta, com todos os dados dela, e só pelo administrador.
+    with st.container(border=True, key="cfg_security_delete"):
+        _render_workflow_header(
+            "05", "Excluir conta",
+            "Apaga uma conta e todos os dados dela, no banco onde ela mora.",
+            "Irreversível", "Somente o admin",
+        )
+        render_delete_user()

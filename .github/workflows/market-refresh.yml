@@ -24,8 +24,8 @@ jobs:
   # Empresas B3 saiu do agendamento em 05/10/2026 (caminho A). `daily`,
   # `annual`, `setores` e o snapshot de prontidao rodam agora com --warehouse
   # em `scripts/atualizar_vitrines.py` (alvos `b3_brapi` e `b3_brapi_anual`),
-  # e `scripts/publish_b3_brapi_from_local.py` leva a vitrine so as tabelas
-  # que o app le. Aqui, cada recalculo de indicador lia demonstracoes e precos
+  # e, desde 15/11/2026, nada disso e publicado no Supabase: o app4 le a B3
+  # do armazem. Aqui, cada recalculo de indicador lia demonstracoes e precos
   # do Supabase (egress, numa conta que estourou a cota) e cada consulta a
   # brapi gravava o payload bruto la (`brapi_raw_payloads`, 64 MB de 500).
   #

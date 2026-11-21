@@ -111,7 +111,9 @@ def test_os_modulos_novos_tem_aba():
     nomes = {id(v): k for k, v in vars(doc).items() if k.startswith("FLOW_")}
     sem_aba = [nomes[id(f)] for f in doc.FLOWS if nomes[id(f)] not in fonte]
     assert not sem_aba, f"flows sem aba: {sem_aba}"
-    assert "_render_indicadores()" in fonte
+    # Abas sem fluxo entram na mesma lista como a função que as desenha.
+    for desenho in ("_render_visao_geral", "_render_indicadores"):
+        assert f"{desenho}," in fonte, f"{desenho} sem aba"
 
 
 def test_os_uploads_sao_descritos_em_configuracoes():

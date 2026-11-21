@@ -421,3 +421,11 @@ def test_rodada_inclui_a_coleta_de_noticias_com_dados_sinteticos(rodada, monkeyp
     sv.vigiar(dry_run=True, estado_publicacao=estado, memoria_path=memoria,
               agora=agora, saida=linhas.append)
     assert any("Coleta de notícias não roda" in linha for linha in linhas)
+
+
+def test_vitrine_com_artefato_pendente_diz_que_nao_chegou_a_main():
+    problemas, _ = va.problemas_vitrine(
+        _estado("fii_selection", 6, "artefato_pendente"), date(2026, 10, 4))
+    assert [p.chave for p in problemas] == ["vitrine:fii_selection"]
+    assert "não chegou à main" in problemas[0].texto
+    assert "falhou" not in problemas[0].texto

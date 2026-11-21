@@ -12,6 +12,9 @@ if str(ROOT) not in sys.path:
 
 
 def main() -> int:
+    from scripts._saida_utf8 import saida_utf8
+
+    saida_utf8()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--years", type=int, default=10)
     parser.add_argument("--top-n", type=int, default=12)
@@ -47,6 +50,10 @@ def main() -> int:
         "constraint_violation_periods": metrics.get("constraint_violation_periods"),
         "mean_correlation_coverage": metrics.get("mean_correlation_coverage"),
         "curvas_por_padrao": metrics.get("curvas_por_padrao"),
+        "curvas_por_publicacao": metrics.get("curvas_por_publicacao"),
+        "publication_refused_periods": metrics.get("publication_refused_periods"),
+        "cash_periods": metrics.get("cash_periods"),
+        "sensibilidade_rascunho": metrics.get("sensibilidade_rascunho"),
         "blockers": result.get("blockers") or [],
     }
     print(json.dumps(summary, ensure_ascii=False, sort_keys=True))

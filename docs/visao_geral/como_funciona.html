@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Como funciona o app4</title>
+<style>
+:root{
+  color-scheme: light;
+  --bg:#f7f7f5; --surface:#ffffff; --ink:#1c1f23; --muted:#5b6470; --line:#d9dcd6;
+  --teal:#0f766e; --teal-bg:#e3f3f0; --amber:#b45309; --amber-bg:#fdf1e2;
+  --red:#b42318; --red-bg:#fde8e6; --gray:#6b7280; --gray-bg:#eef0f2; --group:#fbfbfa;
+  --blue:#1d4ed8; --blue-bg:#e6edfc; --vio:#6d28d9; --vio-bg:#f1eafd;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme: dark;
+    --bg:#121417; --surface:#1b1e22; --ink:#e8eaed; --muted:#9aa3ad; --line:#2f343a;
+    --teal:#4fd1c0; --teal-bg:#123330; --amber:#f0a44b; --amber-bg:#3a2a14;
+    --red:#ff7b6e; --red-bg:#3d1a17; --gray:#9aa3ad; --gray-bg:#262a2f; --group:#171a1d;
+    --blue:#8fb0ff; --blue-bg:#18233d; --vio:#c4a8ff; --vio-bg:#2a2140;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --bg:#121417; --surface:#1b1e22; --ink:#e8eaed; --muted:#9aa3ad; --line:#2f343a;
+  --teal:#4fd1c0; --teal-bg:#123330; --amber:#f0a44b; --amber-bg:#3a2a14;
+  --red:#ff7b6e; --red-bg:#3d1a17; --gray:#9aa3ad; --gray-bg:#262a2f; --group:#171a1d;
+  --blue:#8fb0ff; --blue-bg:#18233d; --vio:#c4a8ff; --vio-bg:#2a2140;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--bg); color:var(--ink);
+  font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  padding:28px max(16px, env(safe-area-inset-right)) 48px max(16px, env(safe-area-inset-left));
+}
+main{max-width:1180px;margin:0 auto}
+h1{font-size:26px;line-height:1.25;margin:0 0 6px;letter-spacing:-.01em}
+h2{font-size:18px;margin:34px 0 10px}
+p{margin:0 0 10px}
+.sub{color:var(--muted);margin:0 0 18px;max-width:780px}
+code{font:12.5px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;background:var(--gray-bg);padding:1px 5px;border-radius:4px}
+.legend{display:flex;flex-wrap:wrap;gap:8px 18px;margin:0 0 14px;color:var(--muted);font-size:13px}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.sw{width:14px;height:14px;border-radius:4px;border:1.5px solid;display:inline-block}
+.sw.t{background:var(--teal-bg);border-color:var(--teal)}
+.sw.a{background:var(--amber-bg);border-color:var(--amber)}
+.sw.b{background:var(--blue-bg);border-color:var(--blue)}
+.sw.v{background:var(--vio-bg);border-color:var(--vio)}
+.sw.g{background:var(--gray-bg);border-color:var(--gray)}
+.sw.r{background:var(--red-bg);border-color:var(--red)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px}
+.card + .card{margin-top:14px}
+.cap{font-size:13px;color:var(--muted);margin:10px 2px 0}
+.diagram{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.diagram svg{display:block;width:100%;min-width:1000px;height:auto}
+svg text{fill:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+svg .t{font-size:13px;font-weight:600}
+svg .t2{font-size:12.5px;font-weight:600}
+svg .s{font-size:11.5px;fill:var(--muted)}
+svg .s2{font-size:11px;fill:var(--muted)}
+svg .k{font-size:10px;fill:var(--muted);letter-spacing:.08em;text-transform:uppercase;font-weight:600}
+svg .h{font-size:11px;fill:var(--muted);letter-spacing:.09em;text-transform:uppercase;font-weight:700}
+svg .lbl{font-size:11px;fill:var(--muted);paint-order:stroke;stroke:var(--surface);stroke-width:4px;stroke-linejoin:round}
+svg .grp{fill:var(--group);stroke:var(--line)}
+svg .n-t{fill:var(--teal-bg);stroke:var(--teal)}
+svg .n-a{fill:var(--amber-bg);stroke:var(--amber)}
+svg .n-b{fill:var(--blue-bg);stroke:var(--blue)}
+svg .n-v{fill:var(--vio-bg);stroke:var(--vio)}
+svg .n-g{fill:var(--gray-bg);stroke:var(--gray)}
+svg .n-r{fill:var(--red-bg);stroke:var(--red)}
+svg rect[class^="n-"]{stroke-width:1.4}
+svg .e{fill:none;stroke-width:1.6}
+svg .e-t{stroke:var(--teal)} svg .e-a{stroke:var(--amber)} svg .e-b{stroke:var(--blue)}
+svg .e-v{stroke:var(--vio)} svg .e-g{stroke:var(--gray)} svg .e-r{stroke:var(--red)}
+svg .dash{stroke-dasharray:5 4}
+.alerts{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.alert{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--blue);border-radius:10px;padding:12px 14px;font-size:14px}
+.alert b{display:block;margin-bottom:4px}
+.alert.w{border-left-color:var(--amber)}
+.alert.ok{border-left-color:var(--teal)}
+.alert.r{border-left-color:var(--red)}
+.alert.v{border-left-color:var(--vio)}
+.tw{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:760px;font-size:14px}
+th,td{text-align:left;vertical-align:top;padding:10px 12px;border-bottom:1px solid var(--line)}
+th{font-size:11.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:700;background:var(--group)}
+tr:last-child td{border-bottom:0}
+td:first-child{white-space:nowrap;font-weight:600}
+.pill{display:inline-block;font-size:11.5px;font-weight:600;padding:1px 8px;border-radius:999px;border:1px solid;margin-top:3px}
+.pill.t{color:var(--teal);background:var(--teal-bg);border-color:var(--teal)}
+.pill.a{color:var(--amber);background:var(--amber-bg);border-color:var(--amber)}
+.pill.b{color:var(--blue);background:var(--blue-bg);border-color:var(--blue)}
+.pill.g{color:var(--gray);background:var(--gray-bg);border-color:var(--gray)}
+.tabs{color:var(--muted);font-size:13.5px}
+.timeline{display:grid;grid-template-columns:86px 1fr;gap:0;background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.timeline > div{padding:10px 14px;border-bottom:1px solid var(--line)}
+.timeline > div:nth-last-child(-n+2){border-bottom:0}
+.timeline .hr{font-weight:700;font-variant-numeric:tabular-nums;background:var(--group);color:var(--muted);font-size:14px}
+.note{background:var(--gray-bg);border-radius:10px;padding:12px 14px;font-size:14px;color:var(--ink);margin-top:14px}
+footer{margin-top:36px;color:var(--muted);font-size:13px;border-top:1px solid var(--line);padding-top:14px}
+@media (max-width:560px){
+  h1{font-size:22px}
+  .timeline{grid-template-columns:70px 1fr}
+}
+</style>
+</head>
+<body>
+<main>
+
+<h1>Como funciona o app4</h1>
+<p class="sub">O mapa do Dashboard Financeiro Unificado inteiro. Mostra de onde vem cada dado, onde ele fica guardado, quais telas o leem e como uma tela alimenta a outra. A página mostra só a estrutura do app, nenhum dado seu.</p>
+
+<div class="legend" aria-label="Legenda das cores">
+  <span><i class="sw t"></i>dado público de mercado</span>
+  <span><i class="sw a"></i>seus dados pessoais</span>
+  <span><i class="sw b"></i>telas e o que o app lê</span>
+  <span><i class="sw v"></i>inteligência artificial</span>
+  <span><i class="sw g"></i>armazenamento e apoio</span>
+  <span><i class="sw r"></i>lacunas e correção</span>
+</div>
+
+<h2>1. De onde vem o dado e por onde ele passa</h2>
+<div class="card">
+<div class="diagram">
+<svg viewBox="0 0 1240 600" role="img" aria-labelledby="d1t d1d">
+<title id="d1t">Fluxo do dado no app4</title>
+<desc id="d1d">Fontes de mercado e notícias entram pela rotina diária do seu PC e pelo GitHub Actions. Elas gravam no armazém local, no Supabase e nas vitrines em arquivo. O app, na Streamlit Cloud, lê o Supabase e os arquivos. Ele grava os seus dados no Supabase da sua conta e chama a cadeia de provedores de IA.</desc>
+<defs>
+  <marker id="mt" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--teal)"/></marker>
+  <marker id="ma" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--amber)"/></marker>
+  <marker id="mb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--blue)"/></marker>
+  <marker id="mv" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--vio)"/></marker>
+  <marker id="mg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--gray)"/></marker>
+  <marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--red)"/></marker>
+</defs>
+
+<!-- colunas -->
+<rect class="grp" x="10" y="10" width="220" height="580" rx="12"/>
+<text class="h" x="22" y="34">Entradas</text>
+<rect class="grp" x="275" y="10" width="230" height="580" rx="12"/>
+<text class="h" x="287" y="34">Bastidores · seu PC e GitHub</text>
+<rect class="grp" x="560" y="10" width="240" height="580" rx="12"/>
+<text class="h" x="572" y="34">Onde o dado mora</text>
+<rect class="grp" x="860" y="10" width="370" height="580" rx="12"/>
+<text class="h" x="874" y="34">App4 · Streamlit Cloud</text>
+
+<!-- arestas (atrás dos nós) -->
+<path class="e e-a" d="M218,80 C240,80 240,50 262,50 L850,50 C866,50 866,90 872,90" marker-end="url(#ma)"/>
+<text class="lbl" x="545" y="54" text-anchor="middle">você usa o app pelo navegador</text>
+
+<path class="e e-t" d="M218,215 C252,215 252,120 285,120" marker-end="url(#mt)"/>
+<path class="e e-t" d="M218,265 C252,265 252,315 285,315" marker-end="url(#mt)"/>
+<path class="e e-t" d="M218,362 C254,362 250,230 285,230" marker-end="url(#mt)"/>
+
+<path class="e e-t" d="M493,95 L570,95" marker-end="url(#mt)"/>
+<path class="e e-t" d="M493,135 C532,135 532,235 570,235" marker-end="url(#mt)"/>
+<path class="e e-t" d="M493,165 C540,165 525,475 570,475" marker-end="url(#mt)"/>
+<path class="e e-t" d="M493,230 C532,230 532,155 570,155" marker-end="url(#mt)"/>
+<path class="e e-t" d="M493,315 C532,315 532,280 570,280" marker-end="url(#mt)"/>
+
+<path class="e e-a" d="M600,210 L600,184" marker-end="url(#ma)"/>
+<text class="lbl" x="610" y="200">cópia dos seus dados para o PC</text>
+
+<path class="e e-g dash" d="M788,110 C850,110 815,480 872,480" marker-end="url(#mg)"/>
+<text class="lbl" x="826" y="168" text-anchor="middle">túnel</text>
+
+<path class="e e-b" d="M788,240 L872,240" marker-end="url(#mb)"/>
+<text class="lbl" x="830" y="234" text-anchor="middle">o app lê</text>
+<path class="e e-a" d="M874,285 L790,285" marker-end="url(#ma)"/>
+<text class="lbl" x="830" y="279" text-anchor="middle">você grava</text>
+<path class="e e-b" d="M788,365 C830,365 830,345 872,345" marker-end="url(#mb)"/>
+<path class="e e-b" d="M788,475 C835,475 830,390 872,390" marker-end="url(#mb)"/>
+
+<path class="e e-r dash" d="M874,510 C845,510 845,425 815,425 L496,425" marker-end="url(#mr)"/>
+<text class="lbl" x="690" y="429" text-anchor="middle">lacunas</text>
+
+<path class="e e-v" d="M120,550 C120,572 135,578 160,578 L1010,578 C1035,578 1045,572 1045,559" marker-end="url(#mv)"/>
+<text class="lbl" x="560" y="582" text-anchor="middle">toda IA do app passa por essa cadeia, nessa ordem</text>
+
+<!-- Entradas -->
+<rect class="n-a" x="22" y="60" width="196" height="90" rx="8"/>
+<text class="t" x="34" y="82">Você</text>
+<text class="s" x="34" y="102">lançamentos e orçamento</text>
+<text class="s" x="34" y="119">extratos de banco e cartão</text>
+<text class="s" x="34" y="136">notas da B3, preferências</text>
+
+<rect class="n-t" x="22" y="175" width="196" height="125" rx="8"/>
+<text class="t" x="34" y="197">Fontes de mercado</text>
+<text class="s" x="34" y="217">B3 COTAHIST · brapi</text>
+<text class="s" x="34" y="234">CVM · BCB · Tesouro</text>
+<text class="s" x="34" y="251">Yahoo · SEC</text>
+<text class="s" x="34" y="268">FRED · World Bank</text>
+<text class="s" x="34" y="285">BIS · Eurostat</text>
+
+<rect class="n-t" x="22" y="325" width="196" height="75" rx="8"/>
+<text class="t" x="34" y="347">Notícias</text>
+<text class="s" x="34" y="367">Alpha Vantage · Marketaux</text>
+<text class="s" x="34" y="384">RSS</text>
+
+<rect class="n-v" x="22" y="425" width="196" height="125" rx="8"/>
+<text class="t" x="34" y="447">Provedores de IA</text>
+<text class="s" x="34" y="467">1 · Claude (Anthropic)</text>
+<text class="s" x="34" y="484">2 · OpenRouter</text>
+<text class="s" x="34" y="501">3 · OpenAI</text>
+<text class="s" x="34" y="518">4 · Gemini</text>
+<text class="s2" x="34" y="538">entram só os que têm chave</text>
+
+<!-- Bastidores -->
+<rect class="n-t" x="287" y="60" width="206" height="120" rx="8"/>
+<text class="t" x="299" y="82">Rotina diária · 19:30</text>
+<text class="s" x="299" y="102">“DFU - Atualizar vitrines”</text>
+<text class="s" x="299" y="119">B3 · FIIs · EUA · cenário</text>
+<text class="s" x="299" y="136">notícias · Carteira 20</text>
+<text class="s" x="299" y="153">grava no armazém e</text>
+<text class="s" x="299" y="170">publica a vitrine</text>
+
+<rect class="n-t" x="287" y="200" width="206" height="60" rx="8"/>
+<text class="t" x="299" y="222">Coleta de notícias</text>
+<text class="s" x="299" y="242">a cada 30 min · cota por modo</text>
+
+<rect class="n-t" x="287" y="280" width="206" height="70" rx="8"/>
+<text class="t" x="299" y="302">GitHub Actions</text>
+<text class="s" x="299" y="322">pipeline às 9h e às 18h30</text>
+<text class="s" x="299" y="339">ranking de FIIs às 6h</text>
+
+<rect class="n-r" x="287" y="370" width="206" height="65" rx="8"/>
+<text class="t" x="299" y="392">Correção de lacunas</text>
+<text class="s" x="299" y="411">IA às 06:00, a partir do</text>
+<text class="s" x="299" y="427">registro de lacunas</text>
+
+<rect class="n-g" x="287" y="455" width="206" height="80" rx="8"/>
+<text class="t" x="299" y="477">Outras tarefas</text>
+<text class="s" x="299" y="497">documentos de FII aos sábados</text>
+<text class="s" x="299" y="514">aviso no Telegram</text>
+
+<!-- Onde o dado mora -->
+<rect class="n-g" x="572" y="60" width="216" height="120" rx="8"/>
+<text class="t" x="584" y="82">Armazém local</text>
+<text class="s" x="584" y="102">Docker dfu_warehouse · 5433</text>
+<text class="s" x="584" y="119">Postgres 16 + pgvector</text>
+<text class="s" x="584" y="136">vários GB: preços, CRI, FII,</text>
+<text class="s" x="584" y="153">acervo de notícias, RAG</text>
+<text class="s2" x="584" y="170">o app publicado não o alcança</text>
+
+<rect class="n-g" x="572" y="210" width="216" height="95" rx="8"/>
+<text class="t" x="584" y="232">Supabase principal</text>
+<text class="s" x="584" y="252">vitrine de mercado · 500 MB</text>
+<text class="s" x="584" y="269">seus dados (contas antigas)</text>
+<text class="s" x="584" y="286">registro de lacunas</text>
+
+<rect class="n-g" x="572" y="325" width="216" height="85" rx="8"/>
+<text class="t" x="584" y="347">Supabase “novos”</text>
+<text class="s" x="584" y="367">contas criadas no login</text>
+<text class="s" x="584" y="384">lê o mercado do principal</text>
+<text class="s" x="584" y="401">via postgres_fdw</text>
+
+<rect class="n-g" x="572" y="440" width="216" height="75" rx="8"/>
+<text class="t" x="584" y="462">Vitrines em arquivo</text>
+<text class="s" x="584" y="482">data/public/*.json.gz</text>
+<text class="s" x="584" y="499">macro, pregões, proventos</text>
+
+<!-- App -->
+<rect class="n-b" x="874" y="60" width="342" height="70" rx="8"/>
+<text class="t" x="886" y="82">Login</text>
+<text class="s" x="886" y="102">Entrar · Criar conta</text>
+<text class="s" x="886" y="119">a conta decide em qual Supabase ler e gravar</text>
+
+<rect class="n-b" x="874" y="150" width="342" height="250" rx="8"/>
+<text class="t" x="886" y="172">Menu lateral · 9 telas</text>
+<text class="k" x="886" y="196">Visão</text>
+<text class="s" x="886" y="213">📊 Dashboard Geral</text>
+<text class="k" x="886" y="237">Finanças</text>
+<text class="s" x="886" y="254">💰 Controle Financeiro   💼 Controle CNPJ</text>
+<text class="k" x="886" y="278">Investimentos</text>
+<text class="s" x="886" y="295">📈 Investimentos   🏢 Empresas B3</text>
+<text class="s" x="886" y="312">🌎 Empresas Americanas   🏬 Seleção de FIIs</text>
+<text class="s" x="886" y="329">🌐 Portfólio Global</text>
+<text class="k" x="886" y="353">Sistema</text>
+<text class="s" x="886" y="370">⚙️ Configurações</text>
+<text class="s2" x="886" y="390">cada conta escolhe quais seções aparecem</text>
+
+<rect class="n-v" x="874" y="420" width="342" height="135" rx="8"/>
+<text class="t" x="886" y="442">Camada comum · core/</text>
+<text class="s" x="886" y="462">contexto de mercado em todo prompt de IA</text>
+<text class="s" x="886" y="479">varredura do armazém antes de afirmar lacuna</text>
+<text class="s" x="886" y="496">motores: Inteligência dos Ativos, Eventos</text>
+<text class="s" x="886" y="513">Extremos, Memória de Mercado</text>
+<text class="s" x="886" y="530">registro de lacunas quando uma tela falha</text>
+</svg>
+</div>
+<p class="cap">Leia da esquerda para a direita. O dado pesado fica no seu PC. Na nuvem fica só a vitrine, que é o que o app publicado consegue ler. A única ponte direta do app para o armazém é o túnel só-leitura, que entrega o inventário de cada fonte.</p>
+</div>
+
+<h2>2. Dentro do app: como uma tela alimenta a outra</h2>
+<div class="card">
+<div class="diagram">
+<svg viewBox="0 0 1240 520" role="img" aria-labelledby="d2t d2d">
+<title id="d2t">Dependências entre as telas do app4</title>
+<desc id="d2d">O Dashboard Geral resume o Controle Financeiro, Investimentos, Empresas B3, Empresas Americanas e Seleção de FIIs. As três telas de mercado entregam carteiras-modelo ao Portfólio Global. As importações de Configurações alimentam as telas de finanças e a carteira. Uma camada comum vale para todas as telas.</desc>
+<defs>
+  <marker id="nt" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--teal)"/></marker>
+  <marker id="na" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--amber)"/></marker>
+  <marker id="nb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--blue)"/></marker>
+  <marker id="nr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--red)"/></marker>
+</defs>
+
+<rect class="grp" x="10" y="100" width="600" height="292" rx="12"/>
+<text class="h" x="22" y="120">Seus dados</text>
+<rect class="grp" x="630" y="100" width="600" height="292" rx="12"/>
+<text class="h" x="642" y="120">Mercado</text>
+<rect class="grp" x="10" y="404" width="1220" height="108" rx="12"/>
+<text class="h" x="1218" y="424" text-anchor="end">Camada comum · core/ · vale para todas as telas</text>
+
+<!-- arestas -->
+<path class="e e-b" d="M113,132 L113,90" marker-end="url(#nb)"/>
+<path class="e e-b" d="M497,132 L497,90" marker-end="url(#nb)"/>
+<path class="e e-b" d="M733,132 L733,90" marker-end="url(#nb)"/>
+<path class="e e-b" d="M925,132 L925,90" marker-end="url(#nb)"/>
+<path class="e e-b" d="M1117,132 L1117,90" marker-end="url(#nb)"/>
+
+<path class="e e-a" d="M113,300 L113,266" marker-end="url(#na)"/>
+<path class="e e-a" d="M305,300 L305,266" marker-end="url(#na)"/>
+<path class="e e-a" d="M497,300 L497,266" marker-end="url(#na)"/>
+
+<path class="e e-t" d="M733,262 L733,296" marker-end="url(#nt)"/>
+<path class="e e-t" d="M925,262 L925,296" marker-end="url(#nt)"/>
+<path class="e e-t" d="M1117,262 L1117,296" marker-end="url(#nt)"/>
+<text class="lbl" x="1129" y="284">carteira-modelo</text>
+
+<path class="e e-b dash" d="M588,215 C622,215 612,340 640,340" marker-end="url(#nb)"/>
+<text class="lbl" x="615" y="282" text-anchor="middle">compara</text>
+
+<path class="e e-r dash" d="M135,434 L135,384" marker-end="url(#nr)"/>
+<text class="lbl" x="145" y="401">vai para Restrições</text>
+
+<!-- Dashboard Geral -->
+<rect class="n-b" x="20" y="16" width="1200" height="70" rx="8"/>
+<text class="t" x="36" y="40">📊 Dashboard Geral</text>
+<text class="s" x="36" y="60">Página de leitura: patrimônio investido, saldo do mês, taxa de poupança, rentabilidade, proventos, raio X do portfólio e carteira recomendada.</text>
+<text class="s" x="36" y="77">É montado só com as seções que a conta mantém no menu.</text>
+
+<!-- Seus dados -->
+<rect class="n-a" x="22" y="132" width="182" height="130" rx="8"/>
+<text class="t2" x="34" y="154">💰 Controle Financeiro</text>
+<text class="s2" x="34" y="176">lançamentos e orçamento</text>
+<text class="s2" x="34" y="194">cartão e faturas</text>
+<text class="s2" x="34" y="212">contas a pagar e receber</text>
+<text class="s2" x="34" y="230">Analista Financeiro (IA)</text>
+
+<rect class="n-a" x="214" y="132" width="182" height="130" rx="8"/>
+<text class="t2" x="226" y="154">💼 Controle CNPJ</text>
+<text class="s2" x="226" y="176">empresa no Simples</text>
+<text class="s2" x="226" y="194">DRE e balanço</text>
+<text class="s2" x="226" y="212">estimativa do DAS</text>
+<text class="s2" x="226" y="230">separado do pessoal</text>
+
+<rect class="n-a" x="406" y="132" width="182" height="130" rx="8"/>
+<text class="t2" x="418" y="154">📈 Investimentos</text>
+<text class="s2" x="418" y="176">carteira e proventos</text>
+<text class="s2" x="418" y="194">risco e cenário macro</text>
+<text class="s2" x="418" y="212">Inteligência dos Ativos</text>
+<text class="s2" x="418" y="230">Imposto de Renda</text>
+
+<rect class="n-a" x="22" y="300" width="566" height="82" rx="8"/>
+<text class="t" x="34" y="322">⚙️ Configurações · 9 abas</text>
+<text class="s" x="34" y="342">Atualização de dados: extratos, notas e planilhas que alimentam as telas acima.</text>
+<text class="s" x="34" y="359">Também: Restrições, Grau de Confiança, Segurança, Mapa do App, Documentação.</text>
+
+<!-- Mercado -->
+<rect class="n-t" x="642" y="132" width="182" height="130" rx="8"/>
+<text class="t2" x="654" y="154">🏢 Empresas B3</text>
+<text class="s2" x="654" y="176">setores e análise</text>
+<text class="s2" x="654" y="194">criação de portfólio</text>
+<text class="s2" x="654" y="212">avaliação com IA</text>
+<text class="s2" x="654" y="230">Carteira 20</text>
+
+<rect class="n-t" x="834" y="132" width="182" height="130" rx="8"/>
+<text class="t2" x="846" y="154">🌎 Empresas Americanas</text>
+<text class="s2" x="846" y="176">setores e análise</text>
+<text class="s2" x="846" y="194">criação de portfólio</text>
+<text class="s2" x="846" y="212">Travessia de Recessão</text>
+<text class="s2" x="846" y="230">avaliação com IA</text>
+
+<rect class="n-t" x="1026" y="132" width="182" height="130" rx="8"/>
+<text class="t2" x="1038" y="154">🏬 Seleção de FIIs</text>
+<text class="s2" x="1038" y="176">fundos e busca</text>
+<text class="s2" x="1038" y="194">carteira-modelo</text>
+<text class="s2" x="1038" y="212">retrospectiva vs IFIX</text>
+<text class="s2" x="1038" y="230">relatório do analista</text>
+
+<rect class="n-t" x="642" y="300" width="566" height="82" rx="8"/>
+<text class="t" x="654" y="322">🌐 Portfólio Global</text>
+<text class="s" x="654" y="342">Junta as carteiras-modelo de B3, EUA e FIIs numa alocação só.</text>
+<text class="s" x="654" y="359">Alocação-alvo, risco, Black-Litterman, recomendações de movimentação, plano de aporte.</text>
+
+<!-- Camada comum -->
+<rect class="n-r" x="22" y="434" width="230" height="66" rx="8"/>
+<text class="t2" x="34" y="455">Registro de lacunas</text>
+<text class="s2" x="34" y="473">tela que falha mostra um aviso</text>
+<text class="s2" x="34" y="489">e entra na fila de Restrições</text>
+
+<rect class="n-t" x="264" y="434" width="230" height="66" rx="8"/>
+<text class="t2" x="276" y="455">Contexto de mercado</text>
+<text class="s2" x="276" y="473">macro, curva, câmbio, notícias</text>
+<text class="s2" x="276" y="489">entra em todo prompt de IA</text>
+
+<rect class="n-g" x="506" y="434" width="230" height="66" rx="8"/>
+<text class="t2" x="518" y="455">Varredura do armazém</text>
+<text class="s2" x="518" y="473">antes de afirmar uma lacuna</text>
+<text class="s2" x="518" y="489">situa, mas nunca veta sozinha</text>
+
+<rect class="n-v" x="748" y="434" width="230" height="66" rx="8"/>
+<text class="t2" x="760" y="455">Cadeia de IA</text>
+<text class="s2" x="760" y="473">Claude → OpenRouter →</text>
+<text class="s2" x="760" y="489">OpenAI → Gemini</text>
+
+<rect class="n-g" x="990" y="434" width="230" height="66" rx="8"/>
+<text class="t2" x="1002" y="455">Motores que não dão ordem</text>
+<text class="s2" x="1002" y="473">Inteligência dos Ativos, Eventos</text>
+<text class="s2" x="1002" y="489">Extremos, Memória de Mercado</text>
+</svg>
+</div>
+<p class="cap">Setas azuis sobem para o Dashboard Geral, que só lê. As laranja saem das importações de Configurações. As verdes levam a carteira-modelo de cada mercado ao Portfólio Global. O Controle CNPJ fica de fora do Dashboard, porque é a contabilidade de uma empresa e não se mistura com o pessoal.</p>
+</div>
+
+<h2>3. Tela por tela</h2>
+<div class="tw">
+<table>
+<thead><tr><th>Tela</th><th>Abas</th><th>Para que serve</th><th>De onde lê</th></tr></thead>
+<tbody>
+<tr><td>📊 Dashboard Geral<br><span class="pill b">visão</span></td>
+<td class="tabs">página única, sem abas</td>
+<td>Resumo do mês e do patrimônio: até 5 indicadores, leitura do mês, resumo por área, evolução de 6 meses, raio X do portfólio, carteira recomendada.</td>
+<td>As outras telas, só as que a conta mantém no menu.</td></tr>
+
+<tr><td>💰 Controle Financeiro<br><span class="pill a">finanças</span></td>
+<td class="tabs">Dashboard · Análises · Tabelas · A pagar e receber · Cartão de Crédito</td>
+<td>Lançamentos, orçamento, duplicatas prováveis, contas a pagar e receber, fatura e parcelas do cartão, com um analista de IA para as finanças e outro para o cartão.</td>
+<td>Seus lançamentos, no Supabase da sua conta. Os extratos entram por Configurações.</td></tr>
+
+<tr><td>💼 Controle CNPJ<br><span class="pill a">finanças</span></td>
+<td class="tabs">Visão geral · Lançamentos · A pagar e receber · DRE · Balanço · Impostos</td>
+<td>Contabilidade de uma empresa do Simples Nacional, com DAS estimado. Não emite nota, boleto nem manda dado ao contador.</td>
+<td>Lançamentos da empresa, no Supabase da conta.</td></tr>
+
+<tr><td>📈 Investimentos<br><span class="pill a">carteira</span></td>
+<td class="tabs">Dashboard · Histórico · Análise · Inteligência dos Ativos · Imposto de Renda</td>
+<td>Estado da carteira, risco, proventos, análise por classe e stress. Inteligência dos Ativos guarda estratégia, entrevista e Portfolio Fit. IR calcula DARF e IRPF.</td>
+<td>Sua carteira (B3, Tesouro, exterior), mais a vitrine de mercado e o macro.</td></tr>
+
+<tr><td>🏢 Empresas B3<br><span class="pill t">mercado</span></td>
+<td class="tabs">Empresas por Setor · Análise de Empresa · Criação de Portfólio · Avaliação de Portfólio · Carteira 20</td>
+<td>Análise de empresa com score e relatório do analista, criação de carteira com backtest e metodologia, avaliação com IA, e a Carteira 20 registrada em cadeia de hash.</td>
+<td>Vitrine B3 no Supabase, vinda de COTAHIST, CVM e brapi.</td></tr>
+
+<tr><td>🌎 Empresas Americanas<br><span class="pill t">mercado</span></td>
+<td class="tabs">Setor · Análise · Criação · Avaliação</td>
+<td>O mesmo percurso para ações dos EUA, mais Travessia de Recessão e equivalências B3 × EUA. A sincronização dos dados é só de admin.</td>
+<td>Vitrine EUA, vinda de SEC e Yahoo.</td></tr>
+
+<tr><td>🏬 Seleção de FIIs<br><span class="pill t">mercado</span></td>
+<td class="tabs">FIIs Disponíveis · Busca de ativo · Carteira-modelo · Retrospectiva</td>
+<td>Fundamentos e imóveis de cada fundo, carteira-modelo publicável ou em rascunho, e a validação ponto a ponto contra o IFIX, bruta e líquida.</td>
+<td>Vitrine de FIIs no Supabase e no snapshot de <code>data/public</code>.</td></tr>
+
+<tr><td>🌐 Portfólio Global<br><span class="pill t">mercado</span></td>
+<td class="tabs">página única, sem abas</td>
+<td>Junta as três carteiras-modelo: alocação-alvo, concentração, correlação, Black-Litterman, recomendações de movimentação, plano de aporte e chat.</td>
+<td>As carteiras-modelo de B3, EUA e FIIs.</td></tr>
+
+<tr><td>⚙️ Configurações<br><span class="pill g">sistema</span></td>
+<td class="tabs">Geral · Grau de Confiança · Restrições · Atualização de dados · Dados de mercado · Banco de dados · Segurança · Mapa do App · Documentação</td>
+<td>Tema, seções e orçamento. Importações, fontes e banco. Fila de lacunas. Grau de Confiança de cada tela. Conta e sessão; usuários e exclusão de conta são só de admin.</td>
+<td>Tudo: fontes, banco, registro de lacunas, contas.</td></tr>
+</tbody>
+</table>
+</div>
+<div class="note"><b>Saíram do menu, mas o motor continua:</b> Inteligência de Mercado, Macro Internacional e Homologação. O Grau de Confiança e a Documentação viraram abas de Configurações.</div>
+
+<h2>4. Regras que valem para o app inteiro</h2>
+<div class="alerts">
+  <div class="alert v"><b>Toda IA recebe o máximo de dado</b>Macro, curva do Tesouro, câmbio e notícias entram em todo chat e relatório. Fonte que falha aparece com nome no contexto. Vitrine com mais de 48 h vai marcada como VELHA.</div>
+  <div class="alert w"><b>Lacuna só depois da varredura</b>“Não está na vitrine” só vira “não existe” quando o armazém local também não tem. Fonte que não foi consultada aparece como “não consultado”.</div>
+  <div class="alert ok"><b>Nenhum motor compra ou vende</b>Alertas, vereditos e recomendações de movimentação são leitura. Quem decide e executa é você.</div>
+  <div class="alert"><b>Cada conta monta o próprio menu</b>Dashboard Geral e Configurações nunca somem. Conta nova nasce só com as seções essenciais e liga as outras em Configurações → Geral.</div>
+  <div class="alert"><b>Duas casas para as contas</b>Contas criadas no login vivem num segundo Supabase, que lê o mercado do principal. O login procura a conta nos dois.</div>
+  <div class="alert w"><b>Dado pessoal não vai para modelo gratuito</b>Chats que levam seus números deixam de fora os modelos <code>:free</code> do OpenRouter. Claude vai primeiro quando há crédito; sem crédito, sai da fila por 15 minutos.</div>
+  <div class="alert r"><b>Tela que quebra vira lacuna</b>A tela mostra um aviso amigável, o erro entra em Restrições e a correção por IA das 06:00 trabalha a partir dele.</div>
+  <div class="alert"><b>Mudou a estrutura, muda o informe</b>Tela, aba ou fonte que muda atualiza, no mesmo PR, o Mapa do App, a Documentação e o Grau de Confiança.</div>
+</div>
+
+<h2>5. O caminho de um dado num dia comum</h2>
+<div class="timeline">
+  <div class="hr">06:00</div><div>A correção de lacunas por IA lê o registro de lacunas. No GitHub, roda o ranking de FIIs.</div>
+  <div class="hr">09:00</div><div>O pipeline do GitHub atualiza os dados públicos de mercado no Supabase.</div>
+  <div class="hr">30 min</div><div>A coleta de notícias roda o dia todo, com cota que muda conforme o modo: normal, vigilância ou crise.</div>
+  <div class="hr">18:30</div><div>Segunda rodada do pipeline do GitHub.</div>
+  <div class="hr">19:30</div><div>A rotina diária do seu PC baixa a B3, refaz FIIs, EUA e cenário, mede a Carteira 20, grava no armazém, publica a vitrine no Supabase e em <code>data/public</code>, e copia seus dados do Supabase para o PC.</div>
+  <div class="hr">a qualquer hora</div><div>Você abre o app. O login escolhe o banco da sua conta, as telas leem a vitrine e cada chat recebe o contexto de mercado antes de chamar a IA.</div>
+</div>
+
+<footer>
+Montado a partir de <code>docs/mapa_app/mapa.json</code> (15/11/2026), <code>app.py</code> (<code>_ROTAS</code>), <code>core/llm_b3.py</code> (<code>_provider_chain</code>) e dos PRs #747 e #749 (contas novas). É um mapa de estrutura e não mostra nenhum número seu. Os horários são os agendados; a rotina das 19:30 também roda 3 minutos depois do logon e tem limite de 3h45.
+</footer>
+</main>
+</body>
+</html>

@@ -92,6 +92,20 @@ def test_filtrar_menu_tira_as_ocultas_e_nunca_as_fixas():
     assert tudo == ["📊 Dashboard Geral", "⚙️ Configurações"]
 
 
+def test_conta_nova_nasce_com_as_quatro_secoes_do_pedido():
+    # Pedido de 15/11/2026: Dashboard Geral, Controle Financeiro, Investimentos
+    # e Configurações; o resto a pessoa liga em Configurações → Geral.
+    assert set(secoes_app.FIXAS) <= secoes_app.VISIVEIS_CONTA_NOVA <= secoes_app.TODAS
+    assert secoes_app.ocultas_conta_nova() == (
+        "controle_cnpj", "empresas_b3", "empresas_americanas", "fiis", "portfolio_global")
+    # A lista gravada passa pela mesma normalização da tela.
+    assert secoes_app.normalizar(secoes_app.ocultas_conta_nova()) == secoes_app.ocultas_conta_nova()
+    rotas = dict(_rotas_do_app())
+    assert secoes_app.filtrar_menu(list(rotas), rotas, secoes_app.ocultas_conta_nova()) == [
+        "📊 Dashboard Geral", "💰 Controle Financeiro", "📈 Investimentos", "⚙️ Configurações",
+    ]
+
+
 def test_visiveis_inclui_sempre_as_fixas():
     assert secoes_app.visiveis(secoes_app.TODAS) == frozenset(secoes_app.FIXAS)
     assert secoes_app.visiveis(()) == secoes_app.TODAS
@@ -256,6 +270,10 @@ class _StreamlitDoMenu(ModuleType):
 
     def warning(self, *_a, **_k):
         pass
+
+    def empty(self):
+        # Vaga do aviso da fonte da B3 (``app.py::_ROTAS_QUE_LEEM_B3``).
+        return SimpleNamespace(container=nullcontext)
 
 
 def test_menu_lateral_obedece_a_escolha_da_conta(monkeypatch):
@@ -511,8 +529,13 @@ def _salvar(at):
 def test_leitura_que_volta_realinha_os_interruptores_e_nao_desfaz_a_escolha(monkeypatch):
     from streamlit.testing.v1 import AppTest
 
-    # O script mexe na espera do módulo; o monkeypatch a devolve no fim.
+    # O script mexe na espera do módulo e troca a leitura e a gravação da
+    # preferência por um banco de mentira; o monkeypatch devolve as três no fim.
+    # Sem isso, o teste de banco que rodasse depois na mesma suíte lia o banco
+    # de mentira (memória ``apptest-vaza-atribuicao-de-modulo``).
     monkeypatch.setattr(secoes_app, "_ESPERA_APOS_FALHA_S", 60.0)
+    monkeypatch.setattr(preferences, "load_secoes_ocultas", preferences.load_secoes_ocultas)
+    monkeypatch.setattr(preferences, "save_secoes_ocultas", preferences.save_secoes_ocultas)
 
     at = AppTest.from_function(_tela_de_secoes, default_timeout=30)
     at.session_state["_falhar"] = True

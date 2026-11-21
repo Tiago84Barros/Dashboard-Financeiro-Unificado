@@ -47,7 +47,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
 from core.frescor import TOLERANCIA_DIAS, idade_em_dias, limite_do_alvo
-from core.publicacao_agenda import ALVOS
+from core.publicacao_agenda import ALVOS, STATUS_ARTEFATO_PENDENTE
 
 CONCLUSOES_FALHA = frozenset({"failure", "timed_out", "startup_failure"})
 CONCLUSOES_SUCESSO = frozenset({"success"})
@@ -187,8 +187,13 @@ def problemas_vitrine(estado: dict, hoje: date, alvos=ALVOS
         texto = (f"{alvo.titulo} ({alvo.chave}): última publicação em "
                  f"{_dia(ultima)}, há {idade} dias -- limite {limite} d "
                  f"(cadência {alvo.cadencia_dias} d + tolerância {TOLERANCIA_DIAS} d).")
-        if registro.get("ultimo_status") not in (None, "ok"):
-            texto += (f" A última tentativa ({_dia(registro.get('ultima_tentativa'))}) "
+        status = registro.get("ultimo_status")
+        tentativa = _dia(registro.get("ultima_tentativa"))
+        if status == STATUS_ARTEFATO_PENDENTE:
+            texto += (f" A última tentativa ({tentativa}) publicou, mas o artefato "
+                      "não chegou à main; veja local_staging/logs/atualizacao_vitrines.log.")
+        elif status not in (None, "ok"):
+            texto += (f" A última tentativa ({tentativa}) "
                       "falhou; veja local_staging/logs/atualizacao_vitrines.log.")
         # A data da última publicação só muda quando publica -- e publicar
         # zera a idade. Na prática, reaviso só pelas 24 h.
@@ -206,7 +211,8 @@ CHAVE_ATUALIDADE_B3 = "b3:trimestre_armazem"
 def problema_atualidade_b3(avaliacao: dict | None) -> Problema | None:
     """Armazém com trimestre vigente anterior ao que o calendário CVM exige.
 
-    A idade de publicação não pega isto: o alvo ``b3_metrics`` publicou em dia
+    A idade de publicação não pegava isto: o alvo ``b3_metrics`` (fora da rotina
+    desde 15/11/2026) publicou em dia
     com as demonstrações do armazém paradas desde 23/07/2026. O trimestre
     vigente sai da cobertura do universo, não do ``MAX(data)`` (ver
     `core.b3_atualidade_trimestral`). A assinatura é o par vigente -> esperado,
@@ -219,7 +225,7 @@ def problema_atualidade_b3(avaliacao: dict | None) -> Problema | None:
     return Problema(
         CHAVE_ATUALIDADE_B3, assinatura,
         "Demonstrações da B3 no armazém local atrasadas. "
-        f"{avaliacao.get('texto', '')} As métricas que o alvo b3_metrics publica "
+        f"{avaliacao.get('texto', '')} As métricas da B3 que o app mostra "
         "saem dessa base. Atualize com `python run_market_ingest.py annual "
         "--warehouse` e `python run_market_ingest.py reprocess --warehouse`.")
 

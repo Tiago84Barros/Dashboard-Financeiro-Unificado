@@ -409,7 +409,7 @@ def test_prazo_esgotado_adia_o_resto_e_notifica_em_vez_de_morrer_calado(monkeypa
     executados = []
     monkeypatch.setattr(av, "executar",
                         lambda alvo, _amb: executados.append(alvo.chave) or (True, ""))
-    monkeypatch.setattr(av, "levar_artefatos_ao_repositorio", lambda _a: [])
+    monkeypatch.setattr(av, "levar_artefatos_ao_repositorio", lambda _a, **_k: [])
     monkeypatch.setattr(av, "verificar", lambda *_a: (True, ""))
     avisos = []
     monkeypatch.setattr(av, "notificar", lambda msg, _titulo: avisos.append(msg))
@@ -453,7 +453,7 @@ def _rotina_vigiada(monkeypatch, atualizacao, *, recarregada=False):
     monkeypatch.setattr(av, "executar",
                         lambda alvo, _amb: feito["executados"].append(alvo.chave)
                         or (True, ""))
-    monkeypatch.setattr(av, "levar_artefatos_ao_repositorio", lambda _a: [])
+    monkeypatch.setattr(av, "levar_artefatos_ao_repositorio", lambda _a, **_k: [])
     monkeypatch.setattr(av, "verificar", lambda *_a: (True, ""))
     monkeypatch.setattr(av, "notificar",
                         lambda msg, titulo: feito["avisos"].append((titulo, msg)))
@@ -575,3 +575,111 @@ def test_carimbo_dos_indices_le_so_os_simbolos_do_seletor():
     consulta = av.CARIMBO["us_benchmarks"][1]
     for simbolo in SIMBOLOS_BENCHMARK_EUA:
         assert f"'{simbolo}'" in consulta
+
+
+# --- "ok" só depois que o artefato chega à main (13/11/2026) ------------------
+#
+# O `rag_corpus` foi marcado "ok" antes do push; o push não respondeu, a
+# exceção derrubou a rotina e a próxima execução o achou em dia.
+
+_ARTEFATO_FALSO = ("data/public/vitrine.json.gz",)
+
+
+def test_so_o_envio_que_deu_certo_chama_o_aviso_de_enviado(monkeypatch):
+    monkeypatch.setattr(av, "registrar", lambda _: None)
+    monkeypatch.setattr(av, "atualizar_main", lambda _r, **_k: _AtualizacaoOk())
+    resultados = {"sobe": _ResultadoFalso(True, "commitado e empurrado"),
+                  "trava": _ResultadoFalso(False, "push falhou")}
+    monkeypatch.setattr(av, "publicar_artefatos",
+                        lambda _r, _c, msg: resultados["sobe" if "sobe" in msg else "trava"])
+    enviados = []
+
+    avisos = av.levar_artefatos_ao_repositorio(
+        [_AlvoFalso("a", _ARTEFATO_FALSO, titulo="sobe"),
+         _AlvoFalso("b", _ARTEFATO_FALSO, titulo="trava")],
+        ao_enviar=lambda alvo: enviados.append(alvo.chave))
+
+    assert enviados == ["a"]
+    assert avisos == ["b: push falhou"]
+
+
+def test_excecao_num_alvo_nao_impede_os_seguintes(monkeypatch):
+    """Antes, a exceção saía do laço e levava junto a verificação e o aviso."""
+    monkeypatch.setattr(av, "registrar", lambda _: None)
+    monkeypatch.setattr(av, "atualizar_main", lambda _r, **_k: _AtualizacaoOk())
+
+    def _publicar(_raiz, _caminhos, msg):
+        if "quebra" in msg:
+            raise OSError("disco cheio")
+        return _ResultadoFalso(True, "commitado e empurrado")
+
+    monkeypatch.setattr(av, "publicar_artefatos", _publicar)
+    enviados = []
+
+    avisos = av.levar_artefatos_ao_repositorio(
+        [_AlvoFalso("a", _ARTEFATO_FALSO, titulo="quebra"),
+         _AlvoFalso("b", _ARTEFATO_FALSO, titulo="sobe")],
+        ao_enviar=lambda alvo: enviados.append(alvo.chave))
+
+    assert enviados == ["b"]
+    assert len(avisos) == 1 and avisos[0].startswith("a:") and "disco cheio" in avisos[0]
+
+
+def _ultimo_status(gravados, chave):
+    return gravados[-1][chave]["ultimo_status"]
+
+
+def test_alvo_com_artefato_fica_pendente_ate_o_envio(monkeypatch):
+    """`cdi_diario` declara artefato; `brapi_raw_poda` e `b3_brapi` não."""
+    from core.publicacao_git import ResultadoAtualizacao
+
+    feito = _rotina_vigiada(monkeypatch, ResultadoAtualizacao(contem_origin=True))
+    no_envio = {}
+
+    def _levar(alvos, ao_enviar=None):
+        no_envio.update({a.chave: _ultimo_status(feito["gravados"], a.chave)
+                         for a in alvos})
+        return ["cdi_diario: commitado localmente, mas o push falhou: sem resposta"]
+
+    monkeypatch.setattr(av, "levar_artefatos_ao_repositorio", _levar)
+
+    assert av.main(["--sem-vigia"]) == 1
+    assert no_envio == {"cdi_diario": "artefato_pendente",
+                        "brapi_raw_poda": "ok", "b3_brapi": "ok"}
+    assert _ultimo_status(feito["gravados"], "cdi_diario") == "artefato_pendente"
+    [(titulo, msg)] = feito["avisos"]
+    assert titulo == "Dashboard: atualização com falha"
+    assert "artefato não publicado -- cdi_diario" in msg
+
+
+def test_envio_confirmado_grava_ok_na_hora(monkeypatch):
+    from core.publicacao_git import ResultadoAtualizacao
+
+    feito = _rotina_vigiada(monkeypatch, ResultadoAtualizacao(contem_origin=True))
+
+    def _levar(alvos, ao_enviar=None):
+        for alvo in alvos:
+            if alvo.artefatos:
+                ao_enviar(alvo)
+                # Gravado antes do alvo seguinte: queda depois daqui não desfaz.
+                assert _ultimo_status(feito["gravados"], alvo.chave) == "ok"
+        return []
+
+    monkeypatch.setattr(av, "levar_artefatos_ao_repositorio", _levar)
+
+    assert av.main(["--sem-vigia"]) == 0
+    assert all(_ultimo_status(feito["gravados"], c) == "ok" for c in _DEVIDOS_DA_GUARDA)
+    assert "ultima_publicacao" in feito["gravados"][-1]["cdi_diario"]
+
+
+def test_verificacao_sem_resposta_reprova_em_vez_de_derrubar_a_rotina(monkeypatch):
+    # Gêmeo do push de 13/11/2026: a TimeoutExpired da verificação também
+    # pularia o "=== fim" e a notificação.
+    def _estoura(argv, **kw):
+        raise av.subprocess.TimeoutExpired(argv, kw.get("timeout"))
+
+    monkeypatch.setattr(av.subprocess, "run", _estoura)
+    ok, saida = av.verificar({"fii"}, {})
+    assert ok is False
+    assert saida.startswith("REPROVOU")
+    assert "TimeoutExpired" in saida

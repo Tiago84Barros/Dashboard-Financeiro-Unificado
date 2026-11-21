@@ -20,6 +20,7 @@ recomendadas) só acontecem com a seção no menu. O resumo agregado do topo
 patrimônio: é lido sempre que alguma seção com resumo está no menu, e só fica
 de fora quando nenhuma está.
 """
+import math
 from collections.abc import Callable
 from datetime import date as _date
 from datetime import datetime as _datetime
@@ -81,6 +82,19 @@ _B3 = "empresas_b3"
 _EUA = "empresas_americanas"
 _FIIS = "fiis"
 _SELECAO = frozenset({_B3, _EUA, _FIIS})
+
+
+def _texto_score_medio(metrics: dict) -> str:
+    """"—" quando a carteira não tem nota que compare alguém.
+
+    ``float(x or 0)`` mostrava 0.00 para média ausente — o mesmo número que
+    um grupo de empresa única recebia sem medir nada.
+    """
+    try:
+        valor = float(metrics.get("score_medio"))
+    except (TypeError, ValueError):
+        return "—"
+    return f"{valor:.2f}" if math.isfinite(valor) else "—"
 
 
 def _juntar(partes: list[str]) -> str:
@@ -962,14 +976,14 @@ def _resumo_modelo_b3(modelo: dict) -> tuple[str, str, list[tuple[str, str, str]
     status = "Revisar" if modelo.get("is_stale") else "Ativa"
     status_cor = _COR_ALERTA if modelo.get("is_stale") else _COR_FLUXO
     ano = modelo.get("ano_compra") or "ciclo atual"
-    score_medio = float(metrics.get("score_medio") or 0)
+    score_medio = _texto_score_medio(metrics)
 
     return (
         status,
         status_cor,
         [
             ("Empresas selecionadas", str(len(items)), _COR_PATRIMONIO),
-            ("Score médio", f"{score_medio:.2f}", _COR_FLUXO),
+            ("Score médio", score_medio, _COR_FLUXO),
             ("Ano/ciclo de compra", str(ano), _COR_NEUTRO),
         ],
     )
@@ -1433,7 +1447,7 @@ def _secao_portfolio_modelo_b3(modelo: dict) -> None:
         origem="Empresas B3",
         metricas=[
             ("Empresas", str(len(items)), f"Para compra em {ano}", _COR_PATRIMONIO),
-            ("Score médio", f"{float(metrics.get('score_medio') or 0):.2f}",
+            ("Score médio", _texto_score_medio(metrics),
              "Média das selecionadas", _COR_FLUXO),
             ("Setor líder", f"{top_setor[1] * 100:.1f}%", str(top_setor[0])[:34], _COR_ALERTA),
             ("Criado", criado_txt or "Ativo", "Modelo salvo no banco", _COR_INVEST),

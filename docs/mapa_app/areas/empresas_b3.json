@@ -1,9 +1,9 @@
 {
   "nome": "Empresas B3",
   "resumo": "Estudar ações brasileiras e montar carteiras",
-  "explicacao": "É a área do app dedicada às ações de empresas brasileiras negociadas na bolsa (B3). No topo há cinco abas, em forma de botões: navegar pelas empresas, estudar uma empresa, montar uma carteira, avaliá-la e acompanhar a Carteira 20. Serve para ir da pesquisa de uma empresa até uma carteira montada e acompanhada.",
+  "explicacao": "É a área do app dedicada às ações de empresas brasileiras negociadas na bolsa (B3). No topo há cinco abas, em forma de botões: navegar pelas empresas, estudar uma empresa, montar uma carteira, avaliá-la e acompanhar a Carteira 20. Serve para ir da pesquisa de uma empresa até uma carteira montada e acompanhada. Os números da bolsa vêm do armazém local, o banco grande que fica no computador do dono do app e é atualizado todo dia. Se ele não responder, um aviso amarelo no topo diz que os dados mostrados são a cópia guardada em 15/11/2026.",
   "so_admin": false,
-  "fonte": "app.py:74; views/empresas_b3.py:3253 (abas: design/market_companies.py:72 e :87; despacho em views/empresas_b3.py:3253-3317)",
+  "fonte": "app.py:74; views/empresas_b3.py:3253 (abas: design/market_companies.py:72 e :87; despacho em views/empresas_b3.py:3253-3317); fonte dos dados: core/fonte_b3.py (aviso em views/empresas_b3.py::render)",
   "filhos": [
     {
       "nome": "Empresas por Setor",
@@ -239,7 +239,7 @@
     {
       "nome": "Criação de Portfólio",
       "resumo": "Monta a carteira sugerida com toda a bolsa",
-      "explicacao": "Aplica o método de seleção a todos os segmentos da bolsa de uma vez, escolhe as empresas líderes dos segmentos aprovados e monta uma carteira com várias áreas da economia. Você escolhe um perfil, clica em \"Rodar Criação de Portfólio\" e, no fim, pode salvar a carteira. Quase tudo só aparece depois de rodar.",
+      "explicacao": "Aplica o método de seleção a todos os segmentos da bolsa de uma vez, escolhe as empresas líderes dos segmentos aprovados e monta uma carteira com várias áreas da economia. Você escolhe um perfil e clica em \"Rodar Criação de Portfólio\". Um seletor escolhe a estratégia: \"Nota + fatores\" abre por padrão; \"Líder de cada segmento\" mostra as empresas líderes e permite salvar a carteira. Quase tudo só aparece depois de rodar.",
       "so_admin": false,
       "fonte": "views/empresas_b3.py:3262 -> views/portfolio_b3.py:2814",
       "filhos": [
@@ -335,6 +335,31 @@
           ]
         },
         {
+          "nome": "Estratégia",
+          "resumo": "Nota + fatores (padrão) ou líder de cada segmento",
+          "explicacao": "Um seletor logo depois dos testes complementares escolhe qual carteira a tela mostra. Abre em \"Nota + fatores\", a estratégia padrão. \"Líder de cada segmento\" mostra a carteira concentrada e tudo o que vem com ela: as empresas líderes, o parecer da IA e o botão de salvar.",
+          "so_admin": false,
+          "fonte": "views/portfolio_b3.py:4061 -> views/portfolio_b3_nota_fatores.py:54",
+          "filhos": [
+            {
+              "nome": "Nota + fatores (padrão)",
+              "resumo": "Estratégia padrão: tira os 30% piores e divide igual no resto",
+              "explicacao": "A estratégia que abre por padrão, desde 20/11/2026, porque foi a única com ganho medido fora do zero: em média, 2,5 pontos ao ano acima de dividir igual entre todas as empresas. É uma carteira ampla feita com a mesma nota. Junta a nota com três dados de mercado (momento, baixa volatilidade e ROE), tira os 30% de pior resultado e divide o dinheiro em partes iguais entre os que ficam. É refeita uma vez por ano, em abril. Três cartões mostram quanto ela rendeu a mais que dividir igual entre todas as empresas nos anos passados, ao lado da nota sozinha e da líder de cada segmento. Outros três mostram quanto R$ 1 teria virado reaplicado a cada abril nesses anos (nota + fatores, a nota sozinha e partes iguais), com a taxa ao ano: é o resultado do período, não a prova. A lista de hoje aparece depois de rodar a aba; entre janeiro e março ela é uma prévia. Logo abaixo vêm o desempenho safra a safra e a metodologia. Ela não passa pelo parecer da IA e não pode ser salva como portfólio padrão.",
+              "so_admin": false,
+              "fonte": "views/portfolio_b3.py:5231 -> views/portfolio_b3_nota_fatores.py:202",
+              "filhos": []
+            },
+            {
+              "nome": "Líder de cada segmento",
+              "resumo": "A carteira concentrada, uma empresa por segmento aprovado",
+              "explicacao": "A outra estratégia do seletor. Ao escolhê-la aparecem as empresas líderes, os ajustes e verificações (com o parecer da IA), o botão de salvar como portfólio padrão e o desempenho. Seu ganho sobre dividir igual não foi provado: a margem de erro cruza o zero. É a única que pode ser salva como portfólio padrão.",
+              "so_admin": false,
+              "fonte": "views/portfolio_b3.py:4061 -> :4068",
+              "filhos": []
+            }
+          ]
+        },
+        {
           "nome": "Empresas líderes para o próximo ano",
           "resumo": "A carteira sugerida para comprar este ano",
           "explicacao": "Lista as empresas escolhidas, só de segmentos aprovados, para comprar no ano corrente. É o resultado principal da aba.",
@@ -352,9 +377,9 @@
             {
               "nome": "Composição possível com proteção ao investidor",
               "resumo": "Proposta parcial quando a carteira não fecha",
-              "explicacao": "Aparece no lugar da carteira sugerida (macro, saúde, salvar e distribuição setorial) quando não há empresas suficientes para respeitar os limites de concentração. Mostra uma proposta parcial, quanto do dinheiro ficaria sem aplicar e o botão \"Baixar composição para revisão\". Depois dela seguem os mesmos painéis da carteira normal: Patches 1 a 5, desempenho da safra vigente, desempenho safra a safra contra Selic e Pesos Iguais e a metodologia.",
+              "explicacao": "Aparece no lugar da carteira sugerida (macro, saúde e salvar) só quando nenhum segmento deixa líder para a carteira. Quando há líderes mas eles não fecham nos limites de concentração, a tela fica na carteira normal, com um aviso que diz quais limites ficaram de fora (desde 16/11/2026). Cada segmento analisado entra com uma só empresa, a de maior nota dentro do próprio segmento (a mesma nota da carteira normal); notas de segmentos diferentes nunca são comparadas entre si. Os segmentos aprovados no backtest vêm primeiro e os demais seguem pela menor distância até a aprovação. Nota de entrada, Inteligência dos Ativos e risco crítico só tiram empresas: quem é barrado cede a vaga à próxima do mesmo segmento. Cada card diz se o segmento foi aprovado no backtest e, se não foi, por quanto ficou de fora. A nota compara a empresa com as outras compráveis do segmento; quando ela é a única, o card diz \"sem par comparável\" em vez de 0,0 e essa nota fica fora do score médio. Mostra uma proposta parcial, quanto do dinheiro ficaria sem aplicar e o botão \"Baixar composição para revisão\". Depois dela seguem os mesmos painéis da carteira normal: a distribuição setorial, Patches 1 a 5, desempenho da safra vigente, desempenho safra a safra contra Selic e Pesos Iguais e a metodologia.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4404/4421/4432 -> design/portfolio_review.py:13",
+              "fonte": "views/portfolio_b3.py:5174 -> core/portfolio_review_routes.py:b3_review -> design/portfolio_review.py:190",
               "filhos": []
             },
             {
@@ -411,7 +436,7 @@
         {
           "nome": "Salvar como portfólio padrão",
           "resumo": "Guarda a carteira como a oficial",
-          "explicacao": "Torna esta carteira a sua carteira-modelo, que aparece resumida no Dashboard Geral e é a usada na aba Avaliação de Portfólio. Ao lado ficam cartões com número de empresas, segmentos aprovados e nota média.",
+          "explicacao": "Torna esta carteira a sua carteira-modelo, que aparece resumida no Dashboard Geral e é a usada na aba Avaliação de Portfólio. Ao lado ficam cartões com número de empresas, segmentos aprovados e nota média; a média deixa de fora a nota de quem é a única comprável do segmento (\"sem par comparável\") e mostra \"—\" se não sobrar nenhuma. Quando os líderes não fecham nos limites de concentração (poucos ativos para o limite por ativo, ou tetos de setor e ciclo que não cabem juntos), a carteira normal continua na tela com um aviso, os pesos passam do limite, a camada macro não é aplicada e o botão de salvar fica desligado; por isso a medição fora da amostra conta essas safras (as duas causas) como caixa a Selic, não com esses pesos, que só entram numa sensibilidade à parte. É a mesma regra da Seleção de FIIs.",
           "so_admin": false,
           "fonte": "views/portfolio_b3.py:4771",
           "filhos": [
@@ -436,9 +461,9 @@
         {
           "nome": "Distribuição Setorial do Portfólio Sugerido",
           "resumo": "Pizza com o peso de cada setor",
-          "explicacao": "Gráfico de pizza que mostra quanto da carteira sugerida está em cada setor da economia.",
+          "explicacao": "Gráfico de pizza que mostra quanto da carteira sugerida está em cada setor da economia. Aparece também depois da composição para revisão; o dinheiro que ela deixa sem aplicar vira a fatia \"Não alocado\", em vez de os setores serem esticados até 100%.",
           "so_admin": false,
-          "fonte": "views/portfolio_b3.py:4869",
+          "fonte": "views/portfolio_b3.py:4926",
           "filhos": []
         },
         {
@@ -467,16 +492,16 @@
             {
               "nome": "Desempenho safra a safra",
               "resumo": "Resultado de cada carteira anual passada",
-              "explicacao": "Cartões, tabela e gráfico de barras com o resultado da carteira de cada ano contra a Selic e contra as ações em partes iguais, já descontando custos e imposto.",
+              "explicacao": "Cartões, tabela e gráfico com o resultado da carteira de cada ano contra a Selic e contra as ações em partes iguais. Os três usam a carteira escolhida em abril de cada ano, com os dados daquele ano: a líder de cada segmento e a carteira nota + fatores, as duas já descontando o custo de trocar ações, ao lado das ações em partes iguais, da Selic e do Ibovespa. Ele tem duas visões, à escolha. \"Ano a ano\" mostra uma barra por safra e conta em quantas safras cada carteira rendeu mais que as partes iguais. \"Acumulado (R$ 1)\" mostra quanto R$ 1 vale ao fim de cada safra, com um cartão por linha que diz quanto R$ 1 teria virado e a taxa ao ano. É o resultado do período, não a prova: a prova é o teste ano a ano. Os cartões do topo contam as safras medidas, a média da diferença para a Selic e em quantas safras a líder de cada segmento ficou acima dela. A tabela mostra, por safra, a líder antes e depois do custo e do imposto, as réguas, o giro e as maiores posições. O bloco \"O que esperar da safra vigente\" também usa a carteira escolhida em cada abril.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4998 -> views/portfolio_b3_safras.py:264",
+              "fonte": "views/portfolio_b3.py:5187 -> views/portfolio_b3_safras.py:402",
               "filhos": [
                 {
                   "nome": "O que esperar da safra vigente",
                   "resumo": "Expectativa e fragilidade da carteira atual",
-                  "explicacao": "Quatro cartões: se a nota ordena bem as empresas, se a carteira tende a superar a Selic e o mercado, e quão frágil é essa conclusão.",
+                  "explicacao": "Quatro cartões: se a nota ordena bem as empresas, se a carteira tende a superar a Selic e o mercado, e quão frágil é essa conclusão. As faixas contra a Selic e contra as partes iguais usam as carteiras escolhidas em cada abril, já descontando o custo de trocar ações. \"Ordena?\" e \"Fragilidade\" usam, para cada ano, quanto a nota acertou a ordem de todas as empresas, medido fora da amostra. Se faltar uma dessas medições, o bloco volta a refazer as safras com os segmentos aprovados hoje e avisa na tela.",
                   "so_admin": false,
-                  "fonte": "views/portfolio_b3_safras.py:344 -> :765",
+                  "fonte": "views/portfolio_b3_safras.py:483 -> :928",
                   "filhos": []
                 }
               ]

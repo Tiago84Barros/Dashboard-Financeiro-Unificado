@@ -27,6 +27,7 @@ import logging
 import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+from pathlib import Path
 
 from core.fii_integridade import (
     SQL_PROVENTO_IMPLAUSIVEL,
@@ -124,6 +125,93 @@ NOTA_DETALHE_DO_CHAT = (
 PROVENTOS_FRESCO_DIAS = 3
 
 
+def nota_medicao_nota_fatores() -> str:
+    """Nota da carteira ampla "nota + fatores" da Criacao de Portfolio B3.
+
+    A lista de hoje sai dos mesmos precos, notas e ROE que esta secao ja mede;
+    o que e proprio dela e a medicao fora da amostra gravada em
+    data/oos_nota_fatores_b3.json. A nota diz de quando e de que versao ela
+    e, e se a tela a mostra como vencida -- a mesma regra da tela."""
+    try:
+        import core.b3_nota_fatores as nf
+        import core.b3_oos_carteira as oos
+        from core.b3_methodology import SCORE_VERSION
+        from core.b3_portfolio_presets import VERSION as PRESETS_VERSION
+        caminho = Path(__file__).resolve().parents[1] / "data" / "oos_nota_fatores_b3.json"
+        dados = oos.carregar(caminho)
+        if not dados:
+            return ("carteira ampla nota + fatores: sem medicao gravada "
+                    "(data/oos_nota_fatores_b3.json)")
+        motivos = oos.vencida(dados, SCORE_VERSION, PRESETS_VERSION,
+                              versao_medicao=nf.VERSAO)
+        base = (f"carteira ampla nota + fatores: medicao {dados.get('versao_medicao')} "
+                f"de {str(dados.get('medido_em') or '')[:10]}, "
+                f"{len(dados.get('safras') or [])} safras, perfil "
+                f"{dados.get('perfil')} (data/oos_nota_fatores_b3.json); a lista de "
+                "hoje usa os mesmos precos, notas e ROE medidos acima")
+        return base + ("; VENCIDA: " + "; ".join(motivos) if motivos else "")
+    except Exception as exc:  # noqa: BLE001
+        return f"carteira ampla nota + fatores: medicao nao lida ({type(exc).__name__})"
+
+
+def nota_medicao_acumulado_safras() -> str:
+    """Nota do acumulado (R$ 1) do "Desempenho safra a safra" da B3.
+
+    Desde 20/11/2026 os cartoes, a tabela e o grafico (barras do ano a ano e
+    linha acumulada) nao usam a reconstrucao com os segmentos aprovados hoje:
+    leem as medicoes fora da amostra gravadas, em que cada safra usa a
+    carteira escolhida naquele abril. Desde a mesma data o bloco "O que
+    esperar da safra vigente" tambem: as bandas saem das mesmas safras
+    medidas, e "Ordena?"/"Fragilidade" do Rank-IC de cada ano sobre o
+    universo inteiro, sem portao (data/vantagem_oos.json), so quando a versao
+    gravada e a do motor. A reconstrucao com os segmentos de hoje so aparece
+    sem essas medicoes, e a tela diz isso.
+    A lider de cada segmento vem de data/oos_carteira_b3.json; nota + fatores,
+    de data/oos_nota_fatores_b3.json (nota acima). Diz de quando e de que
+    versao e cada uma, e se a tela a mostra como vencida."""
+    try:
+        import core.b3_oos_carteira as oos
+        from core.b3_methodology import SCORE_VERSION
+        from core.b3_portfolio_presets import VERSION as PRESETS_VERSION
+        dados = oos.carregar(oos.CAMINHO_MEDICAO)
+        if not dados:
+            return ("acumulado das safras: sem medicao da lider de cada segmento "
+                    "(data/oos_carteira_b3.json); a linha dela fica de fora")
+        motivos = oos.vencida(dados, SCORE_VERSION, PRESETS_VERSION)
+        base = (f"cartoes, tabela, grafico e bandas da expectativa das safras: "
+                f"carteiras escolhidas ano a ano, lidas da medicao "
+                f"{dados.get('versao_medicao')} de "
+                f"{str(dados.get('medido_em') or '')[:10]} "
+                "(data/oos_carteira_b3.json, sem o portao de LLM) e da medicao "
+                "de nota + fatores")
+        base += "; " + _nota_ic_da_expectativa()
+        return base + ("; VENCIDA: " + "; ".join(motivos) if motivos else "")
+    except Exception as exc:  # noqa: BLE001
+        return f"acumulado das safras: medicao nao lida ({type(exc).__name__})"
+
+
+def _nota_ic_da_expectativa() -> str:
+    """De onde sai o "Ordena?" e a "Fragilidade" do bloco de expectativa:
+    o Rank-IC anual do universo gravado em data/vantagem_oos.json, que so
+    entra com a versao do motor -- a mesma checagem da tela."""
+    try:
+        from core.vantagem_oos import carregar_medicao, versao_corrente
+        med = carregar_medicao("b3")
+        atual = versao_corrente("b3")
+        if not med or not (med.get("extras") or {}).get("ic_por_ano"):
+            return ("Rank-IC da expectativa: sem medicao em data/vantagem_oos.json; "
+                    "a tela usa a reconstrucao com os segmentos de hoje")
+        versao = med.get("versao_metodologia")
+        if versao != atual:
+            return (f"Rank-IC da expectativa: medicao {versao} difere do motor "
+                    f"{atual}; a tela usa a reconstrucao com os segmentos de hoje")
+        return (f"Rank-IC da expectativa: {med.get('n_periodos')} anos do "
+                f"universo, sem portao, medicao {versao} de "
+                f"{med.get('medido_em')} (data/vantagem_oos.json)")
+    except Exception as exc:  # noqa: BLE001
+        return f"Rank-IC da expectativa: medicao nao lida ({type(exc).__name__})"
+
+
 def _declarar_nao_medidos(comps: list["Componente"], motivo: str,
                           pesos: dict[str, float] | None = None
                           ) -> list["Componente"]:
@@ -148,7 +236,10 @@ FAIXA_MEDIA = 55.0
 # Declarar "nao se aplica" e diferente de declarar 0%, e a tela de Grau de
 # Confianca escreve a declaracao: tela ausente pareceria tela sem problema.
 # A Documentacao saiu daqui em 29/10/2026: deixou de ser rota em 24/09 e
-# vive dentro de Configuracoes.
+# vive dentro de Configuracoes. Os blocos de Seguranca que entraram em
+# 14/11/2026 nao mudam isso: "Usuarios logados agora" conta sessoes do proprio
+# servidor (core.presenca, em memoria) e "Excluir conta" e acao, nao leitura --
+# nenhum dos dois afirma dado de mercado ou de carteira que a nota mediria.
 SECOES_SEM_AFIRMACAO = ("Configurações",)
 
 # Subabas cujo numero a nota da tela NAO mede. A nota de uma tela e a do dado
@@ -499,9 +590,58 @@ def confianca_b3(engine=None) -> ConfiancaSecao:
         comps.append(Componente("Metodologia validada", None, 0.25,
                                 f"nao medido: {type(exc).__name__}"))
 
+    # Desde 15/11/2026 a tela le a B3 do armazem local (core.fonte_b3), e
+    # compute_confidence/universo_b3 sem engine leem pela mesma fonte. Se o
+    # armazem nao respondeu, a medida saiu da copia congelada do Supabase, e a
+    # nota diz isso -- igual ao aviso da tela.
+    if engine is None:
+        from core.fonte_b3 import aviso_reserva
+        motivo = aviso_reserva()
+        if motivo:
+            notas.append("medido na copia do Supabase congelada em 15/11/2026: "
+                         + motivo)
     notas.append(NOTA_COTACAO_ACAO)
+    notas.append(nota_selic_mensal(engine))
     notas.append(NOTA_DETALHE_DO_CHAT)
+    notas.append(nota_medicao_nota_fatores())
+    notas.append(nota_medicao_acumulado_safras())
     return ConfiancaSecao("Empresas B3", tuple(comps), u, tuple(notas))
+
+
+# Selic mensal (`public.info_economica_mensal`, coluna `Selic_Media`): desde o
+# D13 (PR #763) e o benchmark de caixa da tabela de safras e da medicao fora da
+# amostra -- cada janela 31/03->31/03 compoe a Selic REALIZADA mes a mes. Nao
+# e um pilar com peso (a nota da secao nao muda com ela), mas a tela le esta
+# tabela, e o Grau de Confianca diz de onde ela vem e ate que mes vai. Mes sem
+# dado cai na meta anual e a propria tela nomeia o mes; aqui fica o ultimo mes
+# com dado, para quem ver "2026-01" saber que fev e mar usam a meta.
+_SQL_SELIC_MENSAL = """
+    SELECT max(data), count(*) FROM public.info_economica_mensal
+    WHERE "Selic_Media" IS NOT NULL
+"""
+
+
+def nota_selic_mensal(engine=None) -> str:
+    """Nota de procedencia da Selic mensal que o benchmark das safras le.
+
+    Nunca derruba a secao: falha vira "nao medido", com o motivo nomeado.
+    """
+    base = ("Selic do benchmark das safras: realizada mes a mes de "
+            "public.info_economica_mensal (Selic_Media); mes sem dado usa a meta "
+            "anual e a tela o nomeia. Insumo do benchmark, sem peso na nota")
+    try:
+        from sqlalchemy import text
+
+        from core.database import get_engine
+        eng = engine or get_engine()
+        with eng.connect() as conn:
+            ultimo, meses = conn.execute(text(_SQL_SELIC_MENSAL)).one()
+    except Exception as exc:  # noqa: BLE001
+        return f"{base} -- nao medido: {type(exc).__name__}."
+    if not meses or ultimo is None:
+        return f"{base} -- tabela sem nenhum mes com Selic: toda janela usa a meta."
+    return (f"{base} -- {int(meses)} meses, ultimo "
+            f"{str(ultimo)[:7]}.")
 
 
 # Frescor de FII: idade MEDIANA do dado que a tela le. Ate 03/11/2026 era

@@ -23,9 +23,9 @@
         {
           "nome": "brapi (empresas da B3)",
           "resumo": "Balanços, cotações e setores das empresas",
-          "explicacao": "Serviço pago que entrega balanços, cotações e setores das empresas da B3. Atualização diária, mais uma revisão semanal dos balanços. Telas que dependem: Empresas B3, Investimentos → Inteligência dos Ativos e Portfólio Global.",
+          "explicacao": "Serviço pago que entrega balanços, cotações e setores das empresas da B3. Atualização diária, mais uma revisão semanal dos balanços, gravadas só na base do computador: desde 15/11/2026 nada disso vai para o Supabase. Telas que dependem: Empresas B3, Investimentos → Inteligência dos Ativos e Portfólio Global.",
           "so_admin": false,
-          "fonte": "core/publicacao_agenda.py:512; run_market_ingest.py:1",
+          "fonte": "core/publicacao_agenda.py:667; run_market_ingest.py:1",
           "filhos": []
         },
         {
@@ -88,7 +88,7 @@
         {
           "nome": "Ações e empresas da B3",
           "resumo": "Pregão, balanços, documentos e indicadores B3",
-          "explicacao": "Todo dia: preço do pregão (o fechamento do COTAHIST vale como cotação quando é mais novo que a brapi), documentos da CVM, a poda do cache bruto da brapi (arquiva, regrava as demonstrações e compacta) e, logo depois dela, os dados da brapi. Toda semana: indicadores das empresas, histórico de notas, fechamento mensal de preços e a origem de cada balanço. Telas que dependem: Empresas B3, Investimentos e Portfólio Global.",
+          "explicacao": "Todo dia: preço do pregão (o fechamento do COTAHIST vale como cotação quando é mais novo que a brapi), documentos da CVM, a poda do cache bruto da brapi (arquiva, regrava as demonstrações e compacta) e, logo depois dela, os dados da brapi. Toda semana: revisão completa dos balanços pela brapi, histórico de múltiplos, fechamento mensal de preços e a origem de cada balanço. Cotação, balanços e indicadores ficam na base do computador; desde 15/11/2026 a rotina não publica mais a B3 no Supabase. Telas que dependem: Empresas B3, Investimentos e Portfólio Global.",
           "so_admin": false,
           "fonte": "core/publicacao_agenda.py:169",
           "filhos": []
