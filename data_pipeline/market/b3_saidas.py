@@ -175,7 +175,7 @@ def dividendos_pagos(contas: dict) -> float | None:
 _CLASSE_LPA = {"3": ("ON",), "4": ("PN", "PNA"), "5": ("PNA", "PN"), "6": ("PNB", "PN")}
 
 
-def lpa_da_classe(contas: dict, classe: str) -> float | None:
+def lpa_da_classe(contas: dict, classe: str, *, manter_zero: bool = False) -> float | None:
     """LPA básico da classe negociada (3.99.01.xx).
 
     Tem de ser a classe do código: com direitos econômicos desiguais o lucro
@@ -183,13 +183,17 @@ def lpa_da_classe(contas: dict, classe: str) -> float | None:
     paga à PN 35 vezes o que paga à ON; lucro/LPA_ON dava um valor de mercado
     de R$ 265 bi em 2010. Lucro/LPA_PN dá as ações em "equivalentes PN", que
     é exatamente a unidade do preço de GOLL4.
+
+    Por padrão um LPA zero conta como ausente: quem usa o LPA para derivar
+    ações (lucro/LPA) não pode dividir por zero. ``manter_zero=True`` devolve o
+    zero informado, para quem compara o número em si (a medição brapi x CVM).
     """
     rotulos = _CLASSE_LPA.get(classe)
     if not rotulos:
         return None
     por_rotulo = {}
     for cod, (ds, v) in contas.items():
-        if cod.startswith("3.99.01.") and v:
+        if cod.startswith("3.99.01.") and (v is not None if manter_zero else v):
             por_rotulo.setdefault(ds.strip().upper(), v)
     for r in rotulos:
         if r in por_rotulo:

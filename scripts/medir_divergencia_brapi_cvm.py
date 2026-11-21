@@ -15,6 +15,11 @@ O que compara, por empresa e exercício (anual):
 * ``lpa``: ``market.income_statements.eps`` do ticker x LPA básico da classe
   negociada (3.99.01.xx). Units ficam fora: o LPA da DFP é por ação, não por unit.
 
+A base da comparação é o universo cadastrado (``market.assets`` com código
+CVM) em cada exercício cuja DFP foi lida: empresa-ano sem linha na brapi conta
+como ``so_cvm``, não some. Exercício sem arquivo da DFP fica fora da medição
+inteira, e não vira "só brapi".
+
 A DFP vem do cache que ``scripts/treinar_previsao_lucros_b3.py`` já usa
 (``data/cache/cvm/dfp/dfp_cia_aberta_AAAA.zip``); nada aqui busca na rede. A
 brapi vem do banco que o app publicado lê (``core.database.get_engine``), ou do
@@ -115,59 +120,92 @@ def _ler_brapi(eng, anos: list[int]):
     return universo, brapi.merge(universo, on="ticker", how="inner")
 
 
-def _ler_cvm(dfp_dir: Path, anos: list[int], cds: set[int]) -> dict:
+def _ler_cvm(dfp_dir: Path, anos: list[int], cds: set[int]) -> tuple[dict, list[int]]:
+    """``(observações por (cd_cvm, ano), exercícios cujo arquivo foi lido)``.
+
+    Arquivo ausente não é "empresa sem DFP": o exercício sai da lista e,
+    com ela, da medição inteira.
+    """
     from data_pipeline.market.b3_saidas import fundamentos, ler_dfp, lpa_da_classe
 
     out: dict[tuple[int, int], dict] = {}
+    lidos: list[int] = []
     for ano in anos:
         arq = dfp_dir / f"dfp_cia_aberta_{ano}.zip"
         if not arq.exists():
             print(f"  DFP {ano}: ausente em {arq} -- ano fora da medição")
             continue
         dems = ler_dfp(arq.read_bytes(), ano, cds)
+        lidos.append(int(ano))
         for cd, dem in dems.items():
             f = fundamentos(dem)
             out[(int(cd), int(ano))] = {
                 "lucro": f.get("net_income"), "pl": f.get("equity"),
-                "lpa_por_classe": {k: lpa_da_classe(dem.contas, k) for k in "345678"},
+                # LPA zero informado é valor a comparar, não ausência.
+                "lpa_por_classe": {k: lpa_da_classe(dem.contas, k, manter_zero=True)
+                                   for k in "345678"},
                 "consolidado": bool(dem.consolidado),
             }
         print(f"  DFP {ano}: {len(dems)} empresas lidas")
-    return out
+    return out, lidos
 
 
-def medir(brapi, cvm: dict):
-    """Linhas de comparação: lucro e PL por empresa, LPA por ticker."""
+def _primeiro(linhas: list, campo: str):
+    """``(ticker, valor)`` do primeiro ticker com ``campo`` presente."""
+    for r in linhas:
+        v = _num(r.get(campo))
+        if v is not None:
+            return r["ticker"], v
+    return None, None
+
+
+def medir(universo, brapi, cvm: dict, anos: list[int]):
+    """Linhas de comparação: lucro e PL por empresa, LPA por ticker.
+
+    A grade é ``universo`` x ``anos`` (os exercícios com DFP lida), não as
+    linhas que a brapi tem: empresa-ano que falta na brapi vira ``so_cvm``.
+    """
     import pandas as pd
 
+    anos = sorted({int(a) for a in anos})
+    brapi = brapi[brapi["ano"].isin(anos)]
+    por_ticker_ano = {(str(r["ticker"]), int(r["ano"])): r
+                      for r in brapi.to_dict("records")}
+    uni = universo.dropna(subset=["cd_cvm"]).sort_values(["cd_cvm", "ticker"])
+
     linhas = []
-    # Lucro e PL são da companhia: um ticker por (empresa, ano), o primeiro
-    # que tem dado na brapi, para não contar PETR3 e PETR4 como duas empresas.
-    por_empresa = (brapi.sort_values(["cd_cvm", "ano", "ticker"])
-                   .assign(_tem=lambda d: d["net_income"].notna() | d["equity"].notna())
-                   .sort_values("_tem", ascending=False, kind="stable")
-                   .drop_duplicates(["cd_cvm", "ano"]))
-    for r in por_empresa.itertuples(index=False):
-        ref = cvm.get((int(r.cd_cvm), int(r.ano)))
-        for campo, b, c in (("lucro", r.net_income, ref and ref["lucro"]),
-                            ("pl", r.equity, ref and ref["pl"])):
-            cat, rel = classificar(b, c)
-            if cat != "nenhum":
-                linhas.append({"campo": campo, "ano": int(r.ano), "cd_cvm": int(r.cd_cvm),
-                               "ticker": r.ticker, "nome": r.nome, "brapi": _num(b),
-                               "cvm": _num(c), "categoria": cat, "divergencia": rel,
-                               "dfp": None if ref is None else
-                               ("consolidada" if ref["consolidado"] else "individual")})
-    for r in brapi[brapi["asset_type"] == "stock"].itertuples(index=False):
-        ref = cvm.get((int(r.cd_cvm), int(r.ano)))
-        classe = str(r.ticker)[-1:]
-        c = ref["lpa_por_classe"].get(classe) if ref else None
-        cat, rel = classificar(r.eps, c)
+
+    def _linha(campo, ano, cd, ticker, nome, b, c, dfp):
+        cat, rel = classificar(b, c)
         if cat != "nenhum":
-            linhas.append({"campo": "lpa", "ano": int(r.ano), "cd_cvm": int(r.cd_cvm),
-                           "ticker": r.ticker, "nome": r.nome, "brapi": _num(r.eps),
-                           "cvm": _num(c), "categoria": cat, "divergencia": rel,
-                           "dfp": None})
+            linhas.append({"campo": campo, "ano": ano, "cd_cvm": cd, "ticker": ticker,
+                           "nome": nome, "brapi": _num(b), "cvm": _num(c),
+                           "categoria": cat, "divergencia": rel, "dfp": dfp})
+
+    # Lucro e PL são da companhia: uma linha por (empresa, ano, campo). Cada
+    # campo vem do primeiro ticker que o tem -- AAAA3 só com DRE e AAAA4 só
+    # com balanço dão lucro de um e PL do outro.
+    for cd, grupo in uni.groupby("cd_cvm", sort=True):
+        cd = int(cd)
+        tickers = [str(t) for t in grupo["ticker"]]
+        nome = grupo["nome"].iloc[0]
+        for ano in anos:
+            ref = cvm.get((cd, ano))
+            dfp = None if ref is None else ("consolidada" if ref["consolidado"] else "individual")
+            linhas_b = [por_ticker_ano[(t, ano)] for t in tickers if (t, ano) in por_ticker_ano]
+            for campo, col, chave in (("lucro", "net_income", "lucro"), ("pl", "equity", "pl")):
+                tk, b = _primeiro(linhas_b, col)
+                _linha(campo, ano, cd, tk or tickers[0], nome, b,
+                       ref.get(chave) if ref else None, dfp)
+
+    # LPA é por ticker; units ficam fora (o LPA da DFP é por ação).
+    for r in uni[uni["asset_type"] == "stock"].itertuples(index=False):
+        cd, tk = int(r.cd_cvm), str(r.ticker)
+        for ano in anos:
+            ref = cvm.get((cd, ano))
+            c = ref["lpa_por_classe"].get(tk[-1:]) if ref else None
+            b = por_ticker_ano.get((tk, ano), {}).get("eps")
+            _linha("lpa", ano, cd, tk, r.nome, b, c, None)
     return pd.DataFrame(linhas)
 
 
@@ -230,13 +268,15 @@ def main(argv=None) -> int:
         return 2
 
     print(f"brapi: {origem}; anos {args.anos}")
-    _, brapi = _ler_brapi(eng, args.anos)
-    print(f"  {brapi['cd_cvm'].nunique()} empresas com algum dado anual da brapi")
-    cvm = _ler_cvm(args.dfp_dir, args.anos, set(brapi["cd_cvm"].astype(int)))
-    if not cvm:
+    universo, brapi = _ler_brapi(eng, args.anos)
+    print(f"  {universo['cd_cvm'].nunique()} empresas no universo; "
+          f"{brapi['cd_cvm'].nunique()} com algum dado anual da brapi")
+    cvm, lidos = _ler_cvm(args.dfp_dir, args.anos, set(universo["cd_cvm"].astype(int)))
+    if not lidos:
         print("Nenhuma DFP lida: confira --dfp-dir.")
         return 2
-    df = medir(brapi, cvm)
+    print(f"  exercícios medidos: {lidos}")
+    df = medir(universo, brapi, cvm, lidos)
     args.saida.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(args.saida, index=False, encoding="utf-8-sig")
     print()
