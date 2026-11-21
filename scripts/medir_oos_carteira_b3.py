@@ -23,6 +23,14 @@ Uso::
     python scripts/medir_oos_carteira_b3.py            # mede e grava
     python scripts/medir_oos_carteira_b3.py --dry-run  # mede e imprime
 
+A mesma rodada compara também, safra a safra, os pesos do motor com pesos
+iguais nos MESMOS nomes (puro e com os tetos do perfil): a chave
+``pesos_do_motor_vs_iguais_mesmos_nomes`` de cada perfil diz se a regra de
+peso acrescenta algo além da escolha dos nomes. Safra em que o motor não tem
+carteira salvável fica em caixa a Selic nos dois lados (a regra D1 da
+manchete) e sai do resumo; safra em que os pesos iguais não cabem nos tetos
+do perfil sai marcada, e ``resumo_dentro_dos_limites`` refaz a conta sem ela.
+
 O armazém local precisa estar de pé (`docker ps --filter name=dfu_warehouse`):
 preços saem de lá. Nada é gravado em banco nenhum -- só o JSON.
 """
@@ -413,6 +421,9 @@ def _medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje, por
             linhas_por_variante[variante].append({
                 "safra": safra,
                 "pesos": pesos_fin,
+                # O setor que cada nome levou aos tetos: a comparação com
+                # pesos iguais nos mesmos nomes refaz a mesma projeção.
+                "setor_de": cart.get("setor_de", {}),
                 "retornos": rets_cart,
                 "segmentos_avaliados": contexto["n_resultados"],
                 "segmentos_aprovados": p["n_aprovados"],
@@ -513,14 +524,34 @@ def _medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje, por
             "safras": tabela,
         }
     principal = perfis_var[oos.SEM_PORTAO]["vs_equal_weight"]
+    # Mesmos nomes da carteira sem portão, só o peso muda: separa a regra de
+    # peso (orçamento por segmento + score + tetos) da escolha dos nomes.
+    linhas_sem = linhas_por_variante[oos.SEM_PORTAO]
+    mesmos_nomes = {
+        oos.MESMOS_NOMES_IGUAIS: oos.comparar_mesmos_nomes(
+            linhas_sem, cost_cfg,
+            lambda r: oos.pesos_iguais_mesmos_nomes(r["pesos"])),
+        oos.MESMOS_NOMES_IGUAIS_TETOS: oos.comparar_mesmos_nomes(
+            linhas_sem, cost_cfg,
+            lambda r: oos.carteira_iguais_mesmos_nomes(
+                r["pesos"], setor_de=r["setor_de"], cap=cap,
+                teto_setor=float(params["teto_setor"]),
+                teto_ciclico=float(params["teto_ciclico"]))),
+    }
     return {
         "parametros": params,
         "leitura": oos.leitura_honesta(principal),
         "variantes": perfis_var,
+        "pesos_do_motor_vs_iguais_mesmos_nomes": mesmos_nomes,
     }, safras
 
 
 def main() -> int:
+    # Console do Windows (cp1252) não escreve "→": o --dry-run quebrava no
+    # print do JSON depois de medir tudo. Troca o caractere por "?" e segue.
+    for fluxo in (sys.stdout, sys.stderr):
+        if hasattr(fluxo, "reconfigure"):
+            fluxo.reconfigure(errors="replace")
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dry-run", action="store_true", help="mede e imprime sem gravar")
     ap.add_argument("--perfil", action="append",
@@ -633,6 +664,25 @@ def main() -> int:
             r = medido["variantes"][v]["vs_equal_weight"]
             print(f"  {v}: media={r['media']} ic95={r['ic95']} n={r['n_safras']} "
                   f"neg={r['safras_negativas']}", flush=True)
+        for regra, comp in medido["pesos_do_motor_vs_iguais_mesmos_nomes"].items():
+            print(f"  motor vs {regra} (mesmos nomes): {comp['leitura']}", flush=True)
+            for linha in comp["safras"]:
+                if linha.get("motor_em_caixa"):
+                    print(f"    {linha['safra']}: motor em caixa a Selic (D1), "
+                          f"fora do resumo", flush=True)
+                if linha.get("sem_carteira"):
+                    continue
+                print(f"    {linha['safra']}: n={linha['n_ativos']:>2} "
+                      f"motor={linha['motor_liquido']:+.1%} "
+                      f"{regra}={linha['alternativa_liquido']:+.1%} "
+                      f"excesso={linha['excesso']:+.1%} "
+                      f"pesos diferentes={linha['distancia_pesos']:.0%}"
+                      f"{' [alternativa fora dos limites]' if linha['alternativa_fora_dos_limites'] else ''}",
+                      flush=True)
+            dentro = comp["resumo_dentro_dos_limites"]
+            if comp["safras_alternativa_fora_dos_limites"] or comp["safras_motor_fora_dos_limites"]:
+                print(f"    so safras dentro dos limites: media={dentro['media']} "
+                      f"ic95={dentro['ic95']} n={dentro['n_safras']}", flush=True)
 
     saida = {
         "versao_medicao": oos.VERSAO_MEDICAO,
