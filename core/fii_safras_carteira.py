@@ -393,6 +393,25 @@ def renda_da_safra(total: pd.DataFrame, preco: pd.DataFrame,
     return out
 
 
+def renda_winsorizada(bruto: float, winsorizado: float, renda: float) -> float:
+    """Provento coerente com o retorno winsorizado da safra.
+
+    O razão de IR recebe o retorno cortado; com o provento do caminho
+    original, o ganho de preço (retorno − provento) ganharia uma perda que
+    não existiu e abateria IR das safras seguintes. O corte para baixo sai
+    primeiro do ganho de preço positivo e só depois do provento; o corte para
+    cima vai todo para o ganho de preço. Assim provento + ganho = retorno
+    winsorizado e o razão nunca vê uma perda de capital que o caminho
+    original não teve.
+    """
+    corte = bruto - winsorizado
+    if corte <= 0:
+        return renda
+    ganho = bruto - renda
+    do_ganho = min(corte, max(ganho, 0.0))
+    return renda - (corte - do_ganho)
+
+
 # ── métricas PIT de um segmento na safra N (espelho de `metricas_pit`) ─────
 
 def metricas_pit(hist: dict, safra: int, matriz: pd.DataFrame,
@@ -564,8 +583,8 @@ def medir_safras(elegiveis_por_safra: Mapping[int, list[dict]], retornos: pd.Dat
         retornos_cart = {tk: _w(brutos[tk]) if tk in brutos else 0.0
                          for tk in carteira["pesos"]}
         renda_safra = renda_da_safra(total, preco, safra) if ir_calculado else {}
-        renda = {tk: renda_safra[tk] for tk in carteira["pesos"]
-                 if tk in brutos and tk in renda_safra}
+        renda = {tk: renda_winsorizada(brutos[tk], retornos_cart[tk], renda_safra[tk])
+                 for tk in carteira["pesos"] if tk in brutos and tk in renda_safra}
         ew_vals = [_w(brutos[tk]) for tk in universo if tk in brutos]
         meses = meses_da_safra(total, safra)
         selic = selic_decisao.get(safra)

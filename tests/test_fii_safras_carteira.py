@@ -306,3 +306,24 @@ def test_snapshot_de_outro_ano_nao_entra_com_corte_de_idade():
     d = pd.Timestamp("2021-03-31")
     assert set(ultimo_snapshot_na_data(s, d)["ticker"]) == {"VIVO11", "SAIU11"}
     assert set(ultimo_snapshot_na_data(s, d, idade_max_dias=0)["ticker"]) == {"VIVO11"}
+
+
+def test_winsorizacao_nao_cria_perda_ficticia_no_ir():
+    # preço parado, provento de 10%, retorno cortado para 5%: o corte sai do
+    # provento (não há ganho de preço), e o razão não vê perda de capital
+    assert fsc.renda_winsorizada(0.10, 0.05, 0.10) == pytest.approx(0.05)
+    # com ganho de preço, o corte sai dele primeiro
+    assert fsc.renda_winsorizada(0.30, 0.20, 0.08) == pytest.approx(0.08)
+    assert fsc.renda_winsorizada(0.30, 0.05, 0.08) == pytest.approx(0.05)
+    # corte para cima (perda extrema amortecida) vai todo para o preço
+    assert fsc.renda_winsorizada(-0.60, -0.20, 0.05) == pytest.approx(0.05)
+    # sem corte, nada muda
+    assert fsc.renda_winsorizada(0.12, 0.12, 0.10) == pytest.approx(0.10)
+
+    from core.backtest_liquido import IR_FII_GANHO, RastreadorIR
+
+    r = RastreadorIR(IR_FII_GANHO)
+    r.rebalancear({"A11": 1.0})
+    r.evoluir({"A11": 0.05}, {"A11": fsc.renda_winsorizada(0.10, 0.05, 0.10)})
+    r.rebalancear({})
+    assert r.prejuizo == pytest.approx(0.0)

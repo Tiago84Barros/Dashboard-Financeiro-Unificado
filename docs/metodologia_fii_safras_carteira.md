@@ -40,7 +40,10 @@ mensal da Seleção de FIIs.
    robusto: o composto do total menos o do preço isentaria a alta do próprio
    provento reinvestido.
 10. **Retorno da safra:** composto mês a mês; mês ausente rende 0 (A-118);
-    winsorização P1–P99 pelo universo elegível (mínimo 30 fundos).
+    winsorização P1–P99 pelo universo elegível (mínimo 30 fundos). O
+    provento que vai ao IR acompanha o corte (`renda_winsorizada`): o corte
+    para baixo sai primeiro do ganho de preço positivo e depois do provento,
+    para o razão não ganhar uma perda de capital que não existiu.
 11. **Referências:** IFIX oficial (bruto), Pesos Iguais do universo elegível
     winsorizado, Selic. O IFIX precisa existir em cada mês observado da
     carteira; faltando um, o excesso sobre o IFIX da safra fica indisponível
