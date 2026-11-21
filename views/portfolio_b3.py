@@ -1647,11 +1647,12 @@ def _bloco_segmento(res: dict, df_set: pd.DataFrame,
                     unsafe_allow_html=True)
 
     if val_est > 0:
-        sub_val = f"Valor final da estratégia: **{_fv(val_est)}**"
+        # HTML cru, não markdown: dentro do <div> o "**" saía literal na tela.
+        sub_val = f"Valor final da estratégia: <strong>{html.escape(_fv(val_est))}</strong>"
         if val_selic > 0:
-            sub_val += f" ({m_selic:+.1f}% vs Tesouro Selic)"
+            sub_val += f" ({m_selic:+.1f}% vs Tesouro Selic)".replace(".", ",")
         if val_ew > 0:
-            sub_val += f" · ({m_ew:+.1f}% vs Pesos Iguais)"
+            sub_val += f" · ({m_ew:+.1f}% vs Pesos Iguais)".replace(".", ",")
         st.markdown(f'<div class="pb3-seg-val">{sub_val}</div>', unsafe_allow_html=True)
 
     # Cards das empresas que já lideraram

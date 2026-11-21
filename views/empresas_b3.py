@@ -212,13 +212,15 @@ def _fv(v, d: int = 2) -> str:
         if v is None or (isinstance(v, float) and (np.isnan(v) or np.isinf(v))):
             return "—"
         x = float(v)
+        # Padrão pt-BR: vírgula decimal e "mil/mi/bi". Antes saía "R$ 801.0K",
+        # com ponto decimal e sufixo em inglês, na tela da Criação de Portfólio.
         if abs(x) >= 1e9:
-            return f"R$ {x/1e9:.2f}B"
+            return f"R$ {x/1e9:.2f} bi".replace(".", ",")
         if abs(x) >= 1e6:
-            return f"R$ {x/1e6:.2f}M"
+            return f"R$ {x/1e6:.2f} mi".replace(".", ",")
         if abs(x) >= 1e3:
-            return f"R$ {x/1e3:.1f}K"
-        return f"{x:,.{d}f}"
+            return f"R$ {x/1e3:.1f} mil".replace(".", ",")
+        return f"{x:_.{d}f}".replace(".", ",").replace("_", ".")
     except Exception:
         return "—"
 
