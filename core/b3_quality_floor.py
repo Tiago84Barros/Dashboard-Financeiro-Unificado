@@ -189,3 +189,22 @@ def apply_with_substitution(
             else:
                 log["sem_substituto"].append({"tk": tk, "segmento": seg_label})
     return finais
+
+
+def reprovados(df_mult: pd.DataFrame | None, tickers, *,
+               selic: float | None = None) -> frozenset[str]:
+    """Quem o piso reprova entre ``tickers``, sem substituição nem afrouxamento.
+
+    Serve a quem troca nomes DEPOIS do piso e não pode deixar entrar um
+    reprovado: o filtro nota + fatores da rota líder
+    (`core.b3_nota_fatores.trocar_piores`), na tela e na medição. A guarda de
+    viabilidade de `apply_with_substitution` não vale aqui: ela readmite o
+    nome que já estava selecionado, nunca um substituto.
+    """
+    if df_mult is None or getattr(df_mult, "empty", True):
+        return frozenset()
+    lista = sorted({str(t) for t in tickers})
+    if not lista:
+        return frozenset()
+    vereditos = evaluate(df_mult, lista, selic=selic)
+    return frozenset(tk for tk, v in vereditos.items() if v.situacao == REPROVADO)

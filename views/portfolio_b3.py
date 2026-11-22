@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import html
 import logging
+from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
@@ -717,6 +718,7 @@ def _aplicar_portao_inteligencia(
     seg_label: str,
     log: dict,
     setor: str | None = None,
+    exclui_extra: Callable[[str], bool] | None = None,
 ) -> list[str]:
     """A carteira criada é compra: nome que a Inteligência dos Ativos barra
     ("avaliar troca" ou "não aportar") não entra, e o próximo do ranking do
@@ -726,7 +728,17 @@ def _aplicar_portao_inteligencia(
         selecionados, ranked_prox,
         avaliador=lambda tk: _intel_avaliar_cached(tk, setor),
         pesos=pesos_p, seg_label=seg_label, log=log,
-        exclui=lambda tk: _entry_guard_exclui(entry_guard, tk))
+        exclui=lambda tk: _barrado(entry_guard, tk, exclui_extra))
+
+
+def _barrado(entry_guard: dict, tk: str,
+             exclui_extra: Callable[[str], bool] | None = None) -> bool:
+    """Guarda de entrada mais a barreira opcional de quem chama.
+
+    ``exclui_extra`` é o filtro nota + fatores da rota líder
+    (`core.b3_nota_fatores.trocar_piores`): os piores ficam fora também das
+    trocas que vêm depois dele (Inteligência, gate de LLM e correlação)."""
+    return _entry_guard_exclui(entry_guard, tk) or bool(exclui_extra and exclui_extra(tk))
 
 
 def _entry_guard_exclui(entry_guard: dict, tk: str) -> bool:
@@ -748,6 +760,7 @@ def _aplicar_gate_qualitativo(
     seg_label: str,
     log: dict,
     max_substitutos_avaliados: int = 2,
+    exclui_extra: Callable[[str], bool] | None = None,
 ) -> list[str]:
     """
     Veto qualitativo com substituição pelo próximo do ranking do segmento.
@@ -778,7 +791,7 @@ def _aplicar_gate_qualitativo(
             cand = str(cand)
             if cand in finais or cand in selecionados:
                 continue
-            if _entry_guard_exclui(entry_guard, cand):
+            if _barrado(entry_guard, cand, exclui_extra):
                 continue
             aval_c = _quali_avaliar_cached(cand)
             _registrar_aviso_ancoragem(log, cand, aval_c)
@@ -907,6 +920,7 @@ def _aplicar_diversificacao_correlacao(
     entry_guard: dict,
     threshold: float,
     max_substituicoes: int = 3,
+    exclui_extra: Callable[[str], bool] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """
     Troca o mais fraco de um par muito correlacionado (rho >= threshold) pelo
@@ -984,7 +998,7 @@ def _aplicar_diversificacao_correlacao(
                     continue
                 if cand_tk not in returns.columns:
                     continue
-                if _entry_guard_exclui(entry_guard, cand_tk):
+                if _barrado(entry_guard, cand_tk, exclui_extra):
                     continue
                 trial_cols = [cand_tk if c == fraco["tk"] else c for c in cols]
                 # A-135: base e tentativa precisam usar a MESMA interseção.
@@ -4051,6 +4065,12 @@ def render(show_header: bool = True) -> None:
                 unsafe_allow_html=True)
     _sec_hdr(f"📋 Empresas líderes para o próximo ano ({ano_atual})")
     st.caption(f"Apenas segmentos aprovados · Para compra em {ano_atual}")
+    # Filtro nota + fatores (em teste, 22/11/2026): os piores 30% do sinal do
+    # universo não entram; o próximo do mesmo segmento herda a vaga. Desligado
+    # por padrão até a medição fora da amostra mostrar ganho.
+    _filtro_nf_ligado, _piores_nf = _nota_fatores.escolher_filtro_lider()
+    _barra_nf = _piores_nf.__contains__ if _piores_nf else None
+    filtro_nf_log: list[dict] = []
 
     # ── Gate qualitativo: pré-avalia as candidatas com barra de progresso ────
     # (as avaliações são cacheadas — reruns e substitutos reaproveitam)
@@ -4137,19 +4157,37 @@ def render(show_header: bool = True) -> None:
                 float(taxa_selic_aa),
             )
 
+        # FILTRO NOTA + FATORES (opcional): depois do piso, antes dos portões.
+        # O substituto passa na guarda e no piso; os piores seguem barrados nas
+        # trocas seguintes (``exclui_extra``). A medição refaz o mesmo passo
+        # (scripts/medir_lider_filtro_nota_fatores_b3.py).
+        if _piores_nf:
+            from core.b3_nota_fatores import trocar_piores as _trocar_piores_nf
+            from core.b3_quality_floor import reprovados as _reprovados_piso
+            _rep_piso = (_reprovados_piso(df_mult_todos, [t for t, _ in ranked_prox],
+                                          selic=float(taxa_selic_aa))
+                         if _piso_ativo else frozenset())
+            selecionados, pesos_p, _trocas_nf = _trocar_piores_nf(
+                selecionados, ranked_prox, pesos_p, _piores_nf,
+                exclui=lambda c, _r=_rep_piso: (_entry_guard_exclui(entry_guard, c)
+                                                or c in _r))
+            filtro_nf_log.extend({**t, "segmento": f"{res['setor']} › {res['segmento']}"}
+                                 for t in _trocas_nf)
+
         # PORTÃO DA INTELIGÊNCIA DOS ATIVOS, sempre ligado: o mesmo veredito
         # da aba Inteligência e dos chats. Determinístico; antes do parecer
         # de LLM pelo mesmo motivo do piso.
         selecionados = _aplicar_portao_inteligencia(
             selecionados, ranked_prox, entry_guard, pesos_p,
             f"{res['setor']} › {res['segmento']}", intel_log,
-            setor=res.get("setor"),
+            setor=res.get("setor"), exclui_extra=_barra_nf,
         )
 
         if _gate_ativo:
             selecionados = _aplicar_gate_qualitativo(
                 selecionados, ranked_prox, entry_guard, pesos_p,
                 f"{res['setor']} › {res['segmento']}", quali_log,
+                exclui_extra=_barra_nf,
             )
 
         for tk in selecionados:
@@ -4183,6 +4221,9 @@ def render(show_header: bool = True) -> None:
                 _motivo_afr = _motivo_afrouxamento_lider(tk, piso_log)
                 if _motivo_afr:
                     motivos.append(_motivo_afr)
+            _sub_nf = next((t["sai"] for t in filtro_nf_log if t["entra"] == tk), None)
+            if _sub_nf:
+                motivos.append(f"Entrou pelo filtro nota + fatores sobre {_sub_nf}")
             _sub_intel = next((s["sai"] for s in intel_log["substituicoes"]
                                if s["entra"] == tk), None)
             if _sub_intel:
@@ -4302,6 +4343,10 @@ def render(show_header: bool = True) -> None:
 
             def _veto_liquidez(candidata: str) -> str | None:
                 """Impede que a troca entre com papel que o piso reprovaria."""
+                # Filtro nota + fatores ligado: a classe irmã entre os piores
+                # não volta pela troca ON/PN (a barreira das outras trocas).
+                if _barra_nf and _barra_nf(str(candidata).upper()):
+                    return "entre os 30% piores da nota + fatores"
                 h = _saude_liq.get(str(candidata).upper())
                 if h is None:
                     return "sem dados de saúde para a classe irmã"
@@ -4382,7 +4427,7 @@ def render(show_header: bool = True) -> None:
 
                     proximos_uniq, corr_log = _aplicar_diversificacao_correlacao(
                         proximos_uniq, aprovados, _returns_universo, entry_guard,
-                        threshold=corr_threshold,
+                        threshold=corr_threshold, exclui_extra=_barra_nf,
                     )
 
                     _cols_dep = [it["tk"] for it in proximos_uniq]
@@ -4689,6 +4734,17 @@ def render(show_header: bool = True) -> None:
     else:
         st.info("Nenhum líder identificado com os parâmetros atuais.")
 
+    if _piores_nf:
+        _nota_fatores.render_trocas_filtro(filtro_nf_log, len(_piores_nf))
+        for _t in filtro_nf_log:
+            if not _t.get("entra"):
+                aviso_lacuna(
+                    f"Segmento {_t['segmento']} ficou sem representante: "
+                    f"{_t['sai']} está entre os piores do filtro nota + fatores e "
+                    "nenhum candidato do mesmo segmento passou.",
+                    codigo="tela.portfolio_b3.filtro_nf_vaga_sem_substituto",
+                    entidade=_t["segmento"], nivel="warning")
+
     # ── PISO ABSOLUTO: a seção de transparência saiu da tela ─────────────────
     # Pedido do dono do projeto (30/10/2026). Quem entrou pelo piso, ou por
     # afrouxamento, segue etiquetado no card da líder; o que o card não mostra
@@ -4930,6 +4986,11 @@ def render(show_header: bool = True) -> None:
             "fundamentos_invalidos": int(quality_summary.get("celulas_invalidas", 0) or 0),
             "status_invest_reconciliacao": bool(quality_summary.get("usa_status_invest", False)),
             "qualitative_gate": bool(_gate_ativo),
+            # Filtro em teste: a carteira salva diz se ele rodou e o que trocou.
+            "filtro_nota_fatores": bool(_piores_nf),
+            "filtro_nota_fatores_versao": (_nota_fatores.nf.VERSAO_FILTRO_LIDER
+                                           if _piores_nf else None),
+            "filtro_nota_fatores_trocas": filtro_nf_log,
             "quali_vetados": quali_log["vetados"],
             "quali_substituicoes": quali_log["substituicoes"],
             "quali_nao_avaliados": quali_log["nao_avaliados"],

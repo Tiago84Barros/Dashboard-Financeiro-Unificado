@@ -331,7 +331,7 @@ def _selic_mensal() -> dict:
 
 
 def _medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje, portao=None,
-                  sinais_piores=False):
+                  sinais_piores=False, comeca_em=None):
     """Mede as variantes de `oos.VARIANTES` e, com ``portao``, a do portão real.
 
     ``portao(segmentos, safra, exclui)`` devolve ``(itens, log)`` no formato de
@@ -341,6 +341,13 @@ def _medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje, por
     ``sinais_piores``: mede também, sobre a carteira sem portão, se algum
     sinal da data da decisão apontava o pior nome (`core.b3_sinais_piores`);
     sai em ``"sinais_dos_piores"``.
+
+    ``comeca_em``: fixa por fora o fim do aquecimento (a safra devolvida em
+    ``"comeca_em"`` por outra medição). Serve para comparar duas versões da
+    estratégia na mesma janela: um filtro que esvazia a primeira safra do
+    controle a converte em caixa (D1) em vez de adiar o começo e tirar da
+    conta justamente os anos que ele piorou. Sem ele, o começo é a primeira
+    resposta da carteira sem portão.
     """
     import numpy as np
 
@@ -475,7 +482,8 @@ def _medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje, por
     perfis_var = {}
     # O aquecimento é da estratégia, não do veto: todas as variantes começam
     # onde o sem-portão começa.
-    comeca_em = oos.primeira_resposta(linhas_por_variante[oos.SEM_PORTAO])
+    if comeca_em is None:
+        comeca_em = oos.primeira_resposta(linhas_por_variante[oos.SEM_PORTAO])
     for variante, linhas in linhas_por_variante.items():
         # Achado D1 (2.4.0, tetos desde a 2.6.0): depois do aquecimento, safra
         # sem carteira salvável -- inviável no cap, tetos que não fecham ou sem
@@ -567,6 +575,7 @@ def _medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje, por
         "leitura": oos.leitura_honesta(principal),
         "variantes": perfis_var,
         "pesos_do_motor_vs_iguais_mesmos_nomes": mesmos_nomes,
+        "comeca_em": comeca_em,
     }
     if sinais_piores:
         import core.b3_sinais_piores as sp

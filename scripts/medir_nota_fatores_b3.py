@@ -57,20 +57,18 @@ def _tirar_piores_pela_nota(universo, scores, corte):
     return [t for t in universo if t not in set(saem)]
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--dry-run", action="store_true", help="mede e imprime sem gravar")
-    ap.add_argument("--cache-dir", type=Path, default=None,
-                    help="reaproveita a rodada da aba (o mesmo pickle de "
-                         "medir_oos_carteira_b3.py --cache-dir)")
-    args = ap.parse_args()
-    os.environ["LACUNAS_DESTINO"] = "desligado"
+def preparar(cache_dir: Path | None) -> dict:
+    """Armazém local, LLM desligado e a rodada da aba no perfil padrão.
 
+    Ponto único das duas medições da nota + fatores (esta e
+    `scripts/medir_lider_filtro_nota_fatores_b3.py`): as duas leem a mesma
+    rodada (o mesmo pickle com ``--cache-dir``) e a mesma régua.
+    """
+    os.environ["LACUNAS_DESTINO"] = "desligado"
     import scripts.medir_oos_carteira_b3 as M
     from scripts.medir_vantagem_oos import (
         _apontar_para_armazem_local,
         _desligar_llm,
-        _fonte_efetiva_b3,
     )
 
     url = _apontar_para_armazem_local()
@@ -92,11 +90,7 @@ def main() -> int:
     import core.b3_nota_fatores as nf
     import core.b3_oos_carteira as oos
     import views.portfolio_b3 as view
-    from core.b3_methodology import SCORE_VERSION
     from core.b3_portfolio_presets import PRESETS, RECOMENDADO
-    from core.b3_portfolio_presets import VERSION as PRESETS_VERSION
-    from core.b3_safras import SafraCarteira, retorno_da_safra
-    from core.b3_vigencia import ano_base_do_score, janela_de_vigencia
     from core.market_read import load_precos_mensais
     from core.transaction_costs import CostConfig
 
@@ -107,8 +101,8 @@ def main() -> int:
     ibov = ibov_df["BOVA11"].dropna() if "BOVA11" in ibov_df.columns else None
 
     nome = RECOMENDADO
-    cache = (args.cache_dir / f"oos_{hashlib.md5(nome.encode()).hexdigest()[:10]}.pkl"
-             if args.cache_dir else None)
+    cache = (cache_dir / f"oos_{hashlib.md5(nome.encode()).hexdigest()[:10]}.pkl"
+             if cache_dir else None)
     rodada = None
     if cache is not None and cache.exists():
         with cache.open("rb") as fh:
@@ -123,6 +117,28 @@ def main() -> int:
             with cache.open("wb") as fh:
                 pickle.dump(rodada, fh)
     resultados, precos, params, decisao = rodada
+    return {"M": M, "oos": oos, "nf": nf, "view": view,
+            "rodada": (resultados, precos, params, decisao),
+            "ibov": ibov, "cost_cfg": cost_cfg, "hoje": hoje, "perfil": nome}
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--dry-run", action="store_true", help="mede e imprime sem gravar")
+    ap.add_argument("--cache-dir", type=Path, default=None,
+                    help="reaproveita a rodada da aba (o mesmo pickle de "
+                         "medir_oos_carteira_b3.py --cache-dir)")
+    args = ap.parse_args()
+
+    prep = preparar(args.cache_dir)
+    M, oos, nf = prep["M"], prep["oos"], prep["nf"]
+    resultados, precos, params, decisao = prep["rodada"]
+    ibov, cost_cfg, hoje, nome = prep["ibov"], prep["cost_cfg"], prep["hoje"], prep["perfil"]
+    from core.b3_methodology import SCORE_VERSION
+    from core.b3_portfolio_presets import VERSION as PRESETS_VERSION
+    from core.b3_safras import SafraCarteira, retorno_da_safra
+    from core.b3_vigencia import ano_base_do_score, janela_de_vigencia
+    from scripts.medir_vantagem_oos import _fonte_efetiva_b3
 
     # Régua oficial da carteira concentrada: controle e início da cadeia.
     medido, _ = M._medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje)
