@@ -12,7 +12,9 @@ Correspondência com a B3 (``views/portfolio_b3.py`` e ``core/b3_oos_carteira.py
 B3                              FIIs (aqui)
 =============================  ==============================================
 segmento CVM                    tipo do FII (``VALID_TYPES``: tijolo, papel,
-                                fof, hibrido), o da reconstrução PIT
+                                fof, hibrido), o da reconstrução PIT; com
+                                ``segmento="cadastral"``, tipo/segmento do
+                                cadastro CVM
 score do ano N (FY N−1)         ``type_score`` do snapshot de 31/03/N, com o
                                 que era público até essa data
 universo PIT do ano             elegibilidade integrada ESTRITA na data
@@ -48,8 +50,9 @@ O que da B3 NÃO entrou, e por quê:
 
 - resiliência ROIC − Selic: FII não tem ROIC; o critério fica desligado
   (``exigir_resiliencia=False``), declarado aqui e no resultado;
-- tetos de setor e de ciclo: o tipo já é o segmento e o orçamento já é
-  igual por tipo; os tetos ficam em 1,0 (sem efeito);
+- tetos de setor e de ciclo: o grupo (tipo, ou tipo/segmento) já é o
+  segmento e o orçamento já é igual por grupo; os tetos ficam em 1,0 (sem
+  efeito);
 - cap adaptativo: a B3 relaxa o cap porque muitos segmentos têm 2 ou 3
   empresas. Tipo de FII tem dezenas de fundos elegíveis; o default é o cap
   estrito (``cap_adaptativo=False``), que força o mínimo de nomes do cap
@@ -81,6 +84,18 @@ default reproduz a regra da B3, para a medição comparar as duas:
   CVM de 2 ou 3 empresas. Com N, os líderes do ano são os N primeiros do
   score ajustado do tipo, todos entram na carteira, e o cap por tipo vira
   ``max(cap, 1/N)`` (o cap da carteira continua valendo na montagem).
+- ``segmento``: a chave do agrupamento (v1.2.0). ``"tipo"`` (default) é o
+  tipo do FII, como até a v1.1.0. ``"cadastral"`` parte o tipo pelo
+  ``Segmento_Atuacao`` que o administrador declara no informe mensal da CVM
+  (exposição ``segment`` de ``market.fii_exposures``, com o ``knowledge_at``
+  do próprio informe: o que era público em 31/03/N). A chave é
+  ``tipo/segmento`` -- o segmento parte o tipo, não o atravessa, porque o
+  ``type_score`` é medido contra os pares do tipo e só compara dentro dele.
+  Fundo sem segmento informativo (a ingestão descarta "Híbrido", "Outros",
+  "Multicategoria" e "Títulos e Val. Mob.", ou seja, quase todo o papel)
+  fica no grupo do próprio tipo. A liderança é contada por grupo: fundo que
+  muda de segmento recomeça a contagem no grupo novo. ``cobertura_segmento``
+  de cada safra diz quantos elegíveis tinham segmento cadastral.
 
 Regras herdadas do pipeline FII que continuam valendo:
 
@@ -106,10 +121,11 @@ from core.b3_precos_saneamento import limites_winsor
 from core.b3_safras import WINSOR_MIN_PAPEIS, WINSOR_PCT_ALTO, WINSOR_PCT_BAIXO
 from core.b3_vigencia import REBAL_MONTH
 from core.backtest_liquido import IR_FII_GANHO, RastreadorIR, renda_reinvestida
+from core.busca_empresa import normalizar
 from core.fii_methodology import VALID_TYPES
 from core.fii_validation import portfolio_turnover
 
-VERSAO = "fii-safras-1.1.0"
+VERSAO = "fii-safras-1.2.0"
 
 #: Parâmetros default: os da B3 (gamma, cap, soft, preset recomendado de
 #: aprovação) com as exceções declaradas no docstring do módulo.
@@ -136,6 +152,7 @@ PARAMS_DEFAULT: dict[str, Any] = {
     "ir_renda_fixa": 0.15,
     "thr_ifix": 0.0,
     "nomes_por_tipo": None,
+    "segmento": "tipo",
     # montagem
     "teto_setor": 1.0,
     "teto_ciclico": 1.0,
@@ -177,6 +194,29 @@ PORTOES: dict[str, tuple[str, str, str]] = {
 #: decidem carteira: o portão IFIX com um substituto mede outra coisa
 #: (AGENTS.md: dado ausente permanece ausente).
 FONTE_IFIX_OFICIAL = "IFIX_official"
+
+
+#: Chaves de agrupamento aceitas pelo parâmetro ``segmento``.
+SEGMENTACOES = ("tipo", "cadastral")
+
+
+def chave_do_segmento(row: Mapping[str, Any], segmentacao: str = "tipo") -> str | None:
+    """Grupo do fundo: o tipo, ou ``tipo/segmento cadastral`` com ``"cadastral"``.
+
+    ``None`` para tipo fora de ``VALID_TYPES``. O rótulo da CVM vem escrito
+    de mais de um jeito ("Logística", "LOGISTICA"); a chave sai sem acento,
+    sem pontuação e em caixa baixa (`core.busca_empresa.normalizar`). Sem
+    segmento informativo, o fundo fica no grupo do tipo.
+    """
+    if segmentacao not in SEGMENTACOES:
+        raise ValueError(f"segmento desconhecido: {segmentacao!r}; use um de {SEGMENTACOES}")
+    tipo = str(row.get("tipo") or "").lower()
+    if tipo not in VALID_TYPES:
+        return None
+    if segmentacao == "tipo":
+        return tipo
+    rotulo = normalizar(row.get("segment")).lower()
+    return f"{tipo}/{rotulo}" if rotulo else tipo
 
 
 def _validar_nomes_por_tipo(valor: Any) -> int | None:
@@ -657,19 +697,37 @@ def _retornos_cache(matriz: pd.DataFrame, ano: int) -> dict[str, float]:
 
 # ── a medição inteira ──────────────────────────────────────────────────────
 
-def _scores_por_segmento(elegiveis_por_safra: Mapping[int, list[dict]]
+def _scores_por_segmento(elegiveis_por_safra: Mapping[int, list[dict]],
+                         segmentacao: str = "tipo"
                          ) -> dict[str, dict[int, dict[str, float]]]:
-    out: dict[str, dict[int, dict[str, float]]] = {t: {} for t in VALID_TYPES}
+    """{grupo: {safra: {ticker: type_score}}}, na ordem de ``VALID_TYPES``.
+
+    A ordem é a dos tipos e, dentro do tipo, o próprio tipo antes dos
+    segmentos em ordem alfabética: estável entre execuções, e no default
+    igual à da v1.1.0.
+    """
+    out: dict[str, dict[int, dict[str, float]]] = {}
     for safra, linhas in elegiveis_por_safra.items():
         for row in linhas or []:
-            tipo = str(row.get("tipo") or "").lower()
-            if tipo not in out:
+            chave = chave_do_segmento(row, segmentacao)
+            if chave is None:
                 continue
             score = row.get("type_score")
             if score is None or not math.isfinite(float(score)):
                 continue
-            out[tipo].setdefault(int(safra), {})[str(row["ticker"])] = float(score)
-    return out
+            out.setdefault(chave, {}).setdefault(int(safra), {})[str(row["ticker"])] = float(score)
+
+    def _ordem(chave: str) -> tuple[int, int, str]:
+        tipo, _, seg = chave.partition("/")
+        return VALID_TYPES.index(tipo), int(bool(seg)), seg
+    return {chave: out[chave] for chave in sorted(out, key=_ordem)}
+
+
+def cobertura_do_segmento(linhas: Iterable[Mapping[str, Any]]) -> dict[str, int]:
+    """Quantos elegíveis da safra têm segmento cadastral informativo."""
+    linhas = [r for r in linhas or [] if chave_do_segmento(r) is not None]
+    com = sum(1 for r in linhas if "/" in str(chave_do_segmento(r, "cadastral")))
+    return {"com_segmento": com, "elegiveis": len(linhas)}
 
 
 def medir_safras(elegiveis_por_safra: Mapping[int, list[dict]], retornos: pd.DataFrame,
@@ -697,6 +755,8 @@ def medir_safras(elegiveis_por_safra: Mapping[int, list[dict]], retornos: pd.Dat
     if str(p["portao"]) not in PORTOES:
         raise ValueError(f"portao desconhecido: {p['portao']!r}; use um de {sorted(PORTOES)}")
     p["nomes_por_tipo"] = _validar_nomes_por_tipo(p.get("nomes_por_tipo"))
+    if p["segmento"] not in SEGMENTACOES:
+        raise ValueError(f"segmento desconhecido: {p['segmento']!r}; use um de {SEGMENTACOES}")
     _CACHE_RET.clear()
     total = matriz_de_retornos(retornos, "total_return")
     ir_calculado = retornos is not None and "price_return" in retornos.columns
@@ -708,7 +768,7 @@ def medir_safras(elegiveis_por_safra: Mapping[int, list[dict]], retornos: pd.Dat
     ano_inicio = safras[0]
     ifix_oficial = ifix_fonte == FONTE_IFIX_OFICIAL
     ifix_portao = ifix if ifix_oficial else None
-    por_seg = _scores_por_segmento(elegiveis_por_safra)
+    por_seg = _scores_por_segmento(elegiveis_por_safra, p["segmento"])
     historicos = {
         tipo: historico_do_segmento(
             scores, gamma=p["gamma"], cap=p["cap"], soft=p["soft"],
@@ -722,10 +782,10 @@ def medir_safras(elegiveis_por_safra: Mapping[int, list[dict]], retornos: pd.Dat
     for safra in safras:
         segmentos: list[dict] = []
         itens: list[tuple[str, list[str], dict]] = []
-        for tipo, hist in historicos.items():
+        for grupo, hist in historicos.items():
             if safra not in hist["lids_por_ano"]:
                 continue
-            m = metricas_pit(hist, safra, total, universo_seg[tipo], ano_inicio=ano_inicio,
+            m = metricas_pit(hist, safra, total, universo_seg[grupo], ano_inicio=ano_inicio,
                              params=p, selic_mensal=selic_mensal, ifix_mensal=ifix_portao)
             aprovado, motivo = aprova_fii(m, p, safra)
             if (ifix is not None and not ifix_oficial and p["portao"] == "ifix"
@@ -733,9 +793,10 @@ def medir_safras(elegiveis_por_safra: Mapping[int, list[dict]], retornos: pd.Dat
                 motivo = f"IFIX oficial ausente (fonte: {ifix_fonte or 'não informada'})"
             sel, pesos_seg, _ranking = selecao_fii(hist, m, safra, p)
             segmentos.append({
-                "tipo": tipo, "aprovado": bool(aprovado), "motivo": motivo,
+                "segmento": grupo, "tipo": grupo.partition("/")[0],
+                "aprovado": bool(aprovado), "motivo": motivo,
                 "n_lideres": len(hist["lids_por_ano"][safra]),
-                "n_universo": len(universo_seg[tipo].get(safra) or []),
+                "n_universo": len(universo_seg[grupo].get(safra) or []),
                 "selecionados": sel, "maior": m.get("maior"),
                 "margem_selic_pct": (None if m.get("val_selic") is None
                                      else _oos._margem_pct(m["val_est"], m["val_selic"])),
@@ -749,7 +810,7 @@ def medir_safras(elegiveis_por_safra: Mapping[int, list[dict]], retornos: pd.Dat
                 "selecao": (m.get("selecao_excesso") or {}).get("veredito"),
             })
             if aprovado:
-                itens.append((tipo, sel, pesos_seg))
+                itens.append((grupo, sel, pesos_seg))
         carteira = _oos.montar_carteira(itens, cap=float(p["cap"]),
                                         teto_setor=float(p["teto_setor"]),
                                         teto_ciclico=float(p["teto_ciclico"]))
@@ -782,6 +843,7 @@ def medir_safras(elegiveis_por_safra: Mapping[int, list[dict]], retornos: pd.Dat
             "ifix": retorno_do_benchmark(ifix, safra, meses_observados(total, safra)),
             "ew": float(np.mean(ew_vals)) if ew_vals else None,
             "n_elegiveis": len(universo),
+            "cobertura_segmento": cobertura_do_segmento(elegiveis_por_safra.get(safra) or []),
         })
 
     cadeia = _oos.itens_da_cadeia(linhas)
@@ -795,7 +857,8 @@ def medir_safras(elegiveis_por_safra: Mapping[int, list[dict]], retornos: pd.Dat
         "ir_calculado": ir_calculado,
         "ifix_fonte": ifix_fonte, "ifix_no_portao": ifix_oficial,
         "fora_do_porte": ["resiliência ROIC − Selic (FII não tem ROIC)",
-                          "tetos de setor e de ciclo (o tipo já é o segmento)",
+                          "tetos de setor e de ciclo (o grupo já é o segmento, "
+                          "com orçamento igual)",
                           "portão qualitativo LLM, piso de qualidade, Score de Entrada"],
         "safras": resultado,
         "resumo": resumos,

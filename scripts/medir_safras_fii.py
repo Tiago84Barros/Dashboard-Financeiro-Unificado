@@ -16,12 +16,16 @@ todas as combinações -- o default de cada uma é a regra da B3:
 - ``--thr-selic 15,5,0``: margem mínima das duas variantes de Selic;
 - ``--thr-ifix 0,2``: margem mínima sobre o IFIX;
 - ``--nomes-por-tipo b3,3,5``: ``b3`` é líder + maior participação; um
-  número N leva os N primeiros do score de cada tipo aprovado.
+  número N leva os N primeiros do score de cada tipo aprovado;
+- ``--segmento tipo,cadastral``: o grupo da carteira -- o tipo do FII, ou o
+  tipo partido pelo segmento do cadastro CVM (logística, lajes, shoppings).
+  ``universo`` de cada ano traz quantos elegíveis tinham segmento cadastral.
 
     python scripts/medir_safras_fii.py
     python scripts/medir_safras_fii.py --thr-selic 15,5,0 --gravar
     python scripts/medir_safras_fii.py --portao selic,selic_liquida,ifix \
         --thr-selic 15,0 --nomes-por-tipo b3,3,5
+    python scripts/medir_safras_fii.py --portao ifix --segmento tipo,cadastral
 """
 from __future__ import annotations
 
@@ -43,7 +47,13 @@ from core.fii_integrated_model import (  # noqa: E402
     IntegratedEligibilityPolicy,
     apply_integrated_eligibility,
 )
-from core.fii_safras_carteira import PORTOES, VERSAO, medir_safras  # noqa: E402
+from core.fii_safras_carteira import (  # noqa: E402
+    PORTOES,
+    SEGMENTACOES,
+    VERSAO,
+    cobertura_do_segmento,
+    medir_safras,
+)
 from core.fii_validation import (  # noqa: E402
     linhas_pit_na_data,
     preparar_snapshots,
@@ -104,7 +114,9 @@ def coletar(conn) -> dict:
         elegiveis[d.year] = list(eleg)
         contagem[d.year] = {"com_dado": len(linhas), "elegiveis": len(eleg),
                             "candidatos_concessao_ignorados":
-                                len(info.get("concession_candidates") or ())}
+                                len(info.get("concession_candidates") or ()),
+                            "elegiveis_com_segmento_cadastral":
+                                cobertura_do_segmento(eleg)["com_segmento"]}
     cen = _macro_scenarios(conn, datas)
     selic_decisao = {d.year: cen[d.date().isoformat()]["selic"] / 100.0
                      for d in datas if d.date().isoformat() in cen}
@@ -121,11 +133,12 @@ def _enxuto(res: dict) -> dict:
     out["safras"] = [{
         "safra": r["safra"], "contada": r.get("contada"), "caixa": r.get("caixa"),
         "n_elegiveis": r.get("n_elegiveis"), "n_nomes": len(r.get("pesos") or {}),
+        "cobertura_segmento": r.get("cobertura_segmento"),
         "pesos": {k: round(v, 4) for k, v in (r.get("pesos") or {}).items()},
-        "aprovados": [g["tipo"] for g in r.get("segmentos", []) if g["aprovado"]],
-        "reprovados": {g["tipo"]: g["motivo"] for g in r.get("segmentos", [])
+        "aprovados": [g["segmento"] for g in r.get("segmentos", []) if g["aprovado"]],
+        "reprovados": {g["segmento"]: g["motivo"] for g in r.get("segmentos", [])
                        if not g["aprovado"]},
-        "margens_pct": {g["tipo"]: {k: (None if g.get(f"margem_{k}_pct") is None
+        "margens_pct": {g["segmento"]: {k: (None if g.get(f"margem_{k}_pct") is None
                                         else round(float(g[f"margem_{k}_pct"]), 2))
                                     for k in ("selic", "selic_liquida", "ifix")}
                         for g in r.get("segmentos", [])},
@@ -142,19 +155,30 @@ def _lista(texto: str) -> list[str]:
 
 
 def variantes(portoes: str, thr_selic: str, thr_ifix: str,
-              nomes_por_tipo: str) -> list[tuple[str, dict]]:
-    """(rótulo, params) de cada combinação; o limiar acompanha o portão."""
+              nomes_por_tipo: str, segmento: str = "tipo") -> list[tuple[str, dict]]:
+    """(rótulo, params) de cada combinação; o limiar acompanha o portão.
+
+    Com ``segmento`` só ``tipo`` (o default), o rótulo é o da v1.1.0.
+    """
     nomes = [None if n.lower() == "b3" else int(n) for n in _lista(nomes_por_tipo)]
+    segmentos = _lista(segmento)
+    for seg in segmentos:
+        if seg not in SEGMENTACOES:
+            raise SystemExit(f"--segmento desconhecido: {seg} (use {', '.join(SEGMENTACOES)})")
     out: list[tuple[str, dict]] = []
     for portao in _lista(portoes):
         if portao not in PORTOES:
             raise SystemExit(f"--portao desconhecido: {portao} (use {', '.join(PORTOES)})")
         chave = PORTOES[portao][1]
         limiares = [float(x) for x in _lista(thr_ifix if chave == "thr_ifix" else thr_selic)]
-        for thr, n in itertools.product(limiares, nomes):
+        for thr, n, seg in itertools.product(limiares, nomes, segmentos):
             rotulo = (f"portao={portao}|{chave}={thr:g}|nomes_por_tipo="
                       f"{'b3' if n is None else n}")
-            out.append((rotulo, {"portao": portao, chave: thr, "nomes_por_tipo": n}))
+            params = {"portao": portao, chave: thr, "nomes_por_tipo": n}
+            if seg != "tipo":
+                rotulo += f"|segmento={seg}"
+                params["segmento"] = seg
+            out.append((rotulo, params))
     return out
 
 
@@ -168,9 +192,12 @@ def main() -> int:
                     help="margem mínima sobre o IFIX (%%), lista separada por vírgula")
     ap.add_argument("--nomes-por-tipo", default="b3",
                     help="b3 (líder + maior participação) ou N fundos por tipo (lista)")
+    ap.add_argument("--segmento", default="tipo",
+                    help="grupo da carteira: tipo, cadastral (lista)")
     ap.add_argument("--gravar", action="store_true")
     args = ap.parse_args()
-    grade = variantes(args.portao, args.thr_selic, args.thr_ifix, args.nomes_por_tipo)
+    grade = variantes(args.portao, args.thr_selic, args.thr_ifix, args.nomes_por_tipo,
+                      args.segmento)
     engine = create_engine(
         _warehouse_url().replace("postgresql://", "postgresql+psycopg2://"))
     try:

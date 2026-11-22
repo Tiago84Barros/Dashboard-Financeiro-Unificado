@@ -521,3 +521,99 @@ def test_grade_do_script_casa_limiar_com_portao():
     assert variantes("selic", "15", "0", "b3") == [
         ("portao=selic|thr_selic=15|nomes_por_tipo=b3",
          {"portao": "selic", "thr_selic": 15.0, "nomes_por_tipo": None})]
+
+
+# ── segmento cadastral (v1.2.0) ────────────────────────────────────────────
+
+
+def test_chave_do_segmento_parte_o_tipo_e_cai_no_tipo_sem_segmento():
+    assert fsc.chave_do_segmento({"tipo": "tijolo", "segment": "Logística"}) == "tijolo"
+    ch = fsc.chave_do_segmento
+    assert ch({"tipo": "Tijolo", "segment": "Logística"}, "cadastral") == "tijolo/logistica"
+    # o cadastro escreve o mesmo rótulo de mais de um jeito
+    assert ch({"tipo": "tijolo", "segment": "LOGISTICA"}, "cadastral") == "tijolo/logistica"
+    assert ch({"tipo": "tijolo", "segment": "Lajes Corporativas"},
+              "cadastral") == "tijolo/lajes corporativas"
+    # sem segmento informativo (a ingestão descarta "Híbrido" etc.): o tipo
+    assert ch({"tipo": "papel", "segment": None}, "cadastral") == "papel"
+    assert ch({"tipo": "papel", "segment": "  "}, "cadastral") == "papel"
+    assert ch({"tipo": "acao", "segment": "Logística"}, "cadastral") is None
+    with pytest.raises(ValueError):
+        ch({"tipo": "tijolo"}, "setor")
+
+
+def _com_segmento(eleg, rotulos):
+    """Copia o universo e põe o segmento cadastral pelo índice do fundo."""
+    return {a: [{**r, "segment": rotulos(r["ticker"])} for r in linhas]
+            for a, linhas in eleg.items()}
+
+
+def test_cadastral_sem_nenhum_segmento_e_identico_ao_tipo():
+    ret, eleg = _universo()
+    kw = dict(selic_decisao={a: 0.10 for a in eleg}, selic_mensal=_selic())
+    a = fsc.medir_safras(eleg, ret, None, params={"thr_selic": 0.0}, **kw)
+    b = fsc.medir_safras(_com_segmento(eleg, lambda tk: None), ret, None,
+                         params={"thr_selic": 0.0, "segmento": "cadastral"}, **kw)
+    for ra, rb in zip(a["safras"], b["safras"]):
+        assert ra["pesos"] == pytest.approx(rb["pesos"])
+        assert ra.get("liquido") == rb.get("liquido")
+        assert [g["segmento"] for g in ra["segmentos"]] == [g["segmento"] for g in rb["segmentos"]]
+    assert a["resumo"] == b["resumo"]
+
+
+def test_cadastral_parte_o_tipo_pelo_segmento_e_conta_a_cobertura():
+    ret, eleg = _universo(n_por_tipo=10)
+    # tijolo: metade logística (rótulo escrito de dois jeitos), metade shoppings;
+    # papel sem segmento -- fica no grupo do tipo.
+    def rotulo(tk):
+        if not tk.startswith("TIJ"):
+            return None
+        i = int(tk[3:5])
+        return ("Logística" if i % 2 else "LOGISTICA") if i < 5 else "Shoppings"
+    seg = _com_segmento(eleg, rotulo)
+    out = fsc.medir_safras(seg, ret, None, selic_decisao={a: 0.10 for a in eleg},
+                           selic_mensal=_selic(),
+                           params={"thr_selic": 0.0, "segmento": "cadastral",
+                                   "nomes_por_tipo": 4})
+    grupos = {g["segmento"] for r in out["safras"] for g in r["segmentos"]}
+    assert grupos == {"tijolo/logistica", "tijolo/shoppings", "papel"}
+    for r in out["safras"]:
+        assert r["cobertura_segmento"] == {"com_segmento": 10, "elegiveis": 20}
+        for g in r["segmentos"]:
+            assert g["tipo"] == g["segmento"].partition("/")[0]
+            membros = {f"TIJ{i:02d}11" for i in range(5)} if g["segmento"] == "tijolo/logistica" \
+                else {f"TIJ{i:02d}11" for i in range(5, 10)} if g["segmento"] == "tijolo/shoppings" \
+                else {f"PAP{i:02d}11" for i in range(10)}
+            assert set(g["selecionados"]) <= membros and g["n_universo"] == len(membros)
+
+
+def test_segmento_invalido_levanta():
+    ret, eleg = _universo()
+    with pytest.raises(ValueError):
+        fsc.medir_safras(eleg, ret, None, selic_decisao={}, params={"segmento": "setor"})
+
+
+def test_grade_do_script_mede_o_segmento_cadastral():
+    from scripts.medir_safras_fii import variantes
+
+    grade = dict(variantes("ifix", "15", "0", "b3", "tipo,cadastral"))
+    assert grade == {
+        "portao=ifix|thr_ifix=0|nomes_por_tipo=b3":
+            {"portao": "ifix", "thr_ifix": 0.0, "nomes_por_tipo": None},
+        "portao=ifix|thr_ifix=0|nomes_por_tipo=b3|segmento=cadastral":
+            {"portao": "ifix", "thr_ifix": 0.0, "nomes_por_tipo": None,
+             "segmento": "cadastral"},
+    }
+    with pytest.raises(SystemExit):
+        variantes("selic", "15", "0", "b3", "setor")
+
+
+def test_linha_do_pit_leva_o_segmento_cadastral_ate_a_carteira():
+    # O PIT põe o segmento do mensal na linha (`apply_exposures`) e o score
+    # preserva a linha; `linhas_pit_na_data` a devolve -- a chave lê `segment`.
+    from core.fii_lookthrough import apply_exposures
+
+    row = apply_exposures({"ticker": "LOG11", "tipo": "tijolo"}, [
+        {"exposure_type": "segment", "exposure_name": "Logística", "exposure_weight": 1.0}])
+    assert row["segment"] == "Logística"
+    assert fsc.chave_do_segmento(row, "cadastral") == "tijolo/logistica"
