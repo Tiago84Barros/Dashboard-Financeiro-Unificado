@@ -1,6 +1,6 @@
 # Carteira de FIIs em safras anuais (estrutura da Empresas B3)
 
-Versão `fii-safras-1.0.0` — `core/fii_safras_carteira.py`, medida por
+Versão `fii-safras-1.1.0` — `core/fii_safras_carteira.py`, medida por
 `scripts/medir_safras_fii.py` no armazém local. Ainda não alimenta nenhuma
 tela: é a medição que decide se a estrutura merece substituir o otimizador
 mensal da Seleção de FIIs.
@@ -26,9 +26,11 @@ mensal da Seleção de FIIs.
    teste de seleção (estratégia − Pesos Iguais, janela de 2 anos) não pode
    ser CONTRA; liderança no máximo 5 anos atrás. Sem Selic observável em
    algum mês do DCA, o tipo reprova ("Selic ausente no período do portão"):
-   não há taxa suposta.
+   não há taxa suposta. A referência da margem é o parâmetro `portao`
+   (`aprova_fii`), ver "Adaptações ao contexto FII".
 6. **Seleção por tipo aprovado:** líder + maior participação no DCA
-   (`selecao_do_segmento`), com a regra de recência.
+   (`selecao_do_segmento`), com a regra de recência; ou os N primeiros do
+   score, com `nomes_por_tipo` (`selecao_fii`).
 7. **Montagem:** orçamento igual por tipo aprovado, cap 0,25
    (`montar_carteira`). Menos de 4 nomes → inviável.
 8. **Regra D1 (`itens_da_cadeia`):** depois da primeira safra que respondeu,
@@ -50,6 +52,45 @@ mensal da Seleção de FIIs.
     e não entra na média. Safra incompleta é contabilizada e não entra na
     média.
 
+## Adaptações ao contexto FII (v1.1.0)
+
+O porte copia o algoritmo de decisão da B3, não os números dela. Cada
+adaptação é um parâmetro; o default é a regra da B3, para a medição comparar
+as duas no mesmo armazém (`scripts/medir_safras_fii.py`, que mede a grade
+inteira das opções).
+
+| Parâmetro | Valores | O que muda |
+|---|---|---|
+| `portao` | `selic` (default) | margem `thr_selic` sobre o DCA na Selic bruta — a B3 |
+| | `selic_liquida` | margem `thr_selic` sobre o DCA na Selic depois de `ir_renda_fixa` (15%) sobre o ganho |
+| | `ifix` | margem `thr_ifix` (default 0) sobre o DCA no IFIX oficial, nos mesmos meses |
+| `nomes_por_tipo` | `None` (default) | líder + maior participação, até 2 nomes por tipo — a B3 |
+| | N ≥ 1 | os N primeiros do score ajustado do tipo; cap do tipo `max(cap, 1/N)` |
+
+Por que cada uma:
+
+- **Selic líquida.** O provento do FII é isento para a pessoa física e é
+  quase todo o retorno do fundo; a Selic paga IR. Comparar com a Selic bruta
+  pune o FII por um imposto que ele não paga. A alíquota de 15% é a menor da
+  tabela regressiva: dá a Selic líquida mais alta, o portão mais exigente
+  dessa variante. O DCA da estratégia continua bruto dos 20% sobre ganho de
+  capital (o portão só tem o retorno total), o que favorece o FII aqui.
+- **IFIX.** É o que o investidor compraria no lugar da carteira, e é o
+  benchmark do resultado. O IFIX precisa existir em cada mês do DCA; faltando
+  um, o tipo reprova ("IFIX ausente no período do portão"). Só o IFIX
+  oficial da B3 decide: quando o armazém não o tem e o benchmark cai no
+  XFIX11 ou na mediana do universo, o tipo reprova com "IFIX oficial ausente
+  (fonte: ...)". O substituto continua como referência do resultado, com o
+  nome no campo `benchmark`, mas não escolhe carteira.
+- **N por tipo.** A regra de 2 nomes é da B3, onde o segmento CVM tem 2 ou
+  3 empresas. Tipo de FII tem dezenas de elegíveis; com 2 nomes por tipo e
+  cap 0,25, um único tipo aprovado não fecha a carteira e a safra vai para
+  caixa. Com N ≥ 4, um tipo basta. O cap da carteira (0,25) continua valendo
+  na montagem, sobre todos os tipos juntos.
+
+Nenhum valor novo foi escolhido sem medir: o default fica na regra da B3 até
+a medição no armazém mostrar qual variante sustenta excesso sobre o IFIX.
+
 ## O que da B3 ficou de fora
 
 - Resiliência ROIC − Selic: FII não tem ROIC.
@@ -60,11 +101,14 @@ mensal da Seleção de FIIs.
 
 ## Limites conhecidos
 
-- Cada tipo aprovado contribui no máximo 2 nomes; com cap 0,25 são precisos
-  ao menos 2 tipos aprovados, senão a safra vai para caixa.
+- No default, cada tipo aprovado contribui no máximo 2 nomes; com cap 0,25
+  são precisos ao menos 2 tipos aprovados, senão a safra vai para caixa
+  (`nomes_por_tipo` resolve, se a medição sustentar).
 - O portão de 15% sobre a Selic é o da B3; FII rende perto do CDI no longo
   prazo, então é o critério que mais reprova. O script mede a sensibilidade
-  (`--thr-selic 15,5,0`).
+  (`--thr-selic 15,5,0`) e as outras referências (`--portao`).
+- O portão IFIX e o resultado usam o mesmo índice: quem passa no portão
+  ganhou do IFIX no passado, o que não garante ganhar na safra seguinte.
 - Poucas safras (uma por ano): o intervalo de confiança é largo. A leitura
   (`leitura_honesta`) diz quando ele não distingue a carteira de comprar o IFIX.
 - O giro de saída para caixa segue a convenção de `portfolio_turnover`
