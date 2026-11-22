@@ -57,6 +57,68 @@ def _tirar_piores_pela_nota(universo, scores, corte):
     return [t for t in universo if t not in set(saem)]
 
 
+def medir_escolha(por_safra, escolha, *, precos, selic_macro, taxa, selic_mensal,
+                  cost_cfg, comeca_em) -> dict:
+    """Carteira de pesos iguais em ``escolha(safra)``, medida contra pesos iguais.
+
+    Ponto único da régua das carteiras "de regra" da B3 (nota + fatores, o
+    corte pela nota e as estratégias fundamentalistas de
+    `scripts/medir_estrategias_fundamentalistas_b3.py`): o retorno de cada
+    safra é o de `core.b3_safras.retorno_da_safra`, o giro de abril paga o
+    custo de `oos.simular_custos` numa cadeia contínua desde ``comeca_em``, e
+    safra sem nome vira caixa à Selic (`oos.itens_da_cadeia`).
+    """
+    import core.b3_oos_carteira as oos
+    from core.b3_safras import SafraCarteira, retorno_da_safra
+    from core.b3_vigencia import ano_base_do_score, janela_de_vigencia
+
+    linhas = []
+    for p in por_safra:
+        safra, universo, saidas = p["safra"], p["universo"], p["saidas"]
+        fica = escolha(p)
+        pesos = {t: 1.0 / len(fica) for t in fica} if fica else {}
+        inicio, fim = janela_de_vigencia(safra)
+        base = retorno_da_safra(
+            SafraCarteira(safra=safra, ano_base=ano_base_do_score(safra), inicio=inicio,
+                          fim=fim, completa=True, pesos=pesos, universo=tuple(universo),
+                          segmentos=1, saidas=saidas),
+            precos, selic_por_ano=selic_macro, taxa_selic_aa=taxa,
+            selic_mensal=selic_mensal)
+        rets = oos.retornos_por_ticker(list(pesos), universo, precos, safra, saidas)
+        linhas.append({"safra": safra, "pesos": pesos, "retornos": rets,
+                       "inviavel_no_cap": False, "mensuravel": bool(base["mensuravel"]),
+                       "selic": base["retorno_selic"], "ew": base["retorno_equal_weight"],
+                       "n_universo": len(universo), "n_carteira": len(pesos)})
+    cadeia = oos.simular_custos(oos.itens_da_cadeia(linhas, comeca_em=comeca_em),
+                                cost_cfg)
+    tabela = []
+    for r, c in zip(linhas, cadeia):
+        if c.get("medida") and r["ew"] is not None:
+            tabela.append({
+                "safra": r["safra"],
+                "n_universo": r["n_universo"], "n_carteira": r["n_carteira"],
+                "liquido": c["liquido"], "bruto": c["bruto"],
+                "liquido_com_ir": c["liquido_com_ir"],
+                "equal_weight": r["ew"],
+                "excesso_ew": c["liquido"] - r["ew"],
+                "excesso_ew_bruto": c["bruto"] - r["ew"],
+                "excesso_ew_com_ir": c["liquido_com_ir"] - r["ew"],
+                "giro": c["giro"], "custo_pct": c["custo_pct"],
+            })
+    resumo = oos.resumir(tabela, "excesso_ew")
+    giros = [t["giro"] for t in tabela[1:]]
+    return {
+        "vs_equal_weight": resumo,
+        "bruto_vs_equal_weight": oos.resumir(tabela, "excesso_ew_bruto"),
+        "com_ir_vs_equal_weight": oos.resumir(tabela, "excesso_ew_com_ir"),
+        "giro_medio_anual": (sum(giros) / len(giros)) if giros else None,
+        "custo_medio_anual": (sum(t["custo_pct"] for t in tabela[1:]) / len(giros))
+        if giros else None,
+        "leitura": oos.leitura_honesta(resumo),
+        "safras": tabela,
+    }
+
+
 def preparar(cache_dir: Path | None) -> dict:
     """Armazém local, LLM desligado e a rodada da aba no perfil padrão.
 
@@ -136,8 +198,7 @@ def main() -> int:
     ibov, cost_cfg, hoje, nome = prep["ibov"], prep["cost_cfg"], prep["hoje"], prep["perfil"]
     from core.b3_methodology import SCORE_VERSION
     from core.b3_portfolio_presets import VERSION as PRESETS_VERSION
-    from core.b3_safras import SafraCarteira, retorno_da_safra
-    from core.b3_vigencia import ano_base_do_score, janela_de_vigencia
+    from core.b3_vigencia import janela_de_vigencia
     from scripts.medir_vantagem_oos import _fonte_efetiva_b3
 
     # Régua oficial da carteira concentrada: controle e início da cadeia.
@@ -168,51 +229,9 @@ def main() -> int:
             precos_mes=pm)
 
     def medir(escolha):
-        linhas = []
-        for p in por_safra:
-            safra, universo, saidas = p["safra"], p["universo"], p["saidas"]
-            fica = escolha(p)
-            pesos = {t: 1.0 / len(fica) for t in fica} if fica else {}
-            inicio, fim = janela_de_vigencia(safra)
-            base = retorno_da_safra(
-                SafraCarteira(safra=safra, ano_base=ano_base_do_score(safra), inicio=inicio,
-                              fim=fim, completa=True, pesos=pesos, universo=tuple(universo),
-                              segmentos=1, saidas=saidas),
-                precos, selic_por_ano=selic_macro, taxa_selic_aa=taxa,
-                selic_mensal=selic_mensal)
-            rets = oos.retornos_por_ticker(list(pesos), universo, precos, safra, saidas)
-            linhas.append({"safra": safra, "pesos": pesos, "retornos": rets,
-                           "inviavel_no_cap": False, "mensuravel": bool(base["mensuravel"]),
-                           "selic": base["retorno_selic"], "ew": base["retorno_equal_weight"],
-                           "n_universo": len(universo), "n_carteira": len(pesos)})
-        cadeia = oos.simular_custos(oos.itens_da_cadeia(linhas, comeca_em=comeca_em),
-                                    cost_cfg)
-        tabela = []
-        for r, c in zip(linhas, cadeia):
-            if c.get("medida") and r["ew"] is not None:
-                tabela.append({
-                    "safra": r["safra"],
-                    "n_universo": r["n_universo"], "n_carteira": r["n_carteira"],
-                    "liquido": c["liquido"], "bruto": c["bruto"],
-                    "liquido_com_ir": c["liquido_com_ir"],
-                    "equal_weight": r["ew"],
-                    "excesso_ew": c["liquido"] - r["ew"],
-                    "excesso_ew_bruto": c["bruto"] - r["ew"],
-                    "excesso_ew_com_ir": c["liquido_com_ir"] - r["ew"],
-                    "giro": c["giro"], "custo_pct": c["custo_pct"],
-                })
-        resumo = oos.resumir(tabela, "excesso_ew")
-        giros = [t["giro"] for t in tabela[1:]]
-        return {
-            "vs_equal_weight": resumo,
-            "bruto_vs_equal_weight": oos.resumir(tabela, "excesso_ew_bruto"),
-            "com_ir_vs_equal_weight": oos.resumir(tabela, "excesso_ew_com_ir"),
-            "giro_medio_anual": (sum(giros) / len(giros)) if giros else None,
-            "custo_medio_anual": (sum(t["custo_pct"] for t in tabela[1:]) / len(giros))
-            if giros else None,
-            "leitura": oos.leitura_honesta(resumo),
-            "safras": tabela,
-        }
+        return medir_escolha(por_safra, escolha, precos=precos, selic_macro=selic_macro,
+                             taxa=taxa, selic_mensal=selic_mensal, cost_cfg=cost_cfg,
+                             comeca_em=comeca_em)
 
     principal = medir(lambda p: list(formadas[p["safra"]]["pesos"]))
     so_nota = medir(lambda p: _tirar_piores_pela_nota(

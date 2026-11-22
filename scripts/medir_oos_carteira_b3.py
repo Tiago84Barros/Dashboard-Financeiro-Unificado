@@ -179,6 +179,26 @@ def _rodar_perfil(nome: str, valores: dict, timeout: int = 1800):
     return resultados, precos, params, decisao
 
 
+def _aceita_da_safra(safra: int):
+    """Regra de vintage do motor na decisão de abril/``safra``.
+
+    Ponto único: o retrato do piso e da guarda (`_portoes_da_safra`) e as
+    carteiras fundamentalistas (`scripts/medir_estrategias_fundamentalistas_b3.py`)
+    recortam o histórico com a mesma regra.
+    """
+    import pandas as pd
+
+    import views.empresas_b3 as emp
+    from core.b3_vigencia import REBAL_MONTH
+
+    decisao_em = pd.Timestamp(int(safra), int(REBAL_MONTH), 1)
+
+    def aceita(recorte):
+        return emp._classificar_disponibilidade_pit(recorte, decisao_em)[1]
+
+    return aceita
+
+
 def _portoes_da_safra(view, decisao: dict, universo: list[str], safra: int,
                       series_pl: dict):
     """O retrato e a guarda de entrada que a decisão da safra teria lido.
@@ -188,18 +208,11 @@ def _portoes_da_safra(view, decisao: dict, universo: list[str], safra: int,
     N-1 pela regra de vintage do motor de score e a contagem de exercícios
     sem os posteriores. Devolve (retrato enriquecido, guarda).
     """
-    import pandas as pd
-
-    import views.empresas_b3 as emp
     from core.b3_retrato_pit import anos_hist_ate, historico_ate, quadro_decisao_pit
-    from core.b3_vigencia import REBAL_MONTH, ano_base_do_score
+    from core.b3_vigencia import ano_base_do_score
 
     ano_max = ano_base_do_score(safra)
-    decisao_em = pd.Timestamp(int(safra), int(REBAL_MONTH), 1)
-
-    def aceita(recorte):
-        return emp._classificar_disponibilidade_pit(recorte, decisao_em)[1]
-
+    aceita = _aceita_da_safra(safra)
     alvos = set(universo)
     hist = {tk: df for tk, df in (decisao["hist_batch"] or {}).items() if tk in alvos}
     df_pit = quadro_decisao_pit(hist, series_pl, ano_max, aceita)
@@ -248,6 +261,8 @@ def _segmentos_por_safra(resultados, precos, params, decisao, cost_cfg, hoje):
     # sua em N-1 e só então aplica o teto de anos do loader.
     series_pl = load_pl_lucro_anual_batch(
         tuple(sorted(decisao["hist_batch"])), max_anos=10 * MAX_ANOS_PL)
+    # Exposta para quem mede outra regra sobre a mesma rodada (não vai ao JSON).
+    contexto["series_pl"] = series_pl
 
     saida = []
     for safra in safras:
