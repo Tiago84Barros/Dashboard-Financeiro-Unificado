@@ -639,7 +639,7 @@ execução é o que cobre o caso dependente de dado.
 
 ---
 
-## 18. Filtro nota + fatores na rota líder (22/11/2026, em teste)
+## 18. Filtro nota + fatores na rota líder (22/11/2026, medido: fica opcional)
 
 ### Que pergunta ele responde
 
@@ -683,6 +683,16 @@ aba roda com outro.
 média da diferença pareada líquida for > 0 **e** o IC 95% excluir o zero.
 Senão fica opcional e desligado. A regra não é ajustada depois do resultado.
 
+### Resultado (medido em 22/11/2026, armazém local, perfil Equilibrado, 9 safras)
+
+Diferença pareada líquida, com filtro menos sem filtro: média −0,3 pp ao ano,
+IC 95% de −2,2 a +1,1 pp; com IR, −0,3 pp (−2,1 a +1,1 pp). Negativa em 3 das
+9 safras (2019, 2023 e 2024). Pela regra registrada antes de medir, a média
+não passa de zero: **o filtro fica opcional e desligado**, como já era o
+padrão. Não ganhou o direito de ser o padrão, e também não se provou que
+piora a carteira. Nada muda na tela; a caixa continua desmarcada.
+Números em `data/oos_lider_filtro_nota_fatores_b3.json`.
+
 ### O que a medição não cobre
 
 - o portão de LLM (Inteligência e parecer da IA) não roda na medição — vale
@@ -695,7 +705,7 @@ Com nove safras o efeito tem de ser grande para o IC sair do zero. Um "não
 provado" é o resultado mais provável e não quer dizer que o filtro piora a
 carteira: quer dizer que ele não ganhou o direito de ser o padrão.
 
-## 19. Quatro carteiras de regra fundamentalista (22/11/2026, a medir)
+## 19. Quatro carteiras de regra fundamentalista (22/11/2026, medido: duas candidatas)
 
 ### Que pergunta elas respondem
 
@@ -740,6 +750,36 @@ carteira padrão se, líquido do giro, (a) o excesso médio sobre pesos iguais f
 (c) a diferença pareada contra a carteira padrão tiver média > 0. Com quatro
 braços, a chance de um falso positivo sobe para perto de 1 em 5; por isso (a)
 sozinho não basta. Nenhum passando, nada muda na tela.
+
+### Resultado (medido em 22/11/2026, armazém local, perfil Equilibrado, 9 safras)
+
+Excesso médio líquido sobre pesos iguais, por ano. Os três testes (a), (b) e
+(c) são os da regra acima, aplicados sem mudança:
+
+| Braço | (a) excesso | piso do IC 95% | (b) sem a melhor safra | (c) contra a padrão | Veredito |
+|---|---|---|---|---|---|
+| Rota de valor | +9,9 pp | +3,6 pp | +6,3 pp | +7,0 pp | candidata |
+| Fórmula mágica | +5,6 pp | +1,3 pp | +4,4 pp | +2,7 pp | candidata |
+| Qualidade constante | +2,7 pp | −2,2 pp | +1,2 pp | −0,2 pp | fora (a, c) |
+| Qualidade por 3 anos | +1,0 pp | −4,3 pp | −0,6 pp | −1,9 pp | fora (a, b, c) |
+
+Leitura com cautela:
+
+- "Candidata" é só o direito de ir à próxima etapa. **Nada vira padrão por
+  este resultado** e nada muda na tela: estas carteiras ainda não existem no
+  app, só no módulo e na medição.
+- Com quatro braços, a chance de ao menos um falso positivo é de perto de 1
+  em 5. Passaram dois, e o IC da fórmula mágica (+1,3 a +10,0 pp) é estreito
+  de um lado só: nove safras não separam sorte de regra com folga.
+- A rota de valor tem o melhor número, mas é a que mais depende de poucas
+  safras; o teste (b) retira só a melhor, não as duas melhores.
+- O próximo passo, se houver, é uma rota nova na tela (opcional, com aviso de
+  "candidata, nove safras") e uma segunda janela de medição, não a troca da
+  carteira padrão.
+
+Números em `data/oos_estrategias_fundamentalistas_b3.json`. A primeira
+rodada leu por engano o Supabase (a `SUPABASE_DB_URL` do `.env` vence a
+`DATABASE_URL`); refeita no armazém local, deu os mesmos números.
 
 ### O que a medição não cobre
 
