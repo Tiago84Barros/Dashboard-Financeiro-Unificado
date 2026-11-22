@@ -913,3 +913,54 @@ Leitura com cautela:
   Nada muda na tela nem na carteira padrão. Próximas perguntas, se o usuário
   quiser: outra janela de safras, filtro de liquidez e capital mínimo por lote.
 
+
+## 21. A IA lê o que os números não mostram? (22/11/2026, desenho; etapa 1 em medição)
+
+### Que pergunta responde
+
+As regras de "qualidade" (§19) tentam adivinhar o futuro com números do
+passado e falharam. O que um investidor como Buffett acrescenta é julgamento
+sobre a vantagem competitiva duradoura, a gestão e a repetição do lucro.
+Pergunta: **uma IA lendo o que era público em março/N dá notas que preveem o
+retorno dos 12 meses seguintes, além do que a Rota de valor já capta?**
+
+### O problema: vazamento do futuro
+
+A IA foi treinada com dados até 2026. Em 2019, ela pode "lembrar" o que
+aconteceu depois, e a nota passa a ser memória, não leitura. O teste só vale
+se isso for controlado.
+
+### Três etapas
+
+1. **Teste de vazamento (primeiro).** Dossiê sem nome, ticker nem data
+   (anos relativos a N−1) de uma amostra de empresa-safra. Pergunta à IA qual
+   empresa e qual ano. **Acerto > 20% invalida a etapa 2.**
+   `scripts/testar_vazamento_ia_b3.py`.
+2. **Retroativa, às cegas.** Para cada empresa e safra 2017–2025, a IA lê só o
+   público até março/N, anonimizado, e dá três notas de 1 a 5 (vantagem
+   competitiva, gestão, repetição do lucro). Prompt fixado antes de rodar,
+   3 rodadas para medir a estabilidade.
+   - **Medida A (~900 casos):** correlação de postos entre a nota e o retorno
+     dos 12 meses seguintes.
+   - **Medida B (mesma régua da §19):** Rota de valor só com nota ≥ 4 contra a
+     Rota de valor inteira, pareado safra a safra.
+3. **Ao vivo.** Notas congeladas em abril/2027, medidas em março/2028. É a
+   única etapa sem vazamento possível.
+
+### Regra de decisão, registrada antes de medir
+
+A IA só vira "filtro opcional" (nunca padrão) se: (a) a Medida A for positiva
+com piso do IC 95% acima de zero; (b) a Medida B tiver diferença pareada média
+> 0, também sem a melhor safra; (c) o vazamento da etapa 1 for ≤ 20%. Se (c)
+falhar, o resultado retroativo é descartado, por mais bonito que seja. Nada
+muda na tela por esta seção.
+
+### Limites já conhecidos
+
+- A etapa 1 desta primeira rodada usa dossiê só de números (retrato PIT,
+  histórico de ROIC e lucro). O texto dos relatórios entra antes da etapa 2.
+  Dossiê só de números tende a **subestimar** o vazamento: se já vaza assim, vaza
+  mais com texto.
+- Anonimizar o texto pode tirar contexto que a IA usaria: pode subestimar o
+  valor da IA.
+- Nove safras são pouco para a Medida B; a Medida A existe por isso.
