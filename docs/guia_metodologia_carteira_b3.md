@@ -964,3 +964,23 @@ muda na tela por esta seção.
 - Anonimizar o texto pode tirar contexto que a IA usaria: pode subestimar o
   valor da IA.
 - Nove safras são pouco para a Medida B; a Medida A existe por isso.
+
+### Resultado da etapa 1 (22/11/2026): inconclusivo, o modelo foi fraco
+
+Amostra de 60 empresa-safras (semente fixa), dossiê só de números.
+
+- Acerto do ticker: **6,7%** (4 de 60); ticker e ano: 1,7%. Abaixo do limite de
+  20%, mas **a conclusão não vale**.
+- **Quem respondeu foi um modelo gratuito do OpenRouter (Nemotron)**, não o
+  Claude nem o GPT: a conta da Anthropic estava sem crédito e a cadeia do app
+  passou ao próximo elo. Um modelo pequeno reconhece menos empresas do que um
+  grande. Se o modelo que daria as notas na etapa 2 for outro, o vazamento
+  dele é outro.
+- 11 das 60 respostas não vieram em JSON válido, o que também sugere um modelo
+  fraco para esta tarefa.
+- Os quatro acertos foram em nomes grandes e conhecidos (ROMI3, VIVT3, ITUB4,
+  SANB11).
+
+Pela regra, **a etapa 2 não pode começar** até repetir a etapa 1 com o mesmo
+modelo que daria as notas, e com crédito para isso. Números em
+`data/oos_vazamento_ia_b3.json`.
