@@ -705,7 +705,7 @@ Com nove safras o efeito tem de ser grande para o IC sair do zero. Um "não
 provado" é o resultado mais provável e não quer dizer que o filtro piora a
 carteira: quer dizer que ele não ganhou o direito de ser o padrão.
 
-## 19. Quatro carteiras de regra fundamentalista (22/11/2026, medido: duas candidatas)
+## 19. Cinco carteiras de regra fundamentalista (22/11/2026, quatro medidas: duas candidatas; a quinta a medir)
 
 ### Que pergunta elas respondem
 
@@ -732,6 +732,14 @@ Fixadas antes de medir. Pesos iguais entre os escolhidos, formação em abril.
 4. **Qualidade segurada por 3 anos** — a regra 3 refeita na primeira safra e a
    cada três. No meio só sai quem quebrou a solvência ou deixou o universo.
    Carteira que zerou é refeita na safra seguinte.
+5. **Líder segurado até degradar** — a premissa original do usuário: não
+   vender a líder do ano anterior sem que os fundamentos piorem. A carteira da
+   safra é a carteira padrão da safra (os líderes, Equilibrado sem portão)
+   **mais** os nomes das safras anteriores que não degradaram. Degradar é uma
+   de três coisas: deixar o universo, falhar na trava de solvência da rota de
+   valor ou ter prejuízo no último exercício (lucro de N-1 ≤ 0). Dado ausente
+   não é degradação. O JSON guarda, por safra, os líderes, a carteira e quem
+   saiu e por quê.
 
 ### Como se mede (`scripts/medir_estrategias_fundamentalistas_b3.py`)
 
@@ -747,13 +755,14 @@ a carteira padrão (Equilibrado, sem portão). Grava
 **Regra de decisão, registrada antes de medir:** um braço só vira candidato a
 carteira padrão se, líquido do giro, (a) o excesso médio sobre pesos iguais for
 > 0 com IC 95% acima de zero, (b) a média sem a melhor safra continuar > 0 e
-(c) a diferença pareada contra a carteira padrão tiver média > 0. Com quatro
-braços, a chance de um falso positivo sobe para perto de 1 em 5; por isso (a)
-sozinho não basta. Nenhum passando, nada muda na tela.
+(c) a diferença pareada contra a carteira padrão tiver média > 0. Com cinco
+braços, a chance de um falso positivo sobe para perto de 1 em 4; por isso (a)
+sozinho não basta. Nenhum passando, nada muda na tela. O braço 5 entrou depois
+dos quatro primeiros, mas antes de qualquer número medido.
 
-### Resultado (medido em 22/11/2026, armazém local, perfil Equilibrado, 9 safras)
+### Resultado das quatro primeiras (medido em 22/11/2026, armazém local, perfil Equilibrado, 9 safras)
 
-Excesso médio líquido sobre pesos iguais, por ano. Os três testes (a), (b) e
+A quinta carteira (líder segurado) entrou depois e **ainda não foi medida**; ao medi-la, o risco de falso positivo sobe de novo. Excesso médio líquido sobre pesos iguais, por ano. Os três testes (a), (b) e
 (c) são os da regra acima, aplicados sem mudança:
 
 | Braço | (a) excesso | piso do IC 95% | (b) sem a melhor safra | (c) contra a padrão | Veredito |
@@ -787,5 +796,32 @@ rodada leu por engano o Supabase (a `SUPABASE_DB_URL` do `.env` vence a
 - o lucro da série de PL é cortado pelo ano do exercício, sem data de
   publicação;
 - guarda de entrada, piso de qualidade, tetos do perfil e portão de LLM não
-  filtram estas carteiras;
+  filtram estas carteiras (no braço 5, os líderes novos já passaram por eles;
+  os segurados, não);
+- no braço 5 os pesos voltam a ser iguais em abril, então o vencedor antigo é
+  aparado todo ano. A tela não faz isso: o histórico dela compra só com o
+  aporte. A carteira também cresce com os anos e, com muitos nomes, fica
+  parecida com pesos iguais no universo;
 - nove safras não separam sorte de regra com folga.
+
+### O desconto de liderança, ligado e desligado (`scripts/medir_decaimento_lideranca_b3.py`)
+
+Na escolha do líder de cada segmento, o score de quem lidera há anos
+consecutivos perde 7% por ano, com teto de 30%
+(`core/pesos_por_score.py::apply_decay_penalty`). O próprio código diz que ele
+existe para "forçar rotação". Isso contraria a premissa do braço 5, e o
+desconto nunca tinha sido medido na B3 (na Seleção de FIIs já é medido, com
+`--decaimento on,off`).
+
+A medição roda a aba duas vezes no perfil padrão: como está e com o desconto
+trocado pela identidade nas duas chamadas (o laço anual e a carteira atual).
+Cada rodada tem o seu pickle em `--cache-dir`. A régua é a de
+`_medir_perfil`, sem mudar nada, e a rodada sem desconto usa o mesmo fim de
+aquecimento do controle. O desconto muda o líder e, com ele, o backtest e a
+aprovação de cada segmento; a diferença mede os dois efeitos juntos, como na
+tela. O JSON traz, por safra, o giro, o custo e o retorno das duas carteiras.
+Grava `data/oos_decaimento_lideranca_b3.json`.
+
+**Regra de decisão, registrada antes de medir:** o desconto sai da B3 só se a
+média da diferença pareada líquida (sem desconto menos com desconto, carteira
+sem portão) for > 0 e o IC 95% excluir o zero. Senão fica como está.
