@@ -304,6 +304,9 @@ def _segmentos_por_safra(resultados, precos, params, decisao, cost_cfg, hoje):
         saida.append({"safra": safra, "segmentos": segmentos, "universo": universo,
                       "saidas": saidas, "n_aprovados": len(aprovados),
                       "motivos": motivos, "exclui": exclui,
+                      # O retrato PIT da safra: os sinais de balanço dos piores
+                      # nomes (core.b3_sinais_piores) leem o mesmo do piso.
+                      "df_pit": df_pit,
                       "piso_reprovados": len(piso_log.get("reprovados", [])),
                       "piso_substituicoes": len(piso_log.get("substituicoes", [])),
                       "vagas_perdidas_piso": vagas_piso,
@@ -327,12 +330,17 @@ def _selic_mensal() -> dict:
     return serie
 
 
-def _medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje, portao=None):
+def _medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje, portao=None,
+                  sinais_piores=False):
     """Mede as variantes de `oos.VARIANTES` e, com ``portao``, a do portão real.
 
     ``portao(segmentos, safra, exclui)`` devolve ``(itens, log)`` no formato de
     ``oos.aplicar_portao_medido``: os vereditos do LLM sobre o dossiê da
     época. Sem ele, só a banda (o comportamento até a 2.1.0).
+
+    ``sinais_piores``: mede também, sobre a carteira sem portão, se algum
+    sinal da data da decisão apontava o pior nome (`core.b3_sinais_piores`);
+    sai em ``"sinais_dos_piores"``.
     """
     import numpy as np
 
@@ -354,6 +362,7 @@ def _medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje, por
     variantes = oos.VARIANTES + ((oos.PORTAO_LLM_MEDIDO,) if portao else ())
 
     linhas_por_variante = {v: [] for v in variantes}
+    linhas_sinais: list = []
     for p in por_safra:
         safra, segmentos = p["safra"], p["segmentos"]
         universo, saidas, motivos = p["universo"], p["saidas"], p["motivos"]
@@ -366,12 +375,27 @@ def _medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje, por
         inicio, fim = janela_de_vigencia(safra)
         # A Selic da vigência não depende dos pesos: é o caixa da safra que
         # não monta (D1), e a banda escolhe o veto já com essa conversão.
-        caixa = retorno_da_safra(
+        medida_caixa = retorno_da_safra(
             SafraCarteira(safra=safra, ano_base=ano_base_do_score(safra),
                           inicio=inicio, fim=fim, completa=True, pesos={},
                           universo=tuple(universo), segmentos=0, saidas=saidas),
             precos, selic_por_ano=selic_macro, taxa_selic_aa=taxa_selic_aa,
-            selic_mensal=selic_mensal)["retorno_selic"]
+            selic_mensal=selic_mensal)
+        caixa = medida_caixa["retorno_selic"]
+        # Safra sem preço nenhum no universo não é mensurável: as variantes a
+        # deixam fora em `itens_da_cadeia`, e os sinais também (senão o
+        # retorno ausente viraria zero inventado). A mensurabilidade só
+        # depende do universo, então a medida do caixa já a responde.
+        if sinais_piores and medida_caixa["mensuravel"]:
+            import core.b3_sinais_piores as sp
+            # Mesmos retornos, segmentos, guarda e caixa da banda: o veto pelo
+            # sinal é mais uma opção dentro dela. Fica fora a safra que só
+            # existe depois do aquecimento (sem segmento, nada a vetar).
+            banda = oos.tickers_da_banda(segmentos, exclui)
+            sinais = sp.sinais_da_carteira(banda, segmentos, precos, p["df_pit"],
+                                           safra, exclui)
+            linhas_sinais.append(sp.medir_safra(safra, segmentos, rets, sinais, **tetos,
+                                                exclui=exclui, caixa=caixa))
         contados: dict[str, float] = {}
         portao_log = None
         for variante in variantes:
@@ -538,12 +562,45 @@ def _medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje, por
                 teto_setor=float(params["teto_setor"]),
                 teto_ciclico=float(params["teto_ciclico"]))),
     }
-    return {
+    medido = {
         "parametros": params,
         "leitura": oos.leitura_honesta(principal),
         "variantes": perfis_var,
         "pesos_do_motor_vs_iguais_mesmos_nomes": mesmos_nomes,
-    }, safras
+    }
+    if sinais_piores:
+        import core.b3_sinais_piores as sp
+        # O aquecimento é o do sem-portão, como nas variantes.
+        medido["sinais_dos_piores"] = sp.resumir_sinais(
+            [r for r in linhas_sinais if r and (comeca_em is None or r["safra"] >= comeca_em)])
+    return medido, safras
+
+
+def _pp(x) -> str:
+    return "  n/d " if x is None else f"{x * 100:+5.1f}"
+
+
+def _ic(r: dict) -> str:
+    lo, hi = r.get("ic95") or [None, None]
+    return "[  n/d ]" if lo is None else f"[{lo * 100:+.1f}; {hi * 100:+.1f}]"
+
+
+def _imprimir_sinais(res: dict) -> None:
+    """O placar dos sinais no console: uma linha por sinal."""
+    print(f"\n  -- sinais dos piores nomes ({res['n_safras']} safras) --", flush=True)
+    print(f"  oraculo (veta o pior, sabendo o futuro): {_pp(res['oraculo_pior']['media'])} pp "
+          f"{_ic(res['oraculo_pior'])}", flush=True)
+    print(f"  veto ao acaso (um nome sorteado):        {_pp(res['veto_ao_acaso']['media'])} pp "
+          f"{_ic(res['veto_ao_acaso'])}", flush=True)
+    print(f"  {'sinal':<18} {'veto pp':>8} {'sobre acaso pp':>15} {'IC95 sobre acaso':>18} "
+          f"{'IC posto':>9} {'acertos':>9}", flush=True)
+    for nome, s in res["sinais"].items():
+        print(f"  {nome:<18} {_pp(s['veto']['media']):>8} {_pp(s['sobre_acaso']['media']):>15} "
+              f"{_ic(s['sobre_acaso']):>18} "
+              f"{'n/d' if s['ic']['media'] is None else format(s['ic']['media'], '+.2f'):>9} "
+              f"{s['acertos']:>3}/{s['acertos_ao_acaso']:.1f}", flush=True)
+    print(f"  IC posto < 0 = o sinal aponta quem rendeu menos. acertos = vezes que "
+          f"apontou o pior / esperado ao acaso.\n  {res['aviso']}", flush=True)
 
 
 def main() -> int:
@@ -566,6 +623,10 @@ def main() -> int:
                     default=ROOT / "data" / "portao_llm_b3_pareceres.json",
                     help="cache dos pareceres da época (reaproveitado entre rodadas)")
     ap.add_argument("--portao-workers", type=int, default=6)
+    ap.add_argument("--sinais-piores", action="store_true",
+                    help="mede se algum sinal da data da decisão apontava o pior nome "
+                         "de cada safra (core.b3_sinais_piores); grava só "
+                         "data/oos_sinais_piores_b3.json, não a medição principal")
     args = ap.parse_args()
     # A lacuna de dado de uma rodada de medição não é lacuna do app.
     os.environ["LACUNAS_DESTINO"] = "desligado"
@@ -650,7 +711,8 @@ def main() -> int:
         resultados, precos, params, decisao = rodadas[nome]
         medido, safras = _medir_perfil(resultados, precos, params, decisao,
                                        ibov, cost_cfg, hoje,
-                                       portao=avaliador)
+                                       portao=avaliador,
+                                       sinais_piores=args.sinais_piores)
         if avaliador is not None:
             medido["portao_llm_medido"] = avaliador.resumo(pares=avaliador.consultados)
         avaliadas.update(safras)
@@ -683,6 +745,32 @@ def main() -> int:
             if comp["safras_alternativa_fora_dos_limites"] or comp["safras_motor_fora_dos_limites"]:
                 print(f"    so safras dentro dos limites: media={dentro['media']} "
                       f"ic95={dentro['ic95']} n={dentro['n_safras']}", flush=True)
+        if "sinais_dos_piores" in medido:
+            _imprimir_sinais(medido["sinais_dos_piores"])
+
+    if args.sinais_piores:
+        import core.b3_sinais_piores as sp
+        saida_sinais = {
+            "versao_sinais": sp.VERSAO_SINAIS,
+            "versao_medicao": oos.VERSAO_MEDICAO,
+            "versao_metodologia": SCORE_VERSION,
+            "versao_presets": PRESETS_VERSION,
+            "medido_em": datetime.now().isoformat(timespec="seconds"),
+            "pergunta": ("algum sinal observável em 31/03 da safra apontava o nome "
+                         "que mais ia perder na carteira sem portão?"),
+            "aviso": sp.AVISO_COMPARACOES,
+            "sinais": [{"nome": s.nome, "direcao": s.direcao, "fonte": s.fonte,
+                        "descricao": s.descricao} for s in sp.SINAIS],
+            "perfis": {nome: perfis[nome]["sinais_dos_piores"] for nome in nomes},
+        }
+        destino = ROOT / "data" / "oos_sinais_piores_b3.json"
+        if args.dry_run:
+            print("\n--dry-run: nada gravado", flush=True)
+        else:
+            destino.write_text(json.dumps(saida_sinais, indent=2, ensure_ascii=False,
+                                          default=str) + "\n", encoding="utf-8")
+            print(f"\ngravado em {destino} (medição principal intocada)", flush=True)
+        return 0
 
     saida = {
         "versao_medicao": oos.VERSAO_MEDICAO,
