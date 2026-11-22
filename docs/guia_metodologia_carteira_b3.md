@@ -832,7 +832,7 @@ Grava `data/oos_decaimento_lideranca_b3.json`.
 média da diferença pareada líquida (sem desconto menos com desconto, carteira
 sem portão) for > 0 e o IC 95% excluir o zero. Senão fica como está.
 
-## 20. Rota de valor enxuta: 10, 15 e 20 ações (22/11/2026, a medir)
+## 20. Rota de valor enxuta: 10, 15 e 20 ações (22/11/2026, medido: nenhum corte passa)
 
 ### Que pergunta responde
 
@@ -882,3 +882,34 @@ Regras adicionais:
 - Cortar em N aumenta a concentração: o risco de um nome ruim pesa mais
   (10 ações = 10% cada).
 - Liquidez e lote mínimo não entram nesta medição.
+
+### Resultado (medido em 22/11/2026, armazém local, perfil Equilibrado, 9 safras)
+
+A regra acima foi aplicada sem mudança. A rota completa reproduziu a §19
+(+9,9 pp, piso +3,6 pp), o que confirma a mesma base de dados.
+
+| Carteira | Ações | (a) excesso | piso do IC 95% | (b) sem a melhor safra | (c) contra a padrão | Giro/ano | Veredito |
+|---|---|---|---|---|---|---|---|
+| Rota completa | ~39 | +9,9 pp | +3,6 pp | +6,3 pp | +7,0 pp | 48% | candidata |
+| Top 20 | 20 | +9,5 pp | −0,4 pp | +4,0 pp | +6,6 pp | 55% | fora (a) |
+| Top 15 | 15 | +7,9 pp | −2,3 pp | +1,7 pp | +5,0 pp | 63% | fora (a) |
+| Top 10 | 10 | +11,1 pp | −2,7 pp | +2,0 pp | +8,1 pp | 62% | fora (a) |
+
+Leitura com cautela:
+
+- **Nenhum corte passa em (a):** o piso do IC 95% fica abaixo de zero nos três.
+  Pela regra pré-registrada, nenhum é candidato. O top 20 chega perto (−0,4 pp),
+  mas perto não é passar, e a regra não muda depois de ver o número.
+- Os três passam em (b) e (c): a média continua positiva e acima da carteira
+  padrão. O que falta é certeza estatística, não direção.
+- **O corte aumenta a incerteza.** Top 10 tem o maior excesso médio (+11,1 pp),
+  puxado por uma safra de +83,6 pp; sem ela cai para +2,0 pp. Em três das nove
+  safras o top 10 perdeu para pesos iguais por 5 a 8 pp.
+- Contra a rota completa (informativo), os cortes ficam entre −2,0 e +1,2 pp,
+  com IC cruzando zero: **não se distingue** perder ou não com o corte, com
+  nove safras.
+- O giro sobe de 48% para 55–63% ao ano: o corte troca mais de nomes.
+- A rota de valor continua **sem versão viável medida para pouco capital**.
+  Nada muda na tela nem na carteira padrão. Próximas perguntas, se o usuário
+  quiser: outra janela de safras, filtro de liquidez e capital mínimo por lote.
+
