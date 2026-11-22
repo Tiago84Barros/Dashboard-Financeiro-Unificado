@@ -161,6 +161,28 @@ def test_texto_da_medicao_sem_json_diz_que_falta_medir():
     assert "+1.2 pp" in txt and "8 safras" in txt and "fica opcional" in txt
 
 
+def test_texto_da_medicao_avisa_perfil_diferente():
+    dados = {"medido_em": "2026-11-23T10:00:00", "decisao": "fica opcional",
+             "perfil": "Recomendado",
+             "diferenca_pareada": {"liquido": {"media": 0.01, "ic95": [None, None],
+                                               "n_safras": 5}}}
+    assert "Atenção" not in v.texto_medicao_filtro(dados, [], perfil_ativo="Recomendado")
+    assert "Atenção" not in v.texto_medicao_filtro(dados, [])
+    txt = v.texto_medicao_filtro(dados, [], perfil_ativo="Conservador")
+    assert "Atenção" in txt and "Recomendado" in txt and "Conservador" in txt
+
+
+def test_troca_on_pn_respeita_o_filtro():
+    """A classe irmã entre os piores não volta pela troca de liquidez."""
+    import inspect
+
+    import views.portfolio_b3 as pb3
+    fonte = inspect.getsource(pb3)
+    corpo = fonte[fonte.index("def _veto_liquidez"):]
+    corpo = corpo[:corpo.index("return None")]
+    assert "_barra_nf" in corpo
+
+
 def test_barreira_extra_vale_no_gate_e_na_inteligencia():
     from views.portfolio_b3 import _aplicar_gate_qualitativo, _barrado
     assert _barrado({}, "AAAA3", {"AAAA3"}.__contains__)
@@ -180,3 +202,31 @@ def test_reprovados_do_piso_sem_retrato_e_vazio():
     from core.b3_quality_floor import reprovados
     assert reprovados(None, ["A"]) == frozenset()
     assert reprovados(pd.DataFrame(), ["A"]) == frozenset()
+
+
+def test_safra_esvaziada_pelo_filtro_vira_caixa_com_o_comeco_do_controle():
+    """Achado do Codex (PR 794): sem o começo do controle, a safra que o filtro
+    esvazia virava aquecimento e saía da comparação pareada."""
+    import core.b3_oos_carteira as oos
+
+    def linha(safra, pesos):
+        return {"safra": safra, "pesos": pesos, "retornos": {"A": 0.1} if pesos else {},
+                "selic": 0.08, "mensuravel": True}
+
+    controle = [linha(2018, {"A": 1.0}), linha(2019, {"A": 1.0})]
+    filtrado = [linha(2018, {}), linha(2019, {"A": 1.0})]
+    comeco = oos.primeira_resposta(controle)
+    assert comeco == 2018
+    # Sem o começo do controle: 2018 vira aquecimento (fora da conta).
+    assert "rendimento_caixa" not in oos.itens_da_cadeia(filtrado)[0]
+    # Com ele: 2018 é caixa a Selic e entra no pareamento.
+    assert oos.itens_da_cadeia(filtrado, comeca_em=comeco)[0]["rendimento_caixa"] == 0.08
+
+
+def test_medicao_do_filtro_passa_o_comeco_do_controle():
+    import inspect
+
+    import scripts.medir_lider_filtro_nota_fatores_b3 as mf
+    import scripts.medir_oos_carteira_b3 as M
+    assert "comeca_em" in inspect.signature(M._medir_perfil).parameters
+    assert 'comeca_em=controle["comeca_em"]' in inspect.getsource(mf.main)

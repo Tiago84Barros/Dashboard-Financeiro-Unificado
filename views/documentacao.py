@@ -442,7 +442,8 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
             "nota + fatores de hoje, depois do piso de qualidade. Entra a próxima do mesmo "
             "segmento que passe pela guarda de entrada e pelo piso; sem substituta, a vaga "
             "se perde. As piores ficam barradas também na Inteligência dos Ativos, no "
-            "parecer da IA e na diversificação. A tela lista as trocas e a carteira salva "
+            "parecer da IA, na troca ON/PN de liquidez e na diversificação. A caixa avisa "
+            "quando a medição é de outro perfil. A tela lista as trocas e a carteira salva "
             "registra se o filtro estava ligado.",
             ("Líder por score", "Maior participação", "Recência de liderança", "Rank atual",
              "Filtro nota + fatores: core/b3_nota_fatores.py::trocar_piores, a mesma regra da medição",

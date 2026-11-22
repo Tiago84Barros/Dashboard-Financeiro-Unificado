@@ -660,7 +660,8 @@ melhora a carteira concentrada sem mudar o resto dela.
   (`core/b3_quality_floor.py::reprovados`, sem o afrouxamento de
   viabilidade). O substituto herda o peso. Sem substituto, a vaga se perde.
 - Os piores ficam barrados também nas trocas seguintes: Inteligência dos
-  Ativos, parecer da IA e diversificação por correlação (`exclui_extra` em
+  Ativos, parecer da IA, troca ON/PN do piso de liquidez (`_veto_liquidez`)
+  e diversificação por correlação (`exclui_extra` em
   `views/portfolio_b3.py::_barrado`).
 - Na tela é uma caixa, **desmarcada por padrão**. A carteira salva grava em
   `params` se o filtro estava ligado, a versão e as trocas.
@@ -672,7 +673,11 @@ sem mudar nada: PIT, custo do giro, IR, caixa a Selic (D1) e pesos iguais. Ela
 roda duas vezes sobre a mesma rodada da aba, sem e com o filtro; o único passo
 trocado é a escolha dos segmentos de cada safra. A métrica principal é a
 **diferença pareada** por safra do retorno líquido da carteira sem portão (com
-filtro menos sem filtro), com média e IC 95%.
+filtro menos sem filtro), com média e IC 95%. As duas rodadas começam na mesma
+safra, o fim do aquecimento do controle (`_medir_perfil(..., comeca_em=)`):
+safra que o filtro esvazia vira caixa a Selic e conta, em vez de adiar o começo
+e sair da comparação. A medição é de um perfil; a caixa da tela avisa quando a
+aba roda com outro.
 
 **Regra de decisão, registrada antes de medir:** o filtro só vira padrão se a
 média da diferença pareada líquida for > 0 **e** o IC 95% excluir o zero.
@@ -682,7 +687,8 @@ Senão fica opcional e desligado. A regra não é ajustada depois do resultado.
 
 - o portão de LLM (Inteligência e parecer da IA) não roda na medição — vale
   para a líder com ou sem filtro;
-- a troca ON/PN do piso de liquidez da tela não é refeita na medição;
+- a troca ON/PN do piso de liquidez da tela não é refeita na medição (na tela
+  ela respeita o filtro);
 - a rota de revisão (`b3_review`) não aplica o filtro.
 
 Com nove safras o efeito tem de ser grande para o IC sair do zero. Um "não

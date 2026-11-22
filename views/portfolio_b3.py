@@ -4343,6 +4343,10 @@ def render(show_header: bool = True) -> None:
 
             def _veto_liquidez(candidata: str) -> str | None:
                 """Impede que a troca entre com papel que o piso reprovaria."""
+                # Filtro nota + fatores ligado: a classe irmã entre os piores
+                # não volta pela troca ON/PN (a barreira das outras trocas).
+                if _barra_nf and _barra_nf(str(candidata).upper()):
+                    return "entre os 30% piores da nota + fatores"
                 h = _saude_liq.get(str(candidata).upper())
                 if h is None:
                     return "sem dados de saúde para a classe irmã"

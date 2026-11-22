@@ -317,8 +317,13 @@ def piores_de_hoje(estado: dict | None) -> frozenset[str] | None:
     return frozenset(nf.piores_da_tabela(tabela))
 
 
-def texto_medicao_filtro(dados: dict | None, motivos_vencida: list[str]) -> str:
-    """Uma frase sobre o que a medição do filtro mostrou, ou que falta medir."""
+def texto_medicao_filtro(dados: dict | None, motivos_vencida: list[str],
+                         perfil_ativo: str | None = None) -> str:
+    """Uma frase sobre o que a medição do filtro mostrou, ou que falta medir.
+
+    A medição é de um perfil só; com ``perfil_ativo`` diferente, o texto diz
+    que o número não é do perfil da tela.
+    """
     if not dados:
         return ("Ainda não medido fora da amostra. Fica desligado até a medição "
                 "mostrar ganho sobre a líder sem o filtro.")
@@ -332,6 +337,10 @@ def texto_medicao_filtro(dados: dict | None, motivos_vencida: list[str]) -> str:
     if ic[0] is not None and ic[1] is not None:
         texto += f" IC 95%: {ic[0] * 100:+.1f} a {ic[1] * 100:+.1f} pp."
     texto += f" Decisão pela regra registrada antes: {dados.get('decisao', '?')}."
+    perfil_medido = dados.get("perfil")
+    if perfil_ativo and perfil_medido and perfil_ativo != perfil_medido:
+        texto += (f" Atenção: a medição usou o perfil “{perfil_medido}”; a aba "
+                  f"rodou com “{perfil_ativo}”. O número não vale para este perfil.")
     if motivos_vencida:
         texto += (" A medição é de uma versão anterior ("
                   + "; ".join(motivos_vencida) + ").")
@@ -360,10 +369,12 @@ def escolher_filtro_lider() -> tuple[bool, frozenset[str] | None]:
              "ranking do mesmo segmento que passe na guarda de entrada e no "
              "piso de qualidade. Sem substituto, o segmento perde a vaga.",
     ))
-    st.caption(texto_medicao_filtro(dados, motivos))
+    estado = st.session_state.get(CHAVE_ESTADO)
+    st.caption(texto_medicao_filtro(dados, motivos,
+                                    perfil_ativo=(estado or {}).get("perfil")))
     if not ligado:
         return False, None
-    piores = piores_de_hoje(st.session_state.get(CHAVE_ESTADO))
+    piores = piores_de_hoje(estado)
     if piores is None:
         msg = ("O filtro nota + fatores está ligado, mas a carteira nota + fatores "
                "de hoje não se formou nesta rodada. A carteira abaixo saiu SEM o "

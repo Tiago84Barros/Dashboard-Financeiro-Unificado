@@ -159,8 +159,10 @@ def main() -> int:
 
     M._segmentos_por_safra = com_filtro
     try:
+        # Mesmo fim de aquecimento do controle: safra que o filtro esvazia
+        # vira caixa a Selic e conta, em vez de adiar o começo da conta.
         filtrado, _ = M._medir_perfil(resultados, precos, params, decisao, ibov,
-                                      cost_cfg, hoje)
+                                      cost_cfg, hoje, comeca_em=controle["comeca_em"])
     finally:
         M._segmentos_por_safra = original
 
@@ -213,6 +215,7 @@ def main() -> int:
             "troca ON/PN do piso de liquidez da tela não é refeita aqui",
             "rota de revisão (b3_review) não aplica o filtro",
         ],
+        "comeca_em": controle["comeca_em"],
         "safras_por_carteira": {
             "com_filtro": [t["safra"] for t in f["safras"]],
             "sem_filtro": [t["safra"] for t in c["safras"]],
