@@ -102,9 +102,10 @@ def main() -> int:
     M = prep["M"]
     resultados, precos, params, decisao = prep["rodada"]
 
+    import pandas as pd
+
     from core.b3_retrato_pit import historico_ate, series_pl_ate
     from core.b3_vigencia import ano_base_do_score
-    import pandas as pd
 
     contexto, por_safra = M._segmentos_por_safra(
         resultados, precos, params, decisao, prep["cost_cfg"], prep["hoje"])
