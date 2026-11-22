@@ -705,7 +705,7 @@ Com nove safras o efeito tem de ser grande para o IC sair do zero. Um "não
 provado" é o resultado mais provável e não quer dizer que o filtro piora a
 carteira: quer dizer que ele não ganhou o direito de ser o padrão.
 
-## 19. Cinco carteiras de regra fundamentalista (22/11/2026, quatro medidas: duas candidatas; a quinta a medir)
+## 19. Cinco carteiras de regra fundamentalista (22/11/2026, medido: duas candidatas)
 
 ### Que pergunta elas respondem
 
@@ -760,9 +760,9 @@ braços, a chance de um falso positivo sobe para perto de 1 em 4; por isso (a)
 sozinho não basta. Nenhum passando, nada muda na tela. O braço 5 entrou depois
 dos quatro primeiros, mas antes de qualquer número medido.
 
-### Resultado das quatro primeiras (medido em 22/11/2026, armazém local, perfil Equilibrado, 9 safras)
+### Resultado (medido em 22/11/2026, armazém local, perfil Equilibrado, 9 safras)
 
-A quinta carteira (líder segurado) entrou depois e **ainda não foi medida**; ao medi-la, o risco de falso positivo sobe de novo. Excesso médio líquido sobre pesos iguais, por ano. Os três testes (a), (b) e
+Excesso médio líquido sobre pesos iguais, por ano. Os três testes (a), (b) e
 (c) são os da regra acima, aplicados sem mudança:
 
 | Braço | (a) excesso | piso do IC 95% | (b) sem a melhor safra | (c) contra a padrão | Veredito |
@@ -771,17 +771,23 @@ A quinta carteira (líder segurado) entrou depois e **ainda não foi medida**; a
 | Fórmula mágica | +5,6 pp | +1,3 pp | +4,4 pp | +2,7 pp | candidata |
 | Qualidade constante | +2,7 pp | −2,2 pp | +1,2 pp | −0,2 pp | fora (a, c) |
 | Qualidade por 3 anos | +1,0 pp | −4,3 pp | −0,6 pp | −1,9 pp | fora (a, b, c) |
+| Líder segurado | −0,6 pp | −5,0 pp | −2,3 pp | −3,5 pp | fora (a, b, c) |
 
 Leitura com cautela:
 
 - "Candidata" é só o direito de ir à próxima etapa. **Nada vira padrão por
   este resultado** e nada muda na tela: estas carteiras ainda não existem no
   app, só no módulo e na medição.
-- Com quatro braços, a chance de ao menos um falso positivo é de perto de 1
-  em 5. Passaram dois, e o IC da fórmula mágica (+1,3 a +10,0 pp) é estreito
+- Com cinco braços, a chance de ao menos um falso positivo é de perto de 1
+  em 4. Passaram dois, e o IC da fórmula mágica (+1,3 a +10,0 pp) é estreito
   de um lado só: nove safras não separam sorte de regra com folga.
 - A rota de valor tem o melhor número, mas é a que mais depende de poucas
   safras; o teste (b) retira só a melhor, não as duas melhores.
+- O líder segurado (a premissa original: não vender a líder sem que os
+  fundamentos piorem) rendeu −0,6 pp sobre pesos iguais, com 5 de 9 safras
+  negativas e giro médio de 41% ao ano. Segurar quem não degradou **não
+  ajudou** nesta janela; o IC cruza o zero e, sem a melhor safra (2021), a
+  média cai a −2,3 pp.
 - O próximo passo, se houver, é uma rota nova na tela (opcional, com aviso de
   "candidata, nove safras") e uma segunda janela de medição, não a troca da
   carteira padrão.
