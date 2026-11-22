@@ -46,6 +46,17 @@ if str(ROOT) not in sys.path:
 CAMINHO = ROOT / "data" / "oos_estrategias_fundamentalistas_b3.json"
 
 
+def selic_ate(selic_por_ano: dict, ano: int) -> float | None:
+    """Selic do ano mais recente até ``ano``; None se a série ainda não começou.
+
+    Nunca cai na média da série inteira (``taxa_selic_aa`` da aba): ela inclui
+    anos futuros e faria a carteira de uma safra antiga mudar quando a série
+    ganha observações novas.
+    """
+    anos = [a for a in selic_por_ano if int(a) <= int(ano)]
+    return float(selic_por_ano[max(anos)]) if anos else None
+
+
 def diferenca_pareada(controle: list[dict], braco: list[dict], chave: str) -> list[dict]:
     """Diferença safra a safra só onde as duas mediram (mesma safra)."""
     base = {int(t["safra"]): t for t in controle if t.get(chave) is not None}
@@ -106,7 +117,10 @@ def main() -> int:
     setor_de = {str(t).upper(): s for t, s in zip(cls["ticker"], cls["SETOR"])}
 
     def selic_da_safra(safra):
-        return float(selic_macro.get(safra - 1, taxa))
+        # PIT: a de N-1 ou a última antes dela. Só sem nenhuma usa a média da
+        # aba, e isso fica registrado em "limites".
+        s = selic_ate(selic_macro, safra - 1)
+        return taxa if s is None else s
 
     def qualidade(p):
         safra = p["safra"]
@@ -116,8 +130,10 @@ def main() -> int:
                              ano_max, M._aceita_da_safra(safra))
         pl = series_pl_ate({tk: s for tk, s in series_pl.items() if tk in alvos}, ano_max)
         return fe.carteira_qualidade_constante(
-            p["df_pit"], p["universo"], hist, pl, ano_max, selic_macro,
-            selic_padrao=taxa)
+            p["df_pit"], p["universo"], hist, pl, ano_max, selic_macro)
+        # Sem selic_padrao: ano sem Selic medida fica fora da contagem. A média
+        # da aba (taxa) vem da série inteira, futuro incluído (achado do Codex
+        # no PR #796).
 
     por_ano = {p["safra"]: p for p in por_safra}
     cadeia = [s for s in sorted(por_ano) if comeca_em is None or s >= comeca_em]
@@ -198,6 +214,9 @@ def main() -> int:
             "lucro da série de PL cortado por ano do exercício, sem data de publicação",
             "quatro braços: a chance de um falso positivo sobe para perto de 1 em 5",
             "nove safras não separam sorte de regra com folga; o teste (b) existe por isso",
+            ("qualidade: ano sem Selic medida não conta na janela de ROIC; rota de "
+             "valor: Selic de N-1 ou a última antes dela (média da série só se "
+             "não houver nenhuma)"),
         ],
         "fora_da_regra": [
             "guarda de entrada e piso de qualidade não filtram estas carteiras",

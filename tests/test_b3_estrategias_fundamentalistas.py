@@ -208,3 +208,19 @@ def test_medir_escolha_vazia_vira_caixa_e_mesma_regua(monkeypatch):
     assert out["safras"][0]["n_carteira"] == 0
     assert out["safras"][1]["excesso_ew"] == pytest.approx(0.02)
     assert len(chamadas["itens"]) == 2
+
+
+def test_selic_ate_e_point_in_time():
+    from scripts.medir_estrategias_fundamentalistas_b3 import selic_ate
+
+    serie = {2012: 0.08, 2014: 0.11, 2020: 0.02}
+    assert selic_ate(serie, 2014) == 0.11
+    assert selic_ate(serie, 2016) == 0.11  # última antes, nunca o futuro
+    assert selic_ate(serie, 2011) is None
+
+
+def test_qualidade_sem_padrao_ignora_ano_antes_da_serie():
+    """Ano anterior à série de Selic não entra na contagem nem no limiar."""
+    h = _hist({a: 0.20 for a in range(2014, 2021)})
+    acima, medidos = fe.persistencia_roic(h, 2020, {a: 0.10 for a in range(2017, 2021)})
+    assert (acima, medidos) == (4, 4)
