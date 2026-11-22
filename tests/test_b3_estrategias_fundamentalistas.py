@@ -1,4 +1,4 @@
-"""Quatro carteiras fundamentalistas da B3 (puras) e a régua compartilhada."""
+"""Cinco carteiras fundamentalistas da B3 (puras) e a régua compartilhada."""
 from __future__ import annotations
 
 import pandas as pd
@@ -224,3 +224,66 @@ def test_qualidade_sem_padrao_ignora_ano_antes_da_serie():
     h = _hist({a: 0.20 for a in range(2014, 2021)})
     acima, medidos = fe.persistencia_roic(h, 2020, {a: 0.10 for a in range(2017, 2021)})
     assert (acima, medidos) == (4, 4)
+
+
+# ── 5. Líder segurado ───────────────────────────────────────────────────────
+def _pl(lucros: dict[int, float]) -> list[dict]:
+    return [{"ano": a, "lucro_mi": v} for a, v in lucros.items()]
+
+
+def test_lider_segurado_esta_entre_as_estrategias():
+    assert fe.LIDER_SEGURADO in fe.ESTRATEGIAS
+    assert len(fe.ESTRATEGIAS) == 5
+    assert "cinco braços" in fe.REGRA_DE_DECISAO
+
+
+def test_motivos_de_saida_tres_degradacoes():
+    df = pd.DataFrame([
+        _empresa("BOA3"),
+        _empresa("QUEBRA3", Liquidez_Corrente=0.5, Endividamento_Total=5.0, P_FCO=-3.0),
+        _empresa("PREJ3"),
+    ])
+    pl = {"BOA3": _pl({2020: 10.0}), "PREJ3": _pl({2020: -1.0})}
+    m = fe.motivos_de_saida(["BOA3", "QUEBRA3", "PREJ3", "SUMIU3"],
+                            ["BOA3", "QUEBRA3", "PREJ3"], df, pl, 2020)
+    assert m["BOA3"] == []
+    assert fe.FALHA_SOLVENCIA in m["QUEBRA3"]
+    assert m["PREJ3"] == [fe.PREJUIZO]
+    assert m["SUMIU3"] == [fe.SAIU_DO_UNIVERSO]
+
+
+def test_motivos_de_saida_dado_ausente_nao_degrada():
+    # Sem retrato, sem série de lucro e sem o lucro do último exercício.
+    m = fe.motivos_de_saida(["X3", "Y3"], ["X3", "Y3"], None,
+                            {"Y3": _pl({2018: -5.0})}, 2020)
+    assert m == {"X3": [], "Y3": []}
+    # Lucro zero conta como prejuízo (regra: lucro de N-1 <= 0).
+    m0 = fe.motivos_de_saida(["Z3"], ["Z3"], None, {"Z3": _pl({2020: 0.0})}, 2020)
+    assert m0["Z3"] == [fe.PREJUIZO]
+
+
+def test_segurar_lideres_soma_novos_e_so_tira_quem_degradou():
+    lideres = {2018: ["A3", "B3"], 2019: ["C3"], 2020: ["A3", "D3"]}
+    degradou = {2019: {"B3"}, 2020: set()}
+    vistos = []
+
+    def manter(s, lista):
+        vistos.append((s, list(lista)))
+        return [t for t in lista if t not in degradou.get(s, set())]
+
+    out = fe.segurar_lideres([2020, 2018, 2019], lambda s: lideres[s], manter)
+    assert out == {2018: ["A3", "B3"], 2019: ["A3", "C3"], 2020: ["A3", "C3", "D3"]}
+    # A primeira safra não tem carteira anterior; as outras recebem a anterior.
+    assert vistos == [(2019, ["A3", "B3"]), (2020, ["A3", "C3"])]
+
+
+def test_segurar_lideres_sem_lideres_mantem_os_antigos():
+    out = fe.segurar_lideres([2018, 2019], lambda s: ["A3"] if s == 2018 else [],
+                             lambda s, lista: lista)
+    assert out == {2018: ["A3"], 2019: ["A3"]}
+
+
+def test_manter_lideres_usa_os_motivos():
+    pl = {"PREJ3": _pl({2020: -1.0})}
+    assert fe.manter_lideres(["OK3", "PREJ3", "FORA3"], ["OK3", "PREJ3"], None,
+                             pl, 2020) == ["OK3"]

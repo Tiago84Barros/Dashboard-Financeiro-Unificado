@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Mede fora da amostra quatro carteiras "de regra fundamentalista" da B3.
+"""Mede fora da amostra cinco carteiras "de regra fundamentalista" da B3.
 
 As regras moram em `core/b3_estrategias_fundamentalistas.py` (rota de valor,
-fórmula mágica, qualidade constante e qualidade segurada por três anos). Aqui
+fórmula mágica, qualidade constante, qualidade segurada por três anos e o
+líder segurado até degradar). Aqui
 elas são refeitas safra a safra, point-in-time, com a régua de
 `scripts/medir_nota_fatores_b3.py::medir_escolha`:
 
@@ -142,6 +143,34 @@ def main() -> int:
         manter=lambda s, lista: fe.manter_qualidade(
             lista, por_ano[s]["universo"], por_ano[s]["df_pit"]))
 
+    tetos = {"cap": contexto["cap"], "teto_setor": params["teto_setor"],
+             "teto_ciclico": params["teto_ciclico"]}
+
+    def lideres_padrao(s):
+        # Os nomes da carteira padrão da safra, montada como a variante sem
+        # portão de `M._medir_perfil` (mesmo veto vazio, tetos e guarda).
+        p = por_ano[s]
+        itens, _ = oos.vetar_na_carteira(p["segmentos"], None, p["exclui"])
+        cart = oos.montar_carteira(itens, **tetos, exclui=p["exclui"])
+        return sorted(str(t).upper() for t, w in (cart.get("pesos") or {}).items()
+                      if w and w > 0)
+
+    saidas_lider: dict[int, dict] = {}
+
+    def manter_lider(s, lista):
+        p = por_ano[s]
+        ano_max = ano_base_do_score(s)
+        alvos = {str(t).upper() for t in lista}
+        pl = series_pl_ate({tk: v for tk, v in series_pl.items()
+                            if str(tk).upper() in alvos}, ano_max)
+        motivos = fe.motivos_de_saida(lista, p["universo"], p["df_pit"], pl, ano_max)
+        saidas_lider[s] = {t: m for t, m in motivos.items() if m}
+        return sorted(t for t, m in motivos.items() if not m)
+
+    lideres_por_safra = {s: lideres_padrao(s) for s in cadeia}
+    lider_segurado = fe.segurar_lideres(cadeia, lideres_por_safra.__getitem__,
+                                        manter_lider)
+
     escolhas = {
         fe.ROTA_VALOR: lambda p: fe.carteira_rota_valor(
             p["df_pit"], p["universo"], selic=selic_da_safra(p["safra"])),
@@ -149,6 +178,7 @@ def main() -> int:
             p["df_pit"], p["universo"], setor_de=setor_de),
         fe.QUALIDADE_CONSTANTE: qualidade,
         fe.QUALIDADE_3_ANOS: lambda p: segurada.get(p["safra"], []),
+        fe.LIDER_SEGURADO: lambda p: lider_segurado.get(p["safra"], []),
     }
 
     def medir(escolha):
@@ -195,6 +225,11 @@ def main() -> int:
             fe.QUALIDADE_3_ANOS: (
                 f"a anterior refeita a cada {fe.ANOS_SEGURANDO} safras; no meio só sai "
                 "quem quebra a solvência ou deixa o universo"),
+            fe.LIDER_SEGURADO: (
+                "carteira padrão da safra (Equilibrado, sem portão) mais os nomes "
+                "das safras anteriores que não degradaram; degradar = deixar o "
+                "universo, falhar na trava de solvência ou lucro de N-1 <= 0; "
+                "dado ausente não degrada"),
             "pesos": "iguais entre os escolhidos",
             "formacao": "em abril (início da vigência)",
         },
@@ -212,11 +247,15 @@ def main() -> int:
         "limites": [
             "múltiplos anuais com o preço de fim do exercício N-1, não o de abril/N",
             "lucro da série de PL cortado por ano do exercício, sem data de publicação",
-            "quatro braços: a chance de um falso positivo sobe para perto de 1 em 5",
+            "cinco braços: a chance de um falso positivo sobe para perto de 1 em 4",
             "nove safras não separam sorte de regra com folga; o teste (b) existe por isso",
             ("qualidade: ano sem Selic medida não conta na janela de ROIC; rota de "
              "valor: Selic de N-1 ou a última antes dela (média da série só se "
              "não houver nenhuma)"),
+            ("líder segurado: os pesos voltam a ser iguais em abril, então o "
+             "vencedor antigo é aparado todo ano; a tela compra só com o aporte "
+             "e não apara. A carteira cresce com os anos, e mais nomes a "
+             "aproximam dos pesos iguais no universo"),
         ],
         "fora_da_regra": [
             "guarda de entrada e piso de qualidade não filtram estas carteiras",
@@ -229,6 +268,11 @@ def main() -> int:
             "fonte": "scripts/medir_oos_carteira_b3.py, mesma rodada, sem portão",
         },
         "candidatas": [k for k, m in bracos.items() if m["decisao"]["candidata"]],
+        "lider_segurado_por_safra": {
+            str(s): {"lideres": lideres_por_safra[s],
+                     "carteira": lider_segurado.get(s, []),
+                     "saidas": saidas_lider.get(s, {})}
+            for s in cadeia},
     }
     texto = json.dumps(saida, indent=2, ensure_ascii=False, default=str)
     if args.dry_run:

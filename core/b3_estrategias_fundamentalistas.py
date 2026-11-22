@@ -1,5 +1,5 @@
 """
-core/b3_estrategias_fundamentalistas.py — quatro carteiras "à moda dos grandes
+core/b3_estrategias_fundamentalistas.py — cinco carteiras "à moda dos grandes
 fundamentalistas", para medir fora da amostra contra pesos iguais.
 
 Pergunta (22/11/2026): a carteira padrão da B3 não se distingue de dividir
@@ -9,7 +9,7 @@ somar "mais Buffett" à mesma nota tende a não mudar nada. Este módulo testa
 outra coisa: REGRAS SIMPLES, que um investidor repete em casa, com a lógica
 de quem as criou.
 
-As quatro regras, fixadas ANTES de medir (não são ajustadas depois):
+As cinco regras, fixadas ANTES de medir (não são ajustadas depois):
 
 1. ``rota_valor`` — a rota de valor que o app já tem (`core.b3_value_route`:
    margem de segurança de Graham e Bazin + trava de solvência), aplicada ao
@@ -30,6 +30,13 @@ As quatro regras, fixadas ANTES de medir (não são ajustadas depois):
    lista é refeita na primeira safra da cadeia e a cada três; nas safras do
    meio só SAI quem quebrou a trava de solvência ou deixou o universo. Os
    pesos voltam a ser iguais entre os que ficam.
+5. ``lider_segurado`` — a premissa original do usuário (22/11/2026): "nunca
+   vender a líder do ano anterior, só se os fundamentos piorarem". A carteira
+   da safra é a carteira padrão da safra (os líderes, Equilibrado sem portão)
+   MAIS os nomes das safras anteriores que não degradaram. Degradar, fixado
+   antes de medir, é uma de três coisas: deixar o universo, falhar na trava de
+   solvência da rota de valor, ou ter prejuízo no último exercício (lucro de
+   N-1 <= 0). Dado ausente não é degradação. Pesos iguais entre todos.
 
 Todas leem só o que se sabia em abril/N: o retrato e o histórico da safra
 (exercícios até N-1, pela regra de vintage do motor), os múltiplos com o preço
@@ -51,13 +58,20 @@ import pandas as pd
 
 from core.b3_value_route import OPORTUNIDADE, rank_value_opportunities
 
-VERSAO = "fundamentalistas-1.0.0"
+VERSAO = "fundamentalistas-1.1.0"
 
 ROTA_VALOR = "rota_valor"
 FORMULA_MAGICA = "formula_magica"
 QUALIDADE_CONSTANTE = "qualidade_constante"
 QUALIDADE_3_ANOS = "qualidade_3_anos"
-ESTRATEGIAS = (ROTA_VALOR, FORMULA_MAGICA, QUALIDADE_CONSTANTE, QUALIDADE_3_ANOS)
+LIDER_SEGURADO = "lider_segurado"
+ESTRATEGIAS = (ROTA_VALOR, FORMULA_MAGICA, QUALIDADE_CONSTANTE, QUALIDADE_3_ANOS,
+               LIDER_SEGURADO)
+
+#: Motivos de saída do líder segurado (regra 5).
+SAIU_DO_UNIVERSO = "saiu_do_universo"
+FALHA_SOLVENCIA = "falha_solvencia"
+PREJUIZO = "prejuizo_no_ultimo_exercicio"
 
 #: Fórmula mágica: fração do universo elegível que fica e o piso de nomes.
 FRACAO_FORMULA = 1 / 3
@@ -75,15 +89,15 @@ ANOS_SEGURANDO = 3
 #: Setores que a fórmula mágica exclui (comparação sem acento e sem caixa).
 PREFIXOS_SETOR_EXCLUIDO = ("financ",)
 
-#: Regra de decisão, registrada antes de medir. Quatro braços elevam a chance
-#: de um falso positivo de 1 em 20 para perto de 1 em 5; por isso não basta o
+#: Regra de decisão, registrada antes de medir. Cinco braços elevam a chance
+#: de um falso positivo de 1 em 20 para perto de 1 em 4; por isso não basta o
 #: IC excluir o zero contra pesos iguais.
 REGRA_DE_DECISAO = (
     "uma estratégia só vira candidata a carteira padrão se, LÍQUIDA do giro: "
     "(a) o excesso médio sobre pesos iguais for > 0 com IC 95% acima de zero; "
     "(b) a média sem a melhor safra continuar > 0; e (c) a diferença pareada "
     "contra a carteira padrão atual (Equilibrado, sem portão) tiver média > 0. "
-    "Com quatro braços, passar só em (a) não basta. Nenhuma passando, nada muda "
+    "Com cinco braços, passar só em (a) não basta. Nenhuma passando, nada muda "
     "na tela.")
 
 
@@ -279,3 +293,64 @@ def manter_qualidade(lista: Iterable[str], universo: Iterable[str],
     falhas = falhas_de_solvencia(df_pit, no_universo)
     return sorted(t for t in (str(x).upper() for x in lista)
                   if t in no_universo and not falhas.get(t))
+
+
+# ── 5. Líder segurado ───────────────────────────────────────────────────────
+def motivos_de_saida(lista: Iterable[str], universo: Iterable[str],
+                     df_pit: pd.DataFrame | None,
+                     series_pl: Mapping[str, list[dict]] | None,
+                     ano_max: int) -> dict[str, list[str]]:
+    """Por que cada nome segurado sai na safra (lista vazia: fica).
+
+    ``series_pl`` já recortada em ``ano_max`` pelo chamador. Dado ausente não
+    é degradação: sem retrato, não há falha de solvência; sem lucro de
+    ``ano_max``, não há prejuízo.
+    """
+    no_universo = {str(t).upper() for t in universo}
+    nomes = sorted({str(t).upper() for t in lista})
+    falhas = falhas_de_solvencia(df_pit, no_universo)
+    pl = {str(k).upper(): v for k, v in (series_pl or {}).items()}
+    out: dict[str, list[str]] = {}
+    for tk in nomes:
+        motivos = []
+        if tk not in no_universo:
+            out[tk] = [SAIU_DO_UNIVERSO]
+            continue
+        if falhas.get(tk):
+            motivos.append(FALHA_SOLVENCIA)
+        lucro = {int(r["ano"]): r.get("lucro_mi") for r in (pl.get(tk) or [])
+                 if r.get("ano") is not None}.get(int(ano_max))
+        try:
+            lucro = float(lucro) if lucro is not None else None
+        except (TypeError, ValueError):
+            lucro = None
+        if lucro is not None and np.isfinite(lucro) and lucro <= 0:
+            motivos.append(PREJUIZO)
+        out[tk] = motivos
+    return out
+
+
+def manter_lideres(lista: Iterable[str], universo: Iterable[str],
+                   df_pit: pd.DataFrame | None,
+                   series_pl: Mapping[str, list[dict]] | None,
+                   ano_max: int) -> list[str]:
+    """Saída da regra 5: fica quem não tem nenhum motivo de saída."""
+    return sorted(t for t, m in motivos_de_saida(lista, universo, df_pit, series_pl,
+                                                 ano_max).items() if not m)
+
+
+def segurar_lideres(safras: list[int], lideres_de, manter) -> dict[int, list[str]]:
+    """Lista de cada safra quando o líder só sai se degradar.
+
+    ``lideres_de(safra)`` devolve os líderes da safra (a carteira padrão);
+    ``manter(safra, lista)`` devolve quem da carteira anterior continua. A
+    carteira da safra é a união dos dois: o líder novo entra, o antigo fica
+    enquanto não degradar.
+    """
+    out: dict[int, list[str]] = {}
+    atual: list[str] = []
+    for s in sorted(int(x) for x in safras):
+        ficam = set(manter(s, atual)) if atual else set()
+        atual = sorted(ficam | {str(t).upper() for t in lideres_de(s)})
+        out[s] = list(atual)
+    return out
