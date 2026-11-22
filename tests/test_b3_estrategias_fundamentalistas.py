@@ -287,3 +287,47 @@ def test_manter_lideres_usa_os_motivos():
     pl = {"PREJ3": _pl({2020: -1.0})}
     assert fe.manter_lideres(["OK3", "PREJ3", "FORA3"], ["OK3", "PREJ3"], None,
                              pl, 2020) == ["OK3"]
+
+
+# ── 1b. Rota de valor enxuta (top-N) ────────────────────────────────────────
+def _oportunidades(n: int) -> pd.DataFrame:
+    # Quanto menor o P/L e o P/VP e maior o DY, maior a margem de valor.
+    return pd.DataFrame([
+        _empresa(f"O{i:02d}3", **{"P/L": 5.0 + 0.3 * i, "P/VP": 0.8 + 0.03 * i,
+                                  "DY": 0.09 - 0.002 * i})
+        for i in range(n)])
+
+
+def test_topn_e_subconjunto_da_rota_completa_e_respeita_n():
+    df = _oportunidades(8)
+    completa = fe.carteira_rota_valor(df, df["Ticker"])
+    top3 = fe.carteira_rota_valor_topn(df, df["Ticker"], 3)
+    assert len(top3) == 3 and set(top3) <= set(completa)
+
+
+def test_topn_maior_que_as_oportunidades_fica_com_todas():
+    df = _oportunidades(4)
+    assert fe.carteira_rota_valor_topn(df, df["Ticker"], 10) ==         fe.carteira_rota_valor(df, df["Ticker"])
+
+
+def test_topn_fica_com_os_de_maior_valor_score():
+    from core.b3_value_route import OPORTUNIDADE, rank_value_opportunities
+    df = _oportunidades(8)
+    r = rank_value_opportunities(df)
+    r = r[r["classificacao"] == OPORTUNIDADE]
+    melhores = set(r.sort_values(["valor_score", "margem_valor", "Ticker"],
+                                 ascending=[False, False, True])["Ticker"].head(3))
+    assert set(fe.carteira_rota_valor_topn(df, df["Ticker"], 3)) == melhores
+
+
+def test_topn_nao_depende_da_ordem_das_linhas():
+    df = _oportunidades(8)
+    a = fe.carteira_rota_valor_topn(df, df["Ticker"], 4)
+    b = fe.carteira_rota_valor_topn(df.iloc[::-1], df["Ticker"], 4)
+    assert a == b
+
+
+def test_topn_sem_retrato_ou_n_invalido_e_vazio():
+    assert fe.carteira_rota_valor_topn(None, ["X3"], 10) == []
+    assert fe.carteira_rota_valor_topn(_oportunidades(3), ["O003"], 0) == []
+    assert fe.rotulo_rota_topn(15) == "rota_valor_top15"

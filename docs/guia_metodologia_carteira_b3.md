@@ -831,3 +831,54 @@ Grava `data/oos_decaimento_lideranca_b3.json`.
 **Regra de decisão, registrada antes de medir:** o desconto sai da B3 só se a
 média da diferença pareada líquida (sem desconto menos com desconto, carteira
 sem portão) for > 0 e o IC 95% excluir o zero. Senão fica como está.
+
+## 20. Rota de valor enxuta: 10, 15 e 20 ações (22/11/2026, a medir)
+
+### Que pergunta responde
+
+A rota de valor foi a melhor carteira da §19, mas segura em média ~39 ações
+(de 20 a 57). Quem tem pouco capital não monta isso: corretagem, lote mínimo e
+atenção pesam. A pergunta: **se a rota for cortada em 10, 15 ou 20 nomes, o
+excesso sobre pesos iguais sobrevive?**
+
+### A regra (`core.b3_estrategias_fundamentalistas.carteira_rota_valor_topn`)
+
+Fixada antes de ver qualquer número, sem parâmetro para ajustar:
+
+- Mesmo filtro da rota completa: classificação `oportunidade`.
+- Fica com os **N de maior `valor_score`** da própria rota (60% desconto,
+  40% folga de solvência). Desempate por margem de valor e depois ticker.
+- Com menos de N oportunidades na safra, fica com todas.
+- N ∈ {10, 15, 20}. Pesos iguais, formação em abril, mesma régua da §19
+  (9 safras, custos de pessoa física, caixa a Selic em safra vazia).
+
+Medição: `python scripts/medir_estrategias_fundamentalistas_b3.py --enxuta
+--cache-dir <pasta>` (grava `data/oos_rota_valor_enxuta_b3.json`; a rota
+completa roda junto, para comparar).
+
+### Regra de decisão, registrada antes de medir
+
+Um corte só é candidato se, líquido do giro, passar nos mesmos três testes da
+§19: (a) excesso médio sobre pesos iguais > 0 com piso do IC 95% > 0;
+(b) média sem a melhor safra > 0; (c) diferença pareada contra a carteira
+padrão > 0.
+
+Regras adicionais:
+
+- **Três cortes elevam a chance de falso positivo** (os cortes são
+  correlacionados entre si e com a rota completa, que já é uma candidata).
+  Não se escolhe o N de melhor número: vale o **menor N que passa nos três
+  testes**, porque o objetivo é viabilidade com pouco capital.
+- A comparação com a rota completa (`vs_rota_completa`) é **só informativa**:
+  mostra o custo do corte, não reprova nem aprova.
+- Nenhum corte passando: a rota de valor continua sem versão viável para
+  pouco capital, e isso fica registrado aqui. Nada muda na tela.
+- Passar não muda a carteira padrão nem a tela. Só abre a próxima etapa
+  (outra janela de safras, filtros de liquidez e tamanho do lote por capital).
+
+### Limites já conhecidos
+
+- Nove safras não separam sorte de regra com folga; (b) existe por isso.
+- Cortar em N aumenta a concentração: o risco de um nome ruim pesa mais
+  (10 ações = 10% cada).
+- Liquidez e lote mínimo não entram nesta medição.

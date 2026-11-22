@@ -45,6 +45,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 CAMINHO = ROOT / "data" / "oos_estrategias_fundamentalistas_b3.json"
+CAMINHO_ENXUTA = ROOT / "data" / "oos_rota_valor_enxuta_b3.json"
 
 
 def selic_ate(selic_por_ano: dict, ano: int) -> float | None:
@@ -87,6 +88,9 @@ def main() -> int:
     ap.add_argument("--cache-dir", type=Path, default=None,
                     help="reaproveita a rodada da aba (o mesmo pickle de "
                          "medir_oos_carteira_b3.py --cache-dir)")
+    ap.add_argument("--enxuta", action="store_true",
+                    help="mede só a rota de valor completa e os braços top-10/15/20 "
+                         "(grava data/oos_rota_valor_enxuta_b3.json)")
     args = ap.parse_args()
 
     from scripts.medir_nota_fatores_b3 import medir_escolha, preparar
@@ -180,6 +184,15 @@ def main() -> int:
         fe.QUALIDADE_3_ANOS: lambda p: segurada.get(p["safra"], []),
         fe.LIDER_SEGURADO: lambda p: lider_segurado.get(p["safra"], []),
     }
+    if args.enxuta:
+        # Só a Rota de valor limitada a N nomes (PR de 22/11/2026): braços
+        # novos, mesma régua, outro JSON. A rota completa vem junto para a
+        # comparação direta.
+        escolhas = {fe.ROTA_VALOR: escolhas[fe.ROTA_VALOR]}
+        for n in fe.TAMANHOS_ROTA_ENXUTA:
+            escolhas[fe.rotulo_rota_topn(n)] = (
+                lambda p, n=n: fe.carteira_rota_valor_topn(
+                    p["df_pit"], p["universo"], n, selic=selic_da_safra(p["safra"])))
 
     def medir(escolha):
         return medir_escolha(por_safra, escolha, precos=precos, selic_macro=selic_macro,
@@ -193,6 +206,11 @@ def main() -> int:
         resumo_par = oos.resumir(par, "dif")
         m["vs_carteira_padrao"] = {**resumo_par, "safras": par}
         m["decisao"] = decidir(m, resumo_par)
+        if args.enxuta and rotulo != fe.ROTA_VALOR:
+            # Informativo, fora da regra de decisão: quanto o corte custa
+            # frente à rota completa (pareado, líquido).
+            pc = diferenca_pareada(bracos[fe.ROTA_VALOR]["safras"], m["safras"], "liquido")
+            m["vs_rota_completa"] = {**oos.resumir(pc, "dif"), "safras": pc}
         bracos[rotulo] = m
         r = m["vs_equal_weight"]
         print(f"{rotulo}: media={r['media']} ic95={r['ic95']} n={r['n_safras']} "
@@ -230,6 +248,10 @@ def main() -> int:
                 "das safras anteriores que não degradaram; degradar = deixar o "
                 "universo, falhar na trava de solvência ou lucro de N-1 <= 0; "
                 "dado ausente não degrada"),
+            **{fe.rotulo_rota_topn(n): (
+                f"a rota de valor limitada a {n} nomes: os {n} de maior valor_score "
+                "da própria rota (desempate por margem e ticker); com menos de "
+                f"{n} oportunidades, todas") for n in fe.TAMANHOS_ROTA_ENXUTA},
             "pesos": "iguais entre os escolhidos",
             "formacao": "em abril (início da vigência)",
         },
@@ -278,8 +300,9 @@ def main() -> int:
     if args.dry_run:
         print(texto)
     else:
-        CAMINHO.write_text(texto + "\n", encoding="utf-8")
-        print(f"gravado em {CAMINHO}")
+        destino = CAMINHO_ENXUTA if args.enxuta else CAMINHO
+        destino.write_text(texto + "\n", encoding="utf-8")
+        print(f"gravado em {destino}")
     return 0
 
 
