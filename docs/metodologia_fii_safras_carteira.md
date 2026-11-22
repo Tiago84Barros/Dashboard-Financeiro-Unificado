@@ -1,6 +1,6 @@
 # Carteira de FIIs em safras anuais (estrutura da Empresas B3)
 
-Versão `fii-safras-1.1.0` — `core/fii_safras_carteira.py`, medida por
+Versão `fii-safras-1.2.0` — `core/fii_safras_carteira.py`, medida por
 `scripts/medir_safras_fii.py` no armazém local. Ainda não alimenta nenhuma
 tela: é a medição que decide se a estrutura merece substituir o otimizador
 mensal da Seleção de FIIs.
@@ -15,7 +15,9 @@ mensal da Seleção de FIIs.
    snapshot de 31/03/N (`ultimo_snapshot_na_data(..., idade_max_dias=0)`):
    o fundo que saiu da bolsa não gera snapshot novo e não herda o do ano
    anterior.
-3. **Segmento = tipo** (`tijolo`, `papel`, `fof`, `hibrido`).
+3. **Segmento = tipo** (`tijolo`, `papel`, `fof`, `hibrido`) no default; com
+   `segmento="cadastral"`, o tipo partido pelo segmento do cadastro CVM (ver
+   "Adaptações ao contexto FII").
 4. **Líderes por tipo** — o laço de `_processar_segmento` da B3, pelas mesmas
    funções (`core/pesos_por_score.py`): decaimento de 7% a.a. por ano
    consecutivo de liderança (teto 30%), n pela heurística dos três primeiros,
@@ -52,7 +54,7 @@ mensal da Seleção de FIIs.
     e não entra na média. Safra incompleta é contabilizada e não entra na
     média.
 
-## Adaptações ao contexto FII (v1.1.0)
+## Adaptações ao contexto FII (v1.1.0 e v1.2.0)
 
 O porte copia o algoritmo de decisão da B3, não os números dela. Cada
 adaptação é um parâmetro; o default é a regra da B3, para a medição comparar
@@ -66,6 +68,8 @@ inteira das opções).
 | | `ifix` | margem `thr_ifix` (default 0) sobre o DCA no IFIX oficial, nos mesmos meses |
 | `nomes_por_tipo` | `None` (default) | líder + maior participação, até 2 nomes por tipo — a B3 |
 | | N ≥ 1 | os N primeiros do score ajustado do tipo; cap do tipo `max(cap, 1/N)` |
+| `segmento` | `tipo` (default) | um grupo por tipo, como na v1.1.0 |
+| | `cadastral` | grupo `tipo/segmento` pelo `Segmento_Atuacao` do informe mensal da CVM; sem segmento, o grupo do tipo |
 
 Por que cada uma:
 
@@ -87,6 +91,24 @@ Por que cada uma:
   cap 0,25, um único tipo aprovado não fecha a carteira e a safra vai para
   caixa. Com N ≥ 4, um tipo basta. O cap da carteira (0,25) continua valendo
   na montagem, sobre todos os tipos juntos.
+- **Segmento cadastral.** Logística, lajes e shoppings reagem a ciclos
+  diferentes, e o tipo `tijolo` os junta num grupo só. O segmento vem da
+  exposição `segment` de `market.fii_exposures`, gravada do
+  `Segmento_Atuacao` do informe mensal com o `knowledge_at` do próprio
+  informe: a carteira de 31/03/N usa o segmento que era público na data. O
+  grupo é `tipo/segmento` (ex.: `tijolo/logistica`), porque o `type_score` é
+  medido contra os pares do tipo e só compara dentro dele. O rótulo é
+  normalizado sem acento e sem caixa: a CVM escreve o mesmo segmento de mais
+  de um jeito.
+  - A ingestão descarta o segmento que não informa nada: "Híbrido",
+    "Outros", "Multicategoria" e "Títulos e Val. Mob.". Esse último é o de
+    quase todo FII de papel. Por isso **recebíveis não vira segmento**: o
+    papel continua num grupo só. O fundo sem segmento fica no grupo do tipo.
+  - `cobertura_segmento` de cada safra (e `elegiveis_com_segmento_cadastral`
+    em `universo`, no script) diz quantos elegíveis tinham segmento. Com
+    cobertura baixa, a variante mede pouco além do default.
+  - A liderança é contada por grupo: o fundo que muda de segmento recomeça a
+    contagem do decaimento no grupo novo.
 
 Nenhum valor novo foi escolhido sem medir: o default fica na regra da B3 até
 a medição no armazém mostrar qual variante sustenta excesso sobre o IFIX.
@@ -111,5 +133,9 @@ a medição no armazém mostrar qual variante sustenta excesso sobre o IFIX.
   ganhou do IFIX no passado, o que não garante ganhar na safra seguinte.
 - Poucas safras (uma por ano): o intervalo de confiança é largo. A leitura
   (`leitura_honesta`) diz quando ele não distingue a carteira de comprar o IFIX.
+- Com `segmento="cadastral"`, o grupo pode ter 2 ou 3 fundos, como o
+  segmento da B3. Com cap estrito, a regra da B3 leva no máximo 2 nomes por
+  grupo; mais grupos aprovados fecham o cap mais fácil, mas cada portão mede
+  menos fundos (Rank-IC com pouco universo).
 - O giro de saída para caixa segue a convenção de `portfolio_turnover`
   (meia soma das diferenças), a mesma do backtest robusto.
