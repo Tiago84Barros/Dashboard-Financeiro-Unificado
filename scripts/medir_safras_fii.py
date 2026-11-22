@@ -115,7 +115,8 @@ def coletar(conn) -> dict:
 
 
 def _enxuto(res: dict) -> dict:
-    out = {k: res.get(k) for k in ("versao", "status", "ir_calculado", "leitura", "resumo",
+    out = {k: res.get(k) for k in ("versao", "status", "ir_calculado", "ifix_fonte",
+                                   "ifix_no_portao", "leitura", "resumo",
                                    "fora_do_porte", "blockers")}
     out["safras"] = [{
         "safra": r["safra"], "contada": r.get("contada"), "caixa": r.get("caixa"),
@@ -186,7 +187,8 @@ def main() -> int:
     for rotulo, params in grade:
         res = medir_safras(dados["elegiveis"], dados["returns"], dados["ifix"],
                            selic_decisao=dados["selic_decisao"],
-                           selic_mensal=dados["selic_mensal"], params=params)
+                           selic_mensal=dados["selic_mensal"], params=params,
+                           ifix_fonte=dados["benchmark"])
         saida["variantes"][rotulo] = _enxuto(res)
     texto = json.dumps(saida, indent=2, ensure_ascii=False, default=str)
     print(texto)

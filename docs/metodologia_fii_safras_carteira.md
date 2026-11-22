@@ -77,7 +77,11 @@ Por que cada uma:
   capital (o portão só tem o retorno total), o que favorece o FII aqui.
 - **IFIX.** É o que o investidor compraria no lugar da carteira, e é o
   benchmark do resultado. O IFIX precisa existir em cada mês do DCA; faltando
-  um, o tipo reprova ("IFIX ausente no período do portão").
+  um, o tipo reprova ("IFIX ausente no período do portão"). Só o IFIX
+  oficial da B3 decide: quando o armazém não o tem e o benchmark cai no
+  XFIX11 ou na mediana do universo, o tipo reprova com "IFIX oficial ausente
+  (fonte: ...)". O substituto continua como referência do resultado, com o
+  nome no campo `benchmark`, mas não escolhe carteira.
 - **N por tipo.** A regra de 2 nomes é da B3, onde o segmento CVM tem 2 ou
   3 empresas. Tipo de FII tem dezenas de elegíveis; com 2 nomes por tipo e
   cap 0,25, um único tipo aprovado não fecha a carteira e a safra vai para

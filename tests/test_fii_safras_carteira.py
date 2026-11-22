@@ -431,6 +431,43 @@ def test_medicao_com_portao_ifix_sem_ifix_reprova_tudo():
     assert not any(g["aprovado"] for g in segs)
 
 
+def _ifix_do_universo(ret):
+    total = fsc.matriz_de_retornos(ret, "total_return")
+    return total.mean(axis=1)
+
+
+@pytest.mark.parametrize("fonte", ["XFIX11_proxy", "universe_median_proxy", None])
+def test_portao_ifix_so_decide_com_o_ifix_oficial(fonte):
+    ret, eleg = _universo()
+    kw = dict(selic_decisao={a: 0.10 for a in eleg}, selic_mensal=_selic(),
+              params={"portao": "ifix"})
+    oficial = fsc.medir_safras(eleg, ret, _ifix_do_universo(ret),
+                               ifix_fonte=fsc.FONTE_IFIX_OFICIAL, **kw)
+    proxy = fsc.medir_safras(eleg, ret, _ifix_do_universo(ret), ifix_fonte=fonte, **kw)
+    segs_of = [g for r in oficial["safras"] for g in r["segmentos"]]
+    segs_px = [g for r in proxy["safras"] for g in r["segmentos"]]
+    # com a série oficial o portão mede a margem; com substituto, não decide
+    assert any(g["margem_ifix_pct"] is not None for g in segs_of)
+    assert oficial["ifix_no_portao"] is True and proxy["ifix_no_portao"] is False
+    assert proxy["ifix_fonte"] == fonte
+    assert all(g["margem_ifix_pct"] is None for g in segs_px)
+    assert not any(g["aprovado"] for g in segs_px)
+    rotulo = f"IFIX oficial ausente (fonte: {fonte or 'não informada'})"
+    assert {g["motivo"] for g in segs_px} == {"sem patrimônio no backtest", rotulo}
+    # o substituto segue como referência do resultado, rotulado
+    assert [r.get("ifix") for r in proxy["safras"]] == [
+        r.get("ifix") for r in oficial["safras"]]
+
+
+def test_portao_selic_ignora_a_fonte_do_ifix():
+    ret, eleg = _universo()
+    kw = dict(selic_decisao={a: 0.10 for a in eleg}, selic_mensal=_selic())
+    a = fsc.medir_safras(eleg, ret, _ifix_do_universo(ret),
+                         ifix_fonte=fsc.FONTE_IFIX_OFICIAL, **kw)
+    b = fsc.medir_safras(eleg, ret, _ifix_do_universo(ret), ifix_fonte="XFIX11_proxy", **kw)
+    assert [r["pesos"] for r in a["safras"]] == [r["pesos"] for r in b["safras"]]
+
+
 def test_nomes_por_tipo_pega_os_n_primeiros_do_score():
     scores = {2020: {f"F{i}11": float(90 - i) for i in range(8)}}
     hist = fsc.historico_do_segmento(scores, gamma=0.9, cap=0.25, soft=0.05,

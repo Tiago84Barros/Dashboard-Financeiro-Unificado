@@ -73,7 +73,9 @@ default reproduz a regra da B3, para a medição comparar as duas:
   o FII nessa comparação -- declarado.
   ``"ifix"``: DCA no IFIX oficial nos mesmos meses, margem ``thr_ifix``
   (default 0: ganhar do índice). Mês sem IFIX reprova o tipo ("IFIX ausente
-  no período do portão"), como a Selic ausente.
+  no período do portão"), como a Selic ausente. Só a série oficial decide
+  (`FONTE_IFIX_OFICIAL`): com XFIX11 ou a mediana do universo no lugar, o
+  tipo reprova com "IFIX oficial ausente (fonte: ...)".
 - ``nomes_por_tipo``: ``None`` (default, a B3) é líder + maior
   participação, no máximo 2 nomes por tipo -- regra pensada para segmento
   CVM de 2 ou 3 empresas. Com N, os líderes do ano são os N primeiros do
@@ -169,6 +171,12 @@ PORTOES: dict[str, tuple[str, str, str]] = {
     "selic_liquida": ("val_selic_liquida", "thr_selic", "a Selic líquida de IR"),
     "ifix": ("val_ifix", "thr_ifix", "o IFIX"),
 }
+
+#: Fonte que o portão IFIX aceita (``carregar_benchmark_fii``). XFIX11 e a
+#: mediana do universo servem de referência do resultado, rotulada, mas não
+#: decidem carteira: o portão IFIX com um substituto mede outra coisa
+#: (AGENTS.md: dado ausente permanece ausente).
+FONTE_IFIX_OFICIAL = "IFIX_official"
 
 
 def _validar_nomes_por_tipo(valor: Any) -> int | None:
@@ -667,7 +675,8 @@ def _scores_por_segmento(elegiveis_por_safra: Mapping[int, list[dict]]
 def medir_safras(elegiveis_por_safra: Mapping[int, list[dict]], retornos: pd.DataFrame,
                  ifix: pd.Series | None, *, selic_decisao: Mapping[int, float],
                  selic_mensal: pd.Series | None = None,
-                 params: Mapping[str, Any] | None = None) -> dict:
+                 params: Mapping[str, Any] | None = None,
+                 ifix_fonte: str | None = None) -> dict:
     """Carteira de safras FII, líquida de custo e IR, contra IFIX, EW e Selic.
 
     ``elegiveis_por_safra``: {N: linhas elegíveis em 31/03/N}, cada uma com
@@ -678,6 +687,11 @@ def medir_safras(elegiveis_por_safra: Mapping[int, list[dict]], retornos: pd.Dat
     ``selic_mensal``: Selic a.a. (fração) por mês, para o DCA do portão.
     ``ifix``: retorno mensal do IFIX -- a referência da safra e, com
     ``portao="ifix"``, a do portão (só os meses até março/N).
+    ``ifix_fonte``: de onde veio ``ifix`` (o nome que `carregar_benchmark_fii`
+    devolve). Só com `FONTE_IFIX_OFICIAL` a série entra no portão e na
+    ``margem_ifix_pct``; com um substituto (XFIX11, mediana do universo) ou
+    sem fonte declarada, o portão IFIX reprova com "IFIX oficial ausente" e a
+    série fica só como referência do resultado.
     """
     p = {**PARAMS_DEFAULT, **(params or {})}
     if str(p["portao"]) not in PORTOES:
@@ -692,6 +706,8 @@ def medir_safras(elegiveis_por_safra: Mapping[int, list[dict]], retornos: pd.Dat
         return {"versao": VERSAO, "status": "blocked",
                 "blockers": ["sem safras elegíveis ou sem retornos"], "params": p}
     ano_inicio = safras[0]
+    ifix_oficial = ifix_fonte == FONTE_IFIX_OFICIAL
+    ifix_portao = ifix if ifix_oficial else None
     por_seg = _scores_por_segmento(elegiveis_por_safra)
     historicos = {
         tipo: historico_do_segmento(
@@ -710,8 +726,11 @@ def medir_safras(elegiveis_por_safra: Mapping[int, list[dict]], retornos: pd.Dat
             if safra not in hist["lids_por_ano"]:
                 continue
             m = metricas_pit(hist, safra, total, universo_seg[tipo], ano_inicio=ano_inicio,
-                             params=p, selic_mensal=selic_mensal, ifix_mensal=ifix)
+                             params=p, selic_mensal=selic_mensal, ifix_mensal=ifix_portao)
             aprovado, motivo = aprova_fii(m, p, safra)
+            if (ifix is not None and not ifix_oficial and p["portao"] == "ifix"
+                    and motivo == "IFIX ausente no período do portão"):
+                motivo = f"IFIX oficial ausente (fonte: {ifix_fonte or 'não informada'})"
             sel, pesos_seg, _ranking = selecao_fii(hist, m, safra, p)
             segmentos.append({
                 "tipo": tipo, "aprovado": bool(aprovado), "motivo": motivo,
@@ -774,6 +793,7 @@ def medir_safras(elegiveis_por_safra: Mapping[int, list[dict]], retornos: pd.Dat
     return {
         "versao": VERSAO, "status": "ok", "params": p,
         "ir_calculado": ir_calculado,
+        "ifix_fonte": ifix_fonte, "ifix_no_portao": ifix_oficial,
         "fora_do_porte": ["resiliência ROIC − Selic (FII não tem ROIC)",
                           "tetos de setor e de ciclo (o tipo já é o segmento)",
                           "portão qualitativo LLM, piso de qualidade, Score de Entrada"],
