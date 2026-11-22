@@ -86,6 +86,17 @@ def test_decaimento_tira_quem_lidera_ha_anos():
     assert "E11" in hist["lids_por_ano"][2018]
 
 
+def test_sem_decaimento_o_lider_estavel_nunca_sai():
+    # O contrafactual do teste acima: é o que `--decaimento off` mede.
+    scores = {ano: {"A11": 80.0, "B11": 79.0, "C11": 78.0, "D11": 77.0, "E11": 76.5}
+              for ano in range(2017, 2023)}
+    hist = fsc.historico_do_segmento(scores, gamma=0.9, cap=0.25, soft=0.05,
+                                     decaimento=False)
+    assert all(lids == ["A11", "B11", "C11", "D11"]
+               for lids in hist["lids_por_ano"].values())
+    assert all(r["Score_Ajustado"] == r["Score_Bruto"] for r in hist["score_rows"])
+
+
 # ── A-118 ──────────────────────────────────────────────────────────────────
 
 
@@ -606,6 +617,43 @@ def test_grade_do_script_mede_o_segmento_cadastral():
     }
     with pytest.raises(SystemExit):
         variantes("selic", "15", "0", "b3", "setor")
+
+
+def test_grade_do_script_mede_o_decaimento_ligado_e_desligado():
+    from scripts.medir_safras_fii import variantes
+
+    grade = dict(variantes("selic", "15", "0", "b3", "tipo", "on,off"))
+    assert grade == {
+        "portao=selic|thr_selic=15|nomes_por_tipo=b3":
+            {"portao": "selic", "thr_selic": 15.0, "nomes_por_tipo": None},
+        "portao=selic|thr_selic=15|nomes_por_tipo=b3|decaimento=off":
+            {"portao": "selic", "thr_selic": 15.0, "nomes_por_tipo": None,
+             "decaimento": False},
+    }
+    # combina com as outras opções
+    assert len(variantes("selic", "15", "0", "b3,4", "tipo,cadastral", "on,off")) == 8
+    with pytest.raises(SystemExit):
+        variantes("selic", "15", "0", "b3", "tipo", "talvez")
+
+
+def test_decaimento_desligado_chega_ao_historico_da_carteira(monkeypatch):
+    # O parâmetro do script tem de chegar ao laço de liderança de cada grupo.
+    vistos = []
+    original = fsc.historico_do_segmento
+
+    def espiao(*args, **kwargs):
+        vistos.append(kwargs.get("decaimento"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(fsc, "historico_do_segmento", espiao)
+    elegiveis = {ano: [{"ticker": f"T{i}11", "tipo": "tijolo", "type_score": 50.0 + i}
+                       for i in range(6)] for ano in (2020, 2021)}
+    datas = pd.date_range("2019-04-30", "2022-03-31", freq="ME")
+    rets = pd.DataFrame([{"ticker": f"T{i}11", "date": d, "total_return": 0.01}
+                         for i in range(6) for d in datas])
+    fsc.medir_safras(elegiveis, rets, None, selic_decisao={2020: 0.02, 2021: 0.02},
+                     params={"decaimento": False})
+    assert vistos and set(vistos) == {False}
 
 
 def test_linha_do_pit_leva_o_segmento_cadastral_ate_a_carteira():
