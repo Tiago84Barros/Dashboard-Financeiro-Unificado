@@ -8,16 +8,25 @@ por tipo, líder + maior participação, orçamento igual por tipo, cap 0,25,
 regra D1 (caixa à Selic), custos de giro e IR de 20% sobre ganho.
 
 Não grava nada por padrão. ``--gravar`` escreve
-``data/fii_safras_carteira.json``. ``--thr-selic`` aceita uma lista para a
-sensibilidade do portão (a margem sobre a Selic é o critério que mais
-reprova FII, cujo retorno de longo prazo anda perto do CDI).
+``data/fii_safras_carteira.json``. As opções aceitam listas e o script mede
+todas as combinações -- o default de cada uma é a regra da B3:
+
+- ``--portao selic,selic_liquida,ifix``: a referência da margem do portão
+  (Selic bruta, Selic líquida de IR, IFIX);
+- ``--thr-selic 15,5,0``: margem mínima das duas variantes de Selic;
+- ``--thr-ifix 0,2``: margem mínima sobre o IFIX;
+- ``--nomes-por-tipo b3,3,5``: ``b3`` é líder + maior participação; um
+  número N leva os N primeiros do score de cada tipo aprovado.
 
     python scripts/medir_safras_fii.py
     python scripts/medir_safras_fii.py --thr-selic 15,5,0 --gravar
+    python scripts/medir_safras_fii.py --portao selic,selic_liquida,ifix \
+        --thr-selic 15,0 --nomes-por-tipo b3,3,5
 """
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import sys
 from pathlib import Path
@@ -34,7 +43,7 @@ from core.fii_integrated_model import (  # noqa: E402
     IntegratedEligibilityPolicy,
     apply_integrated_eligibility,
 )
-from core.fii_safras_carteira import VERSAO, medir_safras  # noqa: E402
+from core.fii_safras_carteira import PORTOES, VERSAO, medir_safras  # noqa: E402
 from core.fii_validation import (  # noqa: E402
     linhas_pit_na_data,
     preparar_snapshots,
@@ -115,6 +124,10 @@ def _enxuto(res: dict) -> dict:
         "aprovados": [g["tipo"] for g in r.get("segmentos", []) if g["aprovado"]],
         "reprovados": {g["tipo"]: g["motivo"] for g in r.get("segmentos", [])
                        if not g["aprovado"]},
+        "margens_pct": {g["tipo"]: {k: (None if g.get(f"margem_{k}_pct") is None
+                                        else round(float(g[f"margem_{k}_pct"]), 2))
+                                    for k in ("selic", "selic_liquida", "ifix")}
+                        for g in r.get("segmentos", [])},
         **{k: (None if r.get(k) is None else round(float(r[k]), 4))
            for k in ("bruto", "giro", "custo", "ir", "liquido", "ifix", "ew", "selic",
                      "excesso_liquido_ifix", "excesso_liquido_ew")},
@@ -123,12 +136,40 @@ def _enxuto(res: dict) -> dict:
     return out
 
 
+def _lista(texto: str) -> list[str]:
+    return [x.strip() for x in str(texto).split(",") if x.strip()]
+
+
+def variantes(portoes: str, thr_selic: str, thr_ifix: str,
+              nomes_por_tipo: str) -> list[tuple[str, dict]]:
+    """(rótulo, params) de cada combinação; o limiar acompanha o portão."""
+    nomes = [None if n.lower() == "b3" else int(n) for n in _lista(nomes_por_tipo)]
+    out: list[tuple[str, dict]] = []
+    for portao in _lista(portoes):
+        if portao not in PORTOES:
+            raise SystemExit(f"--portao desconhecido: {portao} (use {', '.join(PORTOES)})")
+        chave = PORTOES[portao][1]
+        limiares = [float(x) for x in _lista(thr_ifix if chave == "thr_ifix" else thr_selic)]
+        for thr, n in itertools.product(limiares, nomes):
+            rotulo = (f"portao={portao}|{chave}={thr:g}|nomes_por_tipo="
+                      f"{'b3' if n is None else n}")
+            out.append((rotulo, {"portao": portao, chave: thr, "nomes_por_tipo": n}))
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--portao", default="selic",
+                    help="referência do portão: selic, selic_liquida, ifix (lista)")
     ap.add_argument("--thr-selic", default="15",
                     help="margem mínima sobre a Selic (%%), lista separada por vírgula")
+    ap.add_argument("--thr-ifix", default="0",
+                    help="margem mínima sobre o IFIX (%%), lista separada por vírgula")
+    ap.add_argument("--nomes-por-tipo", default="b3",
+                    help="b3 (líder + maior participação) ou N fundos por tipo (lista)")
     ap.add_argument("--gravar", action="store_true")
     args = ap.parse_args()
+    grade = variantes(args.portao, args.thr_selic, args.thr_ifix, args.nomes_por_tipo)
     engine = create_engine(
         _warehouse_url().replace("postgresql://", "postgresql+psycopg2://"))
     try:
@@ -142,11 +183,11 @@ def main() -> int:
     saida = {"versao": VERSAO, "benchmark": dados["benchmark"],
              "falhas_de_insumo": dados["falhas"], "universo": dados["contagem"],
              "variantes": {}}
-    for thr in [float(x) for x in args.thr_selic.split(",") if x.strip()]:
+    for rotulo, params in grade:
         res = medir_safras(dados["elegiveis"], dados["returns"], dados["ifix"],
                            selic_decisao=dados["selic_decisao"],
-                           selic_mensal=dados["selic_mensal"], params={"thr_selic": thr})
-        saida["variantes"][f"thr_selic={thr:g}"] = _enxuto(res)
+                           selic_mensal=dados["selic_mensal"], params=params)
+        saida["variantes"][rotulo] = _enxuto(res)
     texto = json.dumps(saida, indent=2, ensure_ascii=False, default=str)
     print(texto)
     if args.gravar:

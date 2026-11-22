@@ -327,3 +327,160 @@ def test_winsorizacao_nao_cria_perda_ficticia_no_ir():
     r.evoluir({"A11": 0.05}, {"A11": fsc.renda_winsorizada(0.10, 0.05, 0.10)})
     r.rebalancear({})
     assert r.prejuizo == pytest.approx(0.0)
+
+
+# ── adaptações FII: portão e nomes por tipo (22/11/2026) ───────────────────
+
+
+def _m_portao(val_est, **refs):
+    """Métricas PIT neutras fora da margem: Rank-IC ausente, seleção sem
+    amostra, liderança recente."""
+    base = {"val_est": val_est, "val_selic": 1000.0, "val_selic_liquida": 1000.0,
+            "val_ifix": 1000.0, "val_ew": 0.0, "rank_ic_mean": float("nan"),
+            "selecao_excesso": oos._selecao.intervalo_excesso([]),
+            "ultimo_lid": {"A11": 2020}}
+    return {**base, **refs}
+
+
+def test_portao_selic_e_o_aprova_economico_da_b3():
+    p = dict(fsc.PARAMS_DEFAULT)
+    for val_est in (0.0, 900.0, 1100.0, 1149.0, 1151.0, 2000.0):
+        for selic in (0.0, 1000.0, 1500.0):
+            m = _m_portao(val_est, val_selic=selic)
+            assert fsc.aprova_fii(m, p, 2021) == oos.aprova_economico(m, p, 2021)
+
+
+def test_selecao_default_e_a_da_b3():
+    ret, eleg = _universo()
+    total = fsc.matriz_de_retornos(ret)
+    scores = fsc._scores_por_segmento(eleg)["papel"]
+    hist = fsc.historico_do_segmento(scores, gamma=0.9, cap=0.25, soft=0.05)
+    m = fsc.metricas_pit(hist, 2021, total, {a: list(s) for a, s in scores.items()},
+                         ano_inicio=2017, params=fsc.PARAMS_DEFAULT, selic_mensal=_selic())
+    esperado = oos.selecao_do_segmento(
+        hist, m, 2021, max_anos_lid=5, pode_incluir_maior=pps.pode_incluir_maior_participacao)
+    assert fsc.selecao_fii(hist, m, 2021, fsc.PARAMS_DEFAULT) == esperado
+
+
+def test_selic_liquida_desconta_o_ir_so_do_ganho():
+    assert fsc.selic_liquida(1200.0, 1000.0, 0.15) == pytest.approx(1170.0)
+    assert fsc.selic_liquida(900.0, 1000.0, 0.15) == pytest.approx(900.0)
+
+
+def test_portao_selic_liquida_aprova_o_que_a_bruta_reprova():
+    m = _m_portao(1180.0, val_selic=1200.0, val_selic_liquida=1170.0)
+    p = {**fsc.PARAMS_DEFAULT, "thr_selic": 0.0}
+    assert fsc.aprova_fii(m, p, 2021) == (False, "margem sobre a Selic")
+    assert fsc.aprova_fii(m, {**p, "portao": "selic_liquida"}, 2021) == (True, "")
+    assert fsc.aprova_fii(m, {**p, "portao": "selic_liquida", "thr_selic": 5.0}, 2021) == (
+        False, "margem sobre a Selic líquida de IR")
+
+
+def test_portao_ifix_exige_ganhar_do_indice_e_ignora_a_selic():
+    p = {**fsc.PARAMS_DEFAULT, "portao": "ifix"}
+    assert fsc.aprova_fii(_m_portao(1100.0, val_ifix=1200.0, val_selic=None), p, 2021) == (
+        False, "margem sobre o IFIX")
+    assert fsc.aprova_fii(_m_portao(1100.0, val_ifix=1050.0, val_selic=None), p, 2021) == (
+        True, "")
+    assert fsc.aprova_fii(_m_portao(1100.0, val_ifix=None), p, 2021) == (
+        False, "IFIX ausente no período do portão")
+
+
+def test_dca_no_ifix_empata_com_fundo_que_rende_o_ifix():
+    m = _matriz({"A11": [0.01] * 4, "B11": [0.01] * 4})
+    kw = dict(lids_por_ano={2020: ["A11", "B11"]},
+              pesos_por_ano={2020: {"A11": 0.5, "B11": 0.5}},
+              universo_por_ano={2020: ["A11", "B11"]}, aporte=100.0, custo_compra=0.0)
+    ifix = pd.Series(0.01, index=m.index)
+    det: dict = {}
+    v_est = fsc.simular_segmento(m, ifix_mensal=ifix, details_out=det, **kw)[0]
+    assert det["ifix"] == pytest.approx(v_est)
+    assert det["aportado"] == pytest.approx(400.0)
+    det_falta: dict = {}
+    fsc.simular_segmento(m, ifix_mensal=ifix.drop(ifix.index[1]), details_out=det_falta, **kw)
+    assert det_falta["ifix"] is None
+    det_sem: dict = {}
+    fsc.simular_segmento(m, details_out=det_sem, **kw)
+    assert det_sem["ifix"] is None
+
+
+def test_portao_ifix_nao_le_depois_de_marco_da_safra():
+    ret, eleg = _universo()
+    total = fsc.matriz_de_retornos(ret)
+    ifix = pd.Series(0.008, index=total.index)
+    futuro = ifix.copy()
+    futuro[futuro.index >= pd.Timestamp("2021-04-01")] = -0.5
+    scores = fsc._scores_por_segmento(eleg)["tijolo"]
+    hist = fsc.historico_do_segmento(scores, gamma=0.9, cap=0.25, soft=0.05)
+    universo = {a: list(s) for a, s in scores.items()}
+    kw = dict(ano_inicio=2017, params=fsc.PARAMS_DEFAULT, selic_mensal=_selic())
+    a = fsc.metricas_pit(hist, 2021, total, universo, ifix_mensal=ifix, **kw)
+    b = fsc.metricas_pit(hist, 2021, total, universo, ifix_mensal=futuro, **kw)
+    assert a["val_ifix"] is not None and a["val_ifix"] == b["val_ifix"]
+    assert a["val_selic_liquida"] < a["val_selic"]
+
+
+def test_medicao_com_portao_ifix_sem_ifix_reprova_tudo():
+    ret, eleg = _universo()
+    out = fsc.medir_safras(eleg, ret, None, selic_decisao={a: 0.10 for a in eleg},
+                           selic_mensal=_selic(), params={"portao": "ifix"})
+    segs = [g for r in out["safras"] for g in r["segmentos"]]
+    # a primeira safra não tem histórico de DCA: reprova antes da referência
+    motivos = {g["motivo"] for g in segs}
+    assert motivos == {"sem patrimônio no backtest", "IFIX ausente no período do portão"}
+    assert not any(g["aprovado"] for g in segs)
+
+
+def test_nomes_por_tipo_pega_os_n_primeiros_do_score():
+    scores = {2020: {f"F{i}11": float(90 - i) for i in range(8)}}
+    hist = fsc.historico_do_segmento(scores, gamma=0.9, cap=0.25, soft=0.05,
+                                     nomes_por_tipo=3)
+    assert hist["lids_por_ano"][2020] == ["F011", "F111", "F211"]
+    pesos = hist["pesos_por_ano"][2020]
+    assert sum(pesos.values()) == pytest.approx(1.0)
+    assert max(pesos.values()) <= 1.0 / 3 + 1e-9  # cap do tipo = max(0,25; 1/3)
+    seis = fsc.historico_do_segmento(scores, gamma=0.9, cap=0.25, soft=0.05,
+                                     nomes_por_tipo=6)
+    assert seis["lids_por_ano"][2020] == [f"F{i}11" for i in range(6)]
+    assert max(seis["pesos_por_ano"][2020].values()) <= 0.25 + 1e-9
+    curto = fsc.historico_do_segmento({2020: {"A11": 1.0, "B11": 2.0}}, gamma=0.9,
+                                      cap=0.25, soft=0.05, nomes_por_tipo=5)
+    assert curto["lids_por_ano"][2020] == ["B11", "A11"]
+
+
+def test_nomes_por_tipo_entra_inteiro_e_um_tipo_basta_para_o_cap():
+    ret, eleg = _universo()
+    out = fsc.medir_safras(eleg, ret, None, selic_decisao={a: 0.10 for a in eleg},
+                           selic_mensal=_selic(),
+                           params={"thr_selic": 0.0, "nomes_por_tipo": 5})
+    aprovados = [g for r in out["safras"] for g in r["segmentos"] if g["aprovado"]]
+    assert aprovados and all(len(g["selecionados"]) == 5 for g in aprovados)
+    for r in out["safras"]:
+        n_aprov = sum(g["aprovado"] for g in r["segmentos"])
+        if n_aprov:
+            assert r["inviavel_no_cap"] is False
+            assert len(r["pesos"]) == 5 * n_aprov
+            assert max(r["pesos"].values()) <= 0.25 + 1e-9
+
+
+@pytest.mark.parametrize("params", [{"portao": "cdi"}, {"nomes_por_tipo": 0},
+                                    {"nomes_por_tipo": 2.5}, {"nomes_por_tipo": True}])
+def test_parametro_invalido_levanta(params):
+    ret, eleg = _universo()
+    with pytest.raises(ValueError):
+        fsc.medir_safras(eleg, ret, None, selic_decisao={}, params=params)
+
+
+def test_grade_do_script_casa_limiar_com_portao():
+    from scripts.medir_safras_fii import variantes
+
+    grade = dict(variantes("selic,ifix", "15,0", "2", "b3,4"))
+    assert grade["portao=selic|thr_selic=15|nomes_por_tipo=b3"] == {
+        "portao": "selic", "thr_selic": 15.0, "nomes_por_tipo": None}
+    assert grade["portao=ifix|thr_ifix=2|nomes_por_tipo=4"] == {
+        "portao": "ifix", "thr_ifix": 2.0, "nomes_por_tipo": 4}
+    assert len(grade) == 2 * 2 + 1 * 2
+    # o default do script é a regra da B3
+    assert variantes("selic", "15", "0", "b3") == [
+        ("portao=selic|thr_selic=15|nomes_por_tipo=b3",
+         {"portao": "selic", "thr_selic": 15.0, "nomes_por_tipo": None})]

@@ -25,9 +25,14 @@ universo PIT do ano             elegibilidade integrada ESTRITA na data
                                 total (o FII reinveste o provento no próprio
                                 retorno), estratégia × Pesos Iguais × Selic
 ``metricas_pit``                `metricas_pit`: tudo cortado em março/N
-``aprova_economico``            o MESMO (importado), modo Econômico
-``selecao_do_segmento``         o MESMO (importado): líder + maior
-                                participação, com a regra de recência
+``aprova_economico``            o MESMO (importado), modo Econômico, via
+                                `aprova_fii`: o parâmetro ``portao`` escolhe a
+                                referência da margem (Selic bruta, Selic
+                                líquida de IR ou IFIX)
+``selecao_do_segmento``         o MESMO (importado) no default: líder + maior
+                                participação, com a regra de recência. Com
+                                ``nomes_por_tipo`` = N, os N primeiros do
+                                score do tipo (`selecao_fii`)
 ``montar_carteira``             o MESMO: orçamento igual por segmento, cap
 ``itens_da_cadeia``             o MESMO: aquecimento e regra D1 (sem carteira
                                 salvável, CAIXA à Selic)
@@ -51,6 +56,29 @@ O que da B3 NÃO entrou, e por quê:
   entre os líderes;
 - portão qualitativo (LLM), piso de qualidade e Score de Entrada: são da
   tela de ações e não têm equivalente medido para FII.
+
+Adaptações ao contexto FII (pedido do usuário de 22/11/2026: portar o
+algoritmo de decisão, não os números da B3). Cada uma é um parâmetro, e o
+default reproduz a regra da B3, para a medição comparar as duas:
+
+- ``portao``: a referência da margem do portão.
+  ``"selic"`` (default, a B3): DCA na Selic bruta, margem ``thr_selic``.
+  ``"selic_liquida"``: o ganho do DCA na Selic paga ``ir_renda_fixa`` (15%,
+  a menor alíquota da tabela regressiva -- a Selic líquida mais alta, ou
+  seja, o portão mais exigente para o FII), margem ``thr_selic``. O
+  provento do FII é isento para a pessoa física; a B3 compara com a Selic
+  bruta porque o dividendo de ação também é isento, mas a renda do FII é
+  quase todo o seu retorno. O DCA da estratégia segue bruto do IR de 20%
+  sobre ganho de capital (o portão só tem o retorno total), o que favorece
+  o FII nessa comparação -- declarado.
+  ``"ifix"``: DCA no IFIX oficial nos mesmos meses, margem ``thr_ifix``
+  (default 0: ganhar do índice). Mês sem IFIX reprova o tipo ("IFIX ausente
+  no período do portão"), como a Selic ausente.
+- ``nomes_por_tipo``: ``None`` (default, a B3) é líder + maior
+  participação, no máximo 2 nomes por tipo -- regra pensada para segmento
+  CVM de 2 ou 3 empresas. Com N, os líderes do ano são os N primeiros do
+  score ajustado do tipo, todos entram na carteira, e o cap por tipo vira
+  ``max(cap, 1/N)`` (o cap da carteira continua valendo na montagem).
 
 Regras herdadas do pipeline FII que continuam valendo:
 
@@ -79,7 +107,7 @@ from core.backtest_liquido import IR_FII_GANHO, RastreadorIR, renda_reinvestida
 from core.fii_methodology import VALID_TYPES
 from core.fii_validation import portfolio_turnover
 
-VERSAO = "fii-safras-1.0.0"
+VERSAO = "fii-safras-1.1.0"
 
 #: Parâmetros default: os da B3 (gamma, cap, soft, preset recomendado de
 #: aprovação) com as exceções declaradas no docstring do módulo.
@@ -101,6 +129,11 @@ PARAMS_DEFAULT: dict[str, Any] = {
     "exigir_vantagem_selecao": False,
     "max_anos_lid": 5,
     "exigir_resiliencia": False,
+    # adaptações FII (ver docstring do módulo); defaults = regra da B3
+    "portao": "selic",
+    "ir_renda_fixa": 0.15,
+    "thr_ifix": 0.0,
+    "nomes_por_tipo": None,
     # montagem
     "teto_setor": 1.0,
     "teto_ciclico": 1.0,
@@ -129,12 +162,31 @@ def matriz_de_retornos(retornos: pd.DataFrame, coluna: str = "total_return") -> 
             .sort_index())
 
 
+#: Referências do portão (`aprova_fii`): parâmetro -> (chave da métrica PIT,
+#: parâmetro do limiar, nome no motivo).
+PORTOES: dict[str, tuple[str, str, str]] = {
+    "selic": ("val_selic", "thr_selic", "a Selic"),
+    "selic_liquida": ("val_selic_liquida", "thr_selic", "a Selic líquida de IR"),
+    "ifix": ("val_ifix", "thr_ifix", "o IFIX"),
+}
+
+
+def _validar_nomes_por_tipo(valor: Any) -> int | None:
+    """``None`` (regra da B3) ou inteiro >= 1; o resto levanta."""
+    if valor is None:
+        return None
+    if isinstance(valor, bool) or int(valor) != valor or int(valor) < 1:
+        raise ValueError(f"nomes_por_tipo precisa ser None ou inteiro >= 1: {valor!r}")
+    return int(valor)
+
+
 # ── histórico de liderança (espelho de `_processar_segmento`) ──────────────
 
 def historico_do_segmento(scores_por_ano: Mapping[int, Mapping[str, float]], *,
                           gamma: float, cap: float, soft: float,
                           cap_adaptativo: bool = False,
-                          decaimento: bool = True) -> dict:
+                          decaimento: bool = True,
+                          nomes_por_tipo: int | None = None) -> dict:
     """Líderes e pesos por ano de um segmento, como a B3 faz.
 
     ``scores_por_ano``: {ano N: {ticker: type_score}} dos fundos do segmento
@@ -142,8 +194,14 @@ def historico_do_segmento(scores_por_ano: Mapping[int, Mapping[str, float]], *,
     decaimento pelos anos consecutivos de liderança, ranking total (score
     desc, ticker asc), n pela heurística dos três primeiros, no mínimo os
     nomes que o cap exige, pesos por score com cap suave.
+
+    Com ``nomes_por_tipo`` = N (adaptação FII), n = N (limitado ao universo),
+    sem heurística, e o cap do tipo vira ``max(cap, 1/n)``: o cap da carteira
+    é aplicado depois, na montagem, sobre todos os tipos juntos.
     """
     from core.portfolio_constraints import minimum_assets_for_cap
+
+    nomes_por_tipo = _validar_nomes_por_tipo(nomes_por_tipo)
 
     anos_lideranca: dict[str, int] = {}
     lids_por_ano: dict[int, list[str]] = {}
@@ -161,14 +219,18 @@ def historico_do_segmento(scores_por_ano: Mapping[int, Mapping[str, float]], *,
             score_rows.append({"Ano": ano, "ticker": tk, "Score_Ajustado": float(s),
                                "Score_Bruto": bruto[tk]})
         ranked = sorted(score_map.items(), key=lambda x: (-float(x[1]), str(x[0])))
-        n = (_pps.select_n_heuristica([s for _, s in ranked[:3]])
-             if len(ranked) >= 2 else 1)
-        min_n = 1 if cap_adaptativo else minimum_assets_for_cap(cap)
-        n = min(len(ranked), max(n, min_n))
+        if nomes_por_tipo is not None:
+            n = min(len(ranked), nomes_por_tipo)
+        else:
+            n = (_pps.select_n_heuristica([s for _, s in ranked[:3]])
+                 if len(ranked) >= 2 else 1)
+            min_n = 1 if cap_adaptativo else minimum_assets_for_cap(cap)
+            n = min(len(ranked), max(n, min_n))
         lids = [tk for tk, _ in ranked[:n]]
         lids_por_ano[ano] = lids
         if len(lids) >= 2:
-            cap_ef = max(cap, 1.0 / len(lids)) if cap_adaptativo else cap
+            cap_ef = (max(cap, 1.0 / len(lids))
+                      if cap_adaptativo or nomes_por_tipo is not None else cap)
             try:
                 w = _pps.apply_cap_soft(_pps.weights_from_scores(lids, score_map, gamma),
                                         cap_ef, soft)
@@ -203,17 +265,32 @@ def _selic_do_mes(selic_mensal: pd.Series | None, data: pd.Timestamp) -> float |
     return float(anteriores.iloc[-1])
 
 
+def _serie_mensal(serie: pd.Series | None) -> pd.Series | None:
+    """Série mensal com índice de data normalizado e sem duplicatas, ou None."""
+    if serie is None or serie.empty:
+        return None
+    s = pd.to_numeric(serie, errors="coerce").copy()
+    s.index = pd.to_datetime(s.index).normalize()
+    return s[~s.index.duplicated(keep="last")]
+
+
 def simular_segmento(matriz: pd.DataFrame, lids_por_ano: Mapping[int, list[str]],
                      pesos_por_ano: Mapping[int, Mapping[str, float]],
                      universo_por_ano: Mapping[int, Iterable[str]], *,
                      aporte: float, custo_compra: float,
                      selic_mensal: pd.Series | None = None,
+                     ifix_mensal: pd.Series | None = None,
                      details_out: dict | None = None
                      ) -> tuple[float, float | None, float, dict[str, float]]:
     """DCA mensal do segmento: estratégia, Selic e Pesos Iguais.
 
     O DCA na Selic volta None se algum mês da janela não tem Selic observável:
     uma taxa suposta decidiria o portão sem ser histórica.
+
+    ``ifix_mensal`` (retorno mensal do IFIX): o mesmo aporte no índice, mês a
+    mês. Vai em ``details_out["ifix"]`` -- None se faltar o IFIX de algum mês
+    da janela ou se a série não vier -- com ``details_out["aportado"]``, a
+    soma dos aportes (a base do IR da Selic líquida).
 
     ``matriz``: retorno total mensal (mês × fundo), NaN onde falta. Diferença
     para a B3, que simula com PREÇO: aqui o valor de cada posição cresce pelo
@@ -231,8 +308,14 @@ def simular_segmento(matriz: pd.DataFrame, lids_por_ano: Mapping[int, list[str]]
     usa todo o segmento de todos os anos; aqui o universo é PIT.
     """
     if matriz is None or matriz.empty:
+        if details_out is not None:
+            details_out.update(monthly_returns=[], ifix=None, aportado=0.0)
         return 0.0, 0.0, 0.0, {}
     tickers = list(matriz.columns)
+    ifix_s = _serie_mensal(ifix_mensal)
+    ifix_acum = 0.0
+    ifix_completo = ifix_s is not None
+    aportado = 0.0
     primeiro = {tk: matriz[tk].first_valid_index() for tk in tickers}
     ultimo = {tk: matriz[tk].last_valid_index() for tk in tickers}
 
@@ -257,6 +340,12 @@ def simular_segmento(matriz: pd.DataFrame, lids_por_ano: Mapping[int, list[str]]
             taxa_aa = 0.0
         taxa_m = (1.0 + taxa_aa) ** (1.0 / 12.0) - 1.0
         selic_acum = selic_acum * (1.0 + taxa_m) + aporte
+        aportado += aporte
+        r_ifix = ifix_s.get(dt.normalize()) if ifix_s is not None else None
+        if r_ifix is None or not np.isfinite(r_ifix):
+            ifix_completo = False
+            r_ifix = 0.0
+        ifix_acum = ifix_acum * (1.0 + float(r_ifix)) + aporte
 
         for carteira in (val_est, val_ew):
             for tk in list(carteira):
@@ -309,6 +398,8 @@ def simular_segmento(matriz: pd.DataFrame, lids_por_ano: Mapping[int, list[str]]
         details_out["monthly_returns"] = mensal
         details_out["pending_cash_strategy"] = float(caixa_est)
         details_out["pending_cash_equal_weight"] = float(caixa_ew)
+        details_out["ifix"] = float(ifix_acum) if ifix_completo else None
+        details_out["aportado"] = float(aportado)
     total_est = caixa_est + sum(val_est.values())
     total_ew = caixa_ew + sum(val_ew.values())
     return (total_est, selic_acum if selic_completa else None, total_ew,
@@ -416,12 +507,16 @@ def renda_winsorizada(bruto: float, winsorizado: float, renda: float) -> float:
 
 def metricas_pit(hist: dict, safra: int, matriz: pd.DataFrame,
                  universo_por_ano: Mapping[int, Iterable[str]], *, ano_inicio: int,
-                 params: Mapping[str, Any], selic_mensal: pd.Series | None = None) -> dict:
+                 params: Mapping[str, Any], selic_mensal: pd.Series | None = None,
+                 ifix_mensal: pd.Series | None = None) -> dict:
     """O que `aprova_economico` lê, só com dados até março/N.
 
     Usa os líderes dos anos < N, a matriz de retornos de abril/``ano_inicio``
     a março/N, o Rank-IC dos anos <= N−1 (cujo retorno termina em março/N) e
-    o último ano de liderança de cada fundo.
+    o último ano de liderança de cada fundo. Além do que a B3 lê, traz as
+    referências das adaptações FII, nos mesmos meses do DCA: ``val_ifix``
+    (None sem IFIX em algum mês) e ``val_selic_liquida`` (ganho da Selic
+    menos ``ir_renda_fixa``; None sem Selic).
     """
     janela_val = int(params.get("janela_val_anos", 2))
     aporte = float(params.get("aporte", 1000.0))
@@ -430,19 +525,27 @@ def metricas_pit(hist: dict, safra: int, matriz: pd.DataFrame,
     pesos = {a: v for a, v in hist["pesos_por_ano"].items() if int(a) < safra}
     tks = sorted({tk for nomes in lids.values() for tk in nomes}
                  | {tk for a, u in universo_por_ano.items() if int(a) < safra for tk in u})
+    ir_rf = float(params.get("ir_renda_fixa", PARAMS_DEFAULT["ir_renda_fixa"]))
     out: dict[str, Any] = {"val_est": 0.0, "val_selic": 0.0, "val_ew": 0.0, "maior": None,
+                           "val_selic_liquida": 0.0, "val_ifix": None,
                            "selecao_excesso": _selecao.intervalo_excesso([]), "n_linhas": 0}
     tks = [tk for tk in tks if tk in matriz.columns]
     if tks and not matriz.empty:
         df_seg = _oos._corte_ate_safra(matriz[tks], ano_inicio, safra)
         out["n_linhas"] = int(len(df_seg))
         if not df_seg.empty:
+            det_dca: dict = {}
             v_est, v_sel, v_ew, contrib = simular_segmento(
                 df_seg, lids, pesos, universo_por_ano, aporte=aporte,
-                custo_compra=custo, selic_mensal=selic_mensal)
+                custo_compra=custo, selic_mensal=selic_mensal,
+                ifix_mensal=ifix_mensal, details_out=det_dca)
             positivos = {tk: v for tk, v in contrib.items() if v > 0}
             out.update(val_est=float(v_est),
                        val_selic=None if v_sel is None else float(v_sel),
+                       val_selic_liquida=(None if v_sel is None else
+                                          selic_liquida(float(v_sel),
+                                                        det_dca["aportado"], ir_rf)),
+                       val_ifix=det_dca.get("ifix"),
                        val_ew=float(v_ew),
                        maior=max(positivos, key=positivos.get) if positivos else None)
             fim = pd.Timestamp(df_seg.index.max())
@@ -476,6 +579,62 @@ def metricas_pit(hist: dict, safra: int, matriz: pd.DataFrame,
             historico.setdefault(tk, []).append(int(ano))
     out["ultimo_lid"] = {tk: max(anos) for tk, anos in historico.items()}
     return out
+
+
+def selic_liquida(valor: float, aportado: float, ir: float) -> float:
+    """DCA na Selic depois do IR sobre o ganho (``valor`` − ``aportado``).
+
+    Perda não gera crédito: a Selic não tem perda nominal, e o valor menor
+    que o aportado só aparece em janela vazia."""
+    ganho = float(valor) - float(aportado)
+    return float(valor) - max(ganho, 0.0) * float(ir)
+
+
+def aprova_fii(m: Mapping[str, Any], params: Mapping[str, Any],
+               safra: int) -> tuple[bool, str]:
+    """`aprova_economico` da B3 com a referência que ``portao`` escolhe.
+
+    Ponto único do portão FII. A margem é medida contra a métrica PIT da
+    referência e o limiar dela (`PORTOES`); o resto do critério (Rank-IC,
+    seleção, liderança antiga) é o da B3, sem mudança. Referência ausente
+    com patrimônio no DCA reprova com o motivo -- nunca se supõe uma taxa ou
+    um índice.
+    """
+    modo = str(params.get("portao", "selic"))
+    if modo not in PORTOES:
+        raise ValueError(f"portao desconhecido: {modo!r}; use um de {sorted(PORTOES)}")
+    chave, limiar, nome = PORTOES[modo]
+    ref = m.get(chave)
+    if ref is None and m.get("val_est", 0.0) > 0:
+        rotulo = nome.split(" ", 1)[1]
+        return False, f"{rotulo[0].upper() + rotulo[1:]} ausente no período do portão"
+    m_gate = {**m, "val_selic": 0.0 if ref is None else float(ref)}
+    p_gate = {**params, "thr_selic": float(params.get(limiar, 0.0))}
+    aprovado, motivo = _oos.aprova_economico(m_gate, p_gate, safra)
+    if motivo == "margem sobre a Selic":
+        motivo = f"margem sobre {nome}"
+    return aprovado, motivo
+
+
+def selecao_fii(hist: dict, m: dict, safra: int,
+                params: Mapping[str, Any]) -> tuple[list[str], dict, list]:
+    """Quem do tipo aprovado entra: a regra da B3 ou os N primeiros.
+
+    ``nomes_por_tipo`` None: `selecao_do_segmento` (líder + maior
+    participação, com a regra de recência). Com N: todos os líderes do ano,
+    que `historico_do_segmento` já cortou nos N primeiros do score ajustado,
+    com os pesos por score dele.
+    """
+    n = _validar_nomes_por_tipo(params.get("nomes_por_tipo"))
+    if n is None:
+        return _oos.selecao_do_segmento(
+            hist, m, safra, max_anos_lid=int(params["max_anos_lid"]),
+            pode_incluir_maior=_pps.pode_incluir_maior_participacao)
+    lids = list((hist.get("lids_por_ano") or {}).get(safra) or [])
+    pesos = dict((hist.get("pesos_por_ano") or {}).get(safra) or {})
+    scores = _oos._scores_do_ano(hist, safra)
+    ranking = sorted(scores.items(), key=lambda x: (-float(x[1]), str(x[0])))
+    return lids, pesos, ranking
 
 
 _CACHE_RET: dict[tuple[int, int], dict[str, float]] = {}
@@ -517,8 +676,13 @@ def medir_safras(elegiveis_por_safra: Mapping[int, list[dict]], retornos: pd.Dat
     não é calculado e o resultado diz isso). ``selic_decisao``: Selic a.a.
     (fração) observável em 31/03/N -- o rendimento da safra em caixa.
     ``selic_mensal``: Selic a.a. (fração) por mês, para o DCA do portão.
+    ``ifix``: retorno mensal do IFIX -- a referência da safra e, com
+    ``portao="ifix"``, a do portão (só os meses até março/N).
     """
     p = {**PARAMS_DEFAULT, **(params or {})}
+    if str(p["portao"]) not in PORTOES:
+        raise ValueError(f"portao desconhecido: {p['portao']!r}; use um de {sorted(PORTOES)}")
+    p["nomes_por_tipo"] = _validar_nomes_por_tipo(p.get("nomes_por_tipo"))
     _CACHE_RET.clear()
     total = matriz_de_retornos(retornos, "total_return")
     ir_calculado = retornos is not None and "price_return" in retornos.columns
@@ -532,7 +696,8 @@ def medir_safras(elegiveis_por_safra: Mapping[int, list[dict]], retornos: pd.Dat
     historicos = {
         tipo: historico_do_segmento(
             scores, gamma=p["gamma"], cap=p["cap"], soft=p["soft"],
-            cap_adaptativo=bool(p["cap_adaptativo"]), decaimento=bool(p["decaimento"]))
+            cap_adaptativo=bool(p["cap_adaptativo"]), decaimento=bool(p["decaimento"]),
+            nomes_por_tipo=p.get("nomes_por_tipo"))
         for tipo, scores in por_seg.items() if scores}
     universo_seg = {tipo: {a: list(s) for a, s in scores.items()}
                     for tipo, scores in por_seg.items()}
@@ -545,16 +710,9 @@ def medir_safras(elegiveis_por_safra: Mapping[int, list[dict]], retornos: pd.Dat
             if safra not in hist["lids_por_ano"]:
                 continue
             m = metricas_pit(hist, safra, total, universo_seg[tipo], ano_inicio=ano_inicio,
-                             params=p, selic_mensal=selic_mensal)
-            if m.get("val_selic") is None and m.get("val_est", 0.0) > 0:
-                # sem Selic observável em algum mês do portão, a margem não
-                # existe: reprova com o motivo, em vez de supor uma taxa
-                aprovado, motivo = False, "Selic ausente no período do portão"
-            else:
-                aprovado, motivo = _oos.aprova_economico(m, p, safra)
-            sel, pesos_seg, _ranking = _oos.selecao_do_segmento(
-                hist, m, safra, max_anos_lid=int(p["max_anos_lid"]),
-                pode_incluir_maior=_pps.pode_incluir_maior_participacao)
+                             params=p, selic_mensal=selic_mensal, ifix_mensal=ifix)
+            aprovado, motivo = aprova_fii(m, p, safra)
+            sel, pesos_seg, _ranking = selecao_fii(hist, m, safra, p)
             segmentos.append({
                 "tipo": tipo, "aprovado": bool(aprovado), "motivo": motivo,
                 "n_lideres": len(hist["lids_por_ano"][safra]),
@@ -562,6 +720,11 @@ def medir_safras(elegiveis_por_safra: Mapping[int, list[dict]], retornos: pd.Dat
                 "selecionados": sel, "maior": m.get("maior"),
                 "margem_selic_pct": (None if m.get("val_selic") is None
                                      else _oos._margem_pct(m["val_est"], m["val_selic"])),
+                "margem_selic_liquida_pct": (
+                    None if m.get("val_selic_liquida") is None
+                    else _oos._margem_pct(m["val_est"], m["val_selic_liquida"])),
+                "margem_ifix_pct": (None if m.get("val_ifix") is None
+                                    else _oos._margem_pct(m["val_est"], m["val_ifix"])),
                 "margem_ew_pct": _oos._margem_pct(m["val_est"], m["val_ew"]),
                 "rank_ic_mean": m.get("rank_ic_mean"),
                 "selecao": (m.get("selecao_excesso") or {}).get("veredito"),
