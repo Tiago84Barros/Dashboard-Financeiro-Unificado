@@ -154,6 +154,37 @@ def nota_medicao_nota_fatores() -> str:
         return f"carteira ampla nota + fatores: medicao nao lida ({type(exc).__name__})"
 
 
+def nota_medicao_filtro_lider() -> str:
+    """Nota do filtro nota + fatores na rota "Lider de cada segmento".
+
+    Opcional e desligado por padrao: tira da lider os 30% de pior sinal nota +
+    fatores e troca pela proxima do segmento. A tela le a mesma carteira nota
+    + fatores medida acima; o que e proprio do filtro e a medicao pareada
+    gravada em data/oos_lider_filtro_nota_fatores_b3.json. A nota diz de
+    quando e de que versao ela e, a decisao e se a tela a mostra como
+    vencida -- a mesma regra da tela."""
+    try:
+        import core.b3_nota_fatores as nf
+        import core.b3_oos_carteira as oos
+        from core.b3_methodology import SCORE_VERSION
+        from core.b3_portfolio_presets import VERSION as PRESETS_VERSION
+        caminho = (Path(__file__).resolve().parents[1] / "data"
+                   / "oos_lider_filtro_nota_fatores_b3.json")
+        dados = oos.carregar(caminho)
+        if not dados:
+            return ("filtro nota + fatores na lider (opcional, desligado): sem "
+                    "medicao gravada (data/oos_lider_filtro_nota_fatores_b3.json)")
+        motivos = oos.vencida(dados, SCORE_VERSION, PRESETS_VERSION,
+                              versao_medicao=nf.VERSAO_FILTRO_LIDER)
+        base = (f"filtro nota + fatores na lider: medicao {dados.get('versao_medicao')} "
+                f"de {str(dados.get('medido_em') or '')[:10]}, perfil "
+                f"{dados.get('perfil')}, decisao: {dados.get('decisao')} "
+                "(data/oos_lider_filtro_nota_fatores_b3.json, sem o portao de LLM)")
+        return base + ("; VENCIDA: " + "; ".join(motivos) if motivos else "")
+    except Exception as exc:  # noqa: BLE001
+        return f"filtro nota + fatores na lider: medicao nao lida ({type(exc).__name__})"
+
+
 def nota_medicao_acumulado_safras() -> str:
     """Nota do acumulado (R$ 1) do "Desempenho safra a safra" da B3.
 
@@ -604,6 +635,7 @@ def confianca_b3(engine=None) -> ConfiancaSecao:
     notas.append(nota_selic_mensal(engine))
     notas.append(NOTA_DETALHE_DO_CHAT)
     notas.append(nota_medicao_nota_fatores())
+    notas.append(nota_medicao_filtro_lider())
     notas.append(nota_medicao_acumulado_safras())
     return ConfiancaSecao("Empresas B3", tuple(comps), u, tuple(notas))
 

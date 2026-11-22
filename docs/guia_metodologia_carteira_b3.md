@@ -636,3 +636,55 @@ caminho do app grava) faz o teste de execução falhar e o verificador de AST
 continuar passando — que é exatamente o cenário descrito acima. O verificador
 de AST segue no lugar: ele é barato e pega o caso constante; o teste de
 execução é o que cobre o caso dependente de dado.
+
+---
+
+## 18. Filtro nota + fatores na rota líder (22/11/2026, em teste)
+
+### Que pergunta ele responde
+
+A carteira ampla nota + fatores é a única estratégia da aba com ganho medido
+fora do zero (+2,5 pp ao ano sobre pesos iguais), mas não é a carteira que se
+salva: a que se salva é a "Líder de cada segmento", concentrada, cujo intervalo
+cruza o zero. O filtro pergunta se o sinal amplo, usado **só para vetar**,
+melhora a carteira concentrada sem mudar o resto dela.
+
+### A regra (`core/b3_nota_fatores.py::trocar_piores`)
+
+- Os piores são os 30% de pior sinal nota + fatores do universo inteiro: os
+  `fica=False` da mesma `carteira_nota_fatores` que a tela mostra e a medição
+  da carteira ampla usa (`piores_da_tabela`).
+- Roda depois do piso de qualidade. Quem está entre os piores sai e entra o
+  próximo do ranking do **próprio segmento** que não seja dos piores, nem
+  barrado pela guarda de entrada, nem reprovado pelo piso
+  (`core/b3_quality_floor.py::reprovados`, sem o afrouxamento de
+  viabilidade). O substituto herda o peso. Sem substituto, a vaga se perde.
+- Os piores ficam barrados também nas trocas seguintes: Inteligência dos
+  Ativos, parecer da IA e diversificação por correlação (`exclui_extra` em
+  `views/portfolio_b3.py::_barrado`).
+- Na tela é uma caixa, **desmarcada por padrão**. A carteira salva grava em
+  `params` se o filtro estava ligado, a versão e as trocas.
+
+### Como se mede (`scripts/medir_lider_filtro_nota_fatores_b3.py`)
+
+A mesma régua da líder (`scripts/medir_oos_carteira_b3.py::_medir_perfil`),
+sem mudar nada: PIT, custo do giro, IR, caixa a Selic (D1) e pesos iguais. Ela
+roda duas vezes sobre a mesma rodada da aba, sem e com o filtro; o único passo
+trocado é a escolha dos segmentos de cada safra. A métrica principal é a
+**diferença pareada** por safra do retorno líquido da carteira sem portão (com
+filtro menos sem filtro), com média e IC 95%.
+
+**Regra de decisão, registrada antes de medir:** o filtro só vira padrão se a
+média da diferença pareada líquida for > 0 **e** o IC 95% excluir o zero.
+Senão fica opcional e desligado. A regra não é ajustada depois do resultado.
+
+### O que a medição não cobre
+
+- o portão de LLM (Inteligência e parecer da IA) não roda na medição — vale
+  para a líder com ou sem filtro;
+- a troca ON/PN do piso de liquidez da tela não é refeita na medição;
+- a rota de revisão (`b3_review`) não aplica o filtro.
+
+Com nove safras o efeito tem de ser grande para o IC sair do zero. Um "não
+provado" é o resultado mais provável e não quer dizer que o filtro piora a
+carteira: quer dizer que ele não ganhou o direito de ser o padrão.

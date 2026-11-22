@@ -26,6 +26,14 @@ A regra foi fixada antes de medir e não muda aqui:
   `core.b3_vigencia`). O momento e a volatilidade usam o mês anterior ao
   início; o ROE é o último publicado (``AvailableAt``) antes do início.
 
+**Filtro na líder de cada segmento** (`trocar_piores`, desde 22/11/2026): a
+mesma lista dos que saem vira um filtro opcional da carteira concentrada. Quem
+a líder escolheria e está entre os 30% de pior sinal do universo sai; o
+próximo do ranking do MESMO segmento que não está entre os piores nem é barrado
+pela guarda de entrada herda a vaga e o peso. A medição dele é
+`scripts/medir_lider_filtro_nota_fatores_b3.py`
+(`data/oos_lider_filtro_nota_fatores_b3.json`), com a régua da líder.
+
 Funções puras: nada de banco nem de Streamlit. A tela e o script de medição
 chamam as mesmas funções, para que a carteira mostrada seja a medida.
 """
@@ -41,6 +49,9 @@ import pandas as pd
 from core.b3_vigencia import janela_de_vigencia
 
 VERSAO = "nota-fatores-1.0.0"
+
+#: Versão do filtro na líder de cada segmento (`trocar_piores`).
+VERSAO_FILTRO_LIDER = "filtro-lider-nf-1.0.0"
 
 #: Fração do universo que sai da carteira (os de pior sinal).
 CORTE = 0.30
@@ -225,3 +236,57 @@ def carteira_nota_fatores(
         "tabela": tabela,
         "cobertura": cobertura,
     }
+
+
+def piores_da_tabela(tabela: pd.DataFrame | None) -> list[str]:
+    """Os nomes que `carteira_nota_fatores` tirou (``fica`` falso), em ordem.
+
+    Tabela ausente ou sem a coluna ``fica`` devolve lista vazia -- quem chama
+    tem de dizer que o filtro não rodou, nunca fingir que ninguém é pior.
+    """
+    if tabela is None or len(tabela) == 0 or "fica" not in tabela.columns:
+        return []
+    return sorted(str(t) for t, fica in tabela["fica"].items() if not bool(fica))
+
+
+def trocar_piores(
+    selecionados: Iterable[str],
+    ranking: Iterable,
+    pesos: Mapping[str, float],
+    piores: Iterable[str],
+    *,
+    exclui=None,
+) -> tuple[list[str], dict[str, float], list[dict]]:
+    """Filtro dos piores na seleção de UM segmento da líder.
+
+    Cada selecionado que está em ``piores`` sai. Herda a vaga o próximo de
+    ``ranking`` (pares ``(ticker, score)`` em ordem decrescente) que não está
+    na seleção, não entrou antes, não está em ``piores`` e que ``exclui`` (a
+    guarda de entrada) não barra. O peso segue a regra dos outros portões da
+    tela: ``pesos[sub] = pesos.get(sub) or pesos.get(sai)``. Sem candidato,
+    a vaga fica vazia (e a troca é registrada com ``entra=None``).
+
+    Não muta a entrada. Devolve ``(selecionados, pesos, trocas)``.
+    """
+    ruins = {str(t) for t in piores}
+    barrado = exclui or (lambda _tk: False)
+    sel = [str(t) for t in selecionados]
+    pesos_out = dict(pesos)
+    finais: list[str] = []
+    trocas: list[dict] = []
+    for tk in sel:
+        if tk not in ruins:
+            finais.append(tk)
+            continue
+        sub = None
+        for cand, _sc in ranking:
+            c = str(cand)
+            if c in sel or c in finais or c in ruins or barrado(c):
+                continue
+            sub = c
+            break
+        if sub is not None:
+            finais.append(sub)
+            pesos_out[sub] = pesos_out.get(sub) or pesos_out.get(tk, 0.0)
+        trocas.append({"sai": tk, "entra": sub})
+    return finais, pesos_out, trocas

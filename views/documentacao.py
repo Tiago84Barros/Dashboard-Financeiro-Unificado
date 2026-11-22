@@ -436,9 +436,21 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
         ),
         "lideres_cp": _node(
             "lideres_cp", "Líderes", "Motor",
-            "Identifica a melhor empresa, e opcionalmente a maior participação histórica quando ainda faz sentido.",
-            ("Líder por score", "Maior participação", "Recência de liderança", "Rank atual"),
-            "Une desempenho quantitativo com continuidade histórica do segmento.",
+            "Identifica a melhor empresa, e opcionalmente a maior participação histórica quando ainda faz sentido. "
+            "Na rota \"Líder de cada segmento\", a caixa \"Filtro nota + fatores (em teste)\", "
+            "desmarcada por padrão, tira da líder quem está entre os 30% de pior sinal "
+            "nota + fatores de hoje, depois do piso de qualidade. Entra a próxima do mesmo "
+            "segmento que passe pela guarda de entrada e pelo piso; sem substituta, a vaga "
+            "se perde. As piores ficam barradas também na Inteligência dos Ativos, no "
+            "parecer da IA e na diversificação. A tela lista as trocas e a carteira salva "
+            "registra se o filtro estava ligado.",
+            ("Líder por score", "Maior participação", "Recência de liderança", "Rank atual",
+             "Filtro nota + fatores: core/b3_nota_fatores.py::trocar_piores, a mesma regra da medição",
+             "data/oos_lider_filtro_nota_fatores_b3.json (scripts/medir_lider_filtro_nota_fatores_b3.py)"),
+            "Une desempenho quantitativo com continuidade histórica do segmento. O filtro testa "
+            "se o sinal amplo, o único com ganho medido, melhora a carteira concentrada; "
+            "a regra registrada antes de medir só o liga por padrão se a diferença "
+            "pareada líquida, safra a safra, tiver intervalo de 95% acima do zero.",
         ),
         "backtest_cp": _node(
             "backtest_cp", "Simulação mensal", "Simulação",

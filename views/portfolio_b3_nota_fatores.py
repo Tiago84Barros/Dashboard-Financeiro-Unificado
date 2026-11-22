@@ -38,6 +38,13 @@ CAMINHO_MEDICAO = Path(__file__).resolve().parents[1] / "data" / "oos_nota_fator
 #: Chave do estado da sessão onde o "Rodar" da aba guarda a carteira de hoje.
 CHAVE_ESTADO = "pb3_nota_fatores"
 
+#: Filtro nota + fatores na rota líder (22/11/2026): caixa desligada por
+#: padrão até a medição de `scripts/medir_lider_filtro_nota_fatores_b3.py`
+#: mostrar ganho (regra de decisão no próprio JSON).
+CHAVE_FILTRO_LIDER = "pb3_filtro_nf"
+CAMINHO_MEDICAO_FILTRO = (Path(__file__).resolve().parents[1] / "data"
+                          / "oos_lider_filtro_nota_fatores_b3.json")
+
 #: Estratégia da aba (decisão do usuário de 20/11/2026): a nota + fatores é a
 #: padrão, por ser a única variante da B3 com vantagem medida sobre pesos
 #: iguais cujo IC 95% fica fora do zero; a líder de cada segmento segue como
@@ -296,3 +303,89 @@ def render_nota_fatores(perfil_ativo: str | None = None) -> None:
         "passa pela guarda de entrada, pelo piso de qualidade nem pelos tetos de "
         "setor do perfil -- a medição também não passou.",
         codigo="portfolio_b3.nota_fatores_cobertura")
+
+
+def piores_de_hoje(estado: dict | None) -> frozenset[str] | None:
+    """Os piores 30% da carteira nota + fatores formada no Rodar.
+
+    ``None`` quando a carteira de hoje não se formou: o filtro não tem com o
+    que filtrar e a tela tem de dizer isso, nunca filtrar com lista vazia.
+    """
+    tabela = (estado or {}).get("tabela")
+    if tabela is None or len(tabela) == 0:
+        return None
+    return frozenset(nf.piores_da_tabela(tabela))
+
+
+def texto_medicao_filtro(dados: dict | None, motivos_vencida: list[str]) -> str:
+    """Uma frase sobre o que a medição do filtro mostrou, ou que falta medir."""
+    if not dados:
+        return ("Ainda não medido fora da amostra. Fica desligado até a medição "
+                "mostrar ganho sobre a líder sem o filtro.")
+    dif = ((dados.get("diferenca_pareada") or {}).get("liquido") or {})
+    media, ic = dif.get("media"), dif.get("ic95") or [None, None]
+    if media is None:
+        return "A medição gravada não tem safras comparáveis."
+    texto = (f"Medido em {dados.get('medido_em', '?')[:10]}: com o filtro, a carteira "
+             f"rendeu {media * 100:+.1f} pp por ano a mais que sem ele (líquido de "
+             f"custos), em {dif.get('n_safras', 0)} safras.")
+    if ic[0] is not None and ic[1] is not None:
+        texto += f" IC 95%: {ic[0] * 100:+.1f} a {ic[1] * 100:+.1f} pp."
+    texto += f" Decisão pela regra registrada antes: {dados.get('decisao', '?')}."
+    if motivos_vencida:
+        texto += (" A medição é de uma versão anterior ("
+                  + "; ".join(motivos_vencida) + ").")
+    return texto
+
+
+def escolher_filtro_lider() -> tuple[bool, frozenset[str] | None]:
+    """Caixa do filtro na rota líder e os piores que ele tira.
+
+    Devolve ``(ligado, piores)``. Ligado sem a carteira de hoje devolve
+    ``piores=None`` e avisa na tela: o filtro não roda.
+    """
+    import core.b3_oos_carteira as oos
+    from core.b3_methodology import SCORE_VERSION
+    from core.b3_portfolio_presets import VERSION as PRESETS_VERSION
+
+    dados = oos.carregar(CAMINHO_MEDICAO_FILTRO)
+    motivos = (oos.vencida(dados, SCORE_VERSION, PRESETS_VERSION,
+                           versao_medicao=nf.VERSAO_FILTRO_LIDER) if dados else [])
+    ligado = bool(st.checkbox(
+        "🧪 Filtro nota + fatores (em teste)",
+        value=False,
+        key=CHAVE_FILTRO_LIDER,
+        help="Tira da carteira da líder quem está entre os 30% piores do sinal "
+             "nota + fatores do universo. Quem sai é trocado pelo próximo do "
+             "ranking do mesmo segmento que passe na guarda de entrada e no "
+             "piso de qualidade. Sem substituto, o segmento perde a vaga.",
+    ))
+    st.caption(texto_medicao_filtro(dados, motivos))
+    if not ligado:
+        return False, None
+    piores = piores_de_hoje(st.session_state.get(CHAVE_ESTADO))
+    if piores is None:
+        msg = ("O filtro nota + fatores está ligado, mas a carteira nota + fatores "
+               "de hoje não se formou nesta rodada. A carteira abaixo saiu SEM o "
+               "filtro. Rode a análise de novo para tentar formar.")
+        st.warning(msg, icon="⚠️")
+        aviso_lacuna(msg, codigo="portfolio_b3.filtro_nf_sem_carteira")
+    return True, piores
+
+
+def render_trocas_filtro(trocas: list[dict], n_piores: int) -> None:
+    """Quem o filtro tirou e quem entrou no lugar."""
+    if not trocas:
+        st.caption(f"Filtro nota + fatores: nenhuma líder estava entre os "
+                   f"{n_piores} piores do universo.")
+        return
+    perdidas = [t for t in trocas if not t.get("entra")]
+    with st.expander(f"🧪 Filtro nota + fatores: {len(trocas)} troca(s)"
+                     + (f", {len(perdidas)} vaga(s) perdida(s)" if perdidas else ""),
+                     expanded=False):
+        linhas = [f"- **{html.escape(str(t['sai']))}** → "
+                  + (f"**{html.escape(str(t['entra']))}**" if t.get("entra")
+                     else "ninguém (segmento perde a vaga)")
+                  + (f" · {html.escape(str(t['segmento']))}" if t.get("segmento") else "")
+                  for t in trocas]
+        st.markdown("\n".join(linhas))
