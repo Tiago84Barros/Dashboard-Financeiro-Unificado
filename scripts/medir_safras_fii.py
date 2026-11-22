@@ -19,13 +19,18 @@ todas as combinações -- o default de cada uma é a regra da B3:
   número N leva os N primeiros do score de cada tipo aprovado;
 - ``--segmento tipo,cadastral``: o grupo da carteira -- o tipo do FII, ou o
   tipo partido pelo segmento do cadastro CVM (logística, lajes, shoppings).
-  ``universo`` de cada ano traz quantos elegíveis tinham segmento cadastral.
+  ``universo`` de cada ano traz quantos elegíveis tinham segmento cadastral;
+- ``--decaimento on,off``: o desconto de 7% a.a. por ano consecutivo de
+  liderança (teto 30%) da B3 ligado (default) ou desligado. Desligado, o
+  líder de score estável nunca sai; a comparação mede se a rotação forçada
+  paga o giro e o IR que gera.
 
     python scripts/medir_safras_fii.py
     python scripts/medir_safras_fii.py --thr-selic 15,5,0 --gravar
     python scripts/medir_safras_fii.py --portao selic,selic_liquida,ifix \
         --thr-selic 15,0 --nomes-por-tipo b3,3,5
     python scripts/medir_safras_fii.py --portao ifix --segmento tipo,cadastral
+    python scripts/medir_safras_fii.py --decaimento on,off --nomes-por-tipo b3,4
 """
 from __future__ import annotations
 
@@ -154,13 +159,22 @@ def _lista(texto: str) -> list[str]:
     return [x.strip() for x in str(texto).split(",") if x.strip()]
 
 
+_DECAIMENTO = {"on": True, "off": False}
+
+
 def variantes(portoes: str, thr_selic: str, thr_ifix: str,
-              nomes_por_tipo: str, segmento: str = "tipo") -> list[tuple[str, dict]]:
+              nomes_por_tipo: str, segmento: str = "tipo",
+              decaimento: str = "on") -> list[tuple[str, dict]]:
     """(rótulo, params) de cada combinação; o limiar acompanha o portão.
 
-    Com ``segmento`` só ``tipo`` (o default), o rótulo é o da v1.1.0.
+    Com ``segmento`` só ``tipo`` e ``decaimento`` só ``on`` (os defaults), o
+    rótulo é o da v1.1.0.
     """
     nomes = [None if n.lower() == "b3" else int(n) for n in _lista(nomes_por_tipo)]
+    decaimentos = [d.lower() for d in _lista(decaimento)]
+    for dec in decaimentos:
+        if dec not in _DECAIMENTO:
+            raise SystemExit(f"--decaimento desconhecido: {dec} (use on, off)")
     segmentos = _lista(segmento)
     for seg in segmentos:
         if seg not in SEGMENTACOES:
@@ -171,13 +185,17 @@ def variantes(portoes: str, thr_selic: str, thr_ifix: str,
             raise SystemExit(f"--portao desconhecido: {portao} (use {', '.join(PORTOES)})")
         chave = PORTOES[portao][1]
         limiares = [float(x) for x in _lista(thr_ifix if chave == "thr_ifix" else thr_selic)]
-        for thr, n, seg in itertools.product(limiares, nomes, segmentos):
+        for thr, n, seg, dec in itertools.product(limiares, nomes, segmentos,
+                                                  decaimentos):
             rotulo = (f"portao={portao}|{chave}={thr:g}|nomes_por_tipo="
                       f"{'b3' if n is None else n}")
             params = {"portao": portao, chave: thr, "nomes_por_tipo": n}
             if seg != "tipo":
                 rotulo += f"|segmento={seg}"
                 params["segmento"] = seg
+            if dec != "on":
+                rotulo += f"|decaimento={dec}"
+                params["decaimento"] = _DECAIMENTO[dec]
             out.append((rotulo, params))
     return out
 
@@ -194,10 +212,12 @@ def main() -> int:
                     help="b3 (líder + maior participação) ou N fundos por tipo (lista)")
     ap.add_argument("--segmento", default="tipo",
                     help="grupo da carteira: tipo, cadastral (lista)")
+    ap.add_argument("--decaimento", default="on",
+                    help="desconto do líder consecutivo: on, off (lista)")
     ap.add_argument("--gravar", action="store_true")
     args = ap.parse_args()
     grade = variantes(args.portao, args.thr_selic, args.thr_ifix, args.nomes_por_tipo,
-                      args.segmento)
+                      args.segmento, args.decaimento)
     engine = create_engine(
         _warehouse_url().replace("postgresql://", "postgresql+psycopg2://"))
     try:

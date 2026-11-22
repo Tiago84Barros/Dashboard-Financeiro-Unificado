@@ -70,6 +70,8 @@ inteira das opções).
 | | N ≥ 1 | os N primeiros do score ajustado do tipo; cap do tipo `max(cap, 1/N)` |
 | `segmento` | `tipo` (default) | um grupo por tipo, como na v1.1.0 |
 | | `cadastral` | grupo `tipo/segmento` pelo `Segmento_Atuacao` do informe mensal da CVM; sem segmento, o grupo do tipo |
+| `decaimento` | `True` (default) | desconto de 7% a.a. por ano consecutivo de liderança, teto 30% — a B3 |
+| | `False` | score bruto: o líder de score estável fica no grupo |
 
 Por que cada uma:
 
@@ -109,6 +111,14 @@ Por que cada uma:
     cobertura baixa, a variante mede pouco além do default.
   - A liderança é contada por grupo: o fundo que muda de segmento recomeça a
     contagem do decaimento no grupo novo.
+
+- **Decaimento ligado ou desligado.** Na B3 o desconto força a rotação das
+  empresas que lideram há anos. No FII a rotação custa giro e IR de 20% sobre
+  o ganho de capital, e o provento, que é quase todo o retorno, não pede
+  troca de fundo. `--decaimento on,off` no script mede as duas: se a
+  rotação forçada paga o giro e o IR que gera. O desconto vale também para
+  os líderes dos anos anteriores que o DCA do portão usa, então desligá-lo
+  muda o portão junto com a seleção.
 
 Nenhum valor novo foi escolhido sem medir: o default fica na regra da B3 até
 a medição no armazém mostrar qual variante sustenta excesso sobre o IFIX.
