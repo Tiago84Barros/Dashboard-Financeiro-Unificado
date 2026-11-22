@@ -221,3 +221,20 @@ def test_empate_no_pior_realizado_conta_qualquer_nome_do_empate():
     assert linhas[0]["sinais"]["momento_12m"]["acertou_o_pior"]
     res = sp.resumir_sinais(linhas)
     assert res["sinais"]["momento_12m"]["acertos_ao_acaso"] == pytest.approx(0.5)
+
+
+def test_volatilidade_ignora_retorno_que_atravessa_mes_sem_cotacao():
+    decisao = pd.Timestamp(2020, 4, 1)
+    serie = _mensal("2018-01-31", [10.0 + (i % 2) for i in range(27)])
+    cheia = sp.sinais_de_preco(serie, decisao)["volatilidade_12m"]
+    # some o fechamento de out/2019: o salto set->nov não é retorno mensal
+    furada = serie.drop(pd.Timestamp(2019, 10, 31))
+    rets = furada[furada.index >= pd.Timestamp(2019, 3, 31)].pct_change()
+    seguidos = furada[furada.index >= pd.Timestamp(2019, 3, 31)].index.to_series().diff()
+    esperado = rets[(seguidos <= pd.Timedelta(days=35)).to_numpy()].dropna().std(ddof=1)
+    assert sp.sinais_de_preco(furada, decisao)["volatilidade_12m"] == pytest.approx(esperado)
+    assert cheia is not None
+    # o mesmo vale para o furo explícito (NaN no lugar do preço)
+    com_nan = serie.copy()
+    com_nan[pd.Timestamp(2019, 10, 31)] = float("nan")
+    assert sp.sinais_de_preco(com_nan, decisao)["volatilidade_12m"] == pytest.approx(esperado)

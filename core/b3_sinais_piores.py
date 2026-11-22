@@ -91,6 +91,8 @@ NOMES_SINAIS = tuple(s.nome for s in SINAIS)
 MIN_NOMES_IC = 4
 #: Mínimo de retornos mensais para a volatilidade.
 MIN_RETORNOS_VOL = 8
+# fechamentos de meses seguidos distam 28 a 31 dias
+MAX_DIAS_MES = 35
 
 AVISO_COMPARACOES = (
     f"{len(SINAIS)} sinais medidos: a chance de ao menos um IC de 95% excluir o "
@@ -140,7 +142,11 @@ def sinais_de_preco(serie: pd.Series | None, decisao_em: pd.Timestamp) -> dict:
     # a ponta de 12 meses atrás entra: com fechamentos mensais são 13 preços
     # e 12 retornos, o de abril incluído
     janela = s[s.index >= d_fim - pd.DateOffset(months=12)]
-    rets = janela.pct_change().dropna()
+    # só retornos de meses seguidos: um mês sem cotação apagado pelo
+    # ``dropna`` viraria um retorno de dois meses contado como um
+    rets = janela.pct_change()
+    seguidos = janela.index.to_series().diff() <= pd.Timedelta(days=MAX_DIAS_MES)
+    rets = rets[seguidos.to_numpy()].dropna()
     vol = float(rets.std(ddof=1)) if len(rets) >= MIN_RETORNOS_VOL else None
     topo = None
     if _momento(12) is not None:

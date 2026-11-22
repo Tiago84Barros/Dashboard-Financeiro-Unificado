@@ -375,13 +375,18 @@ def _medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje, por
         inicio, fim = janela_de_vigencia(safra)
         # A Selic da vigência não depende dos pesos: é o caixa da safra que
         # não monta (D1), e a banda escolhe o veto já com essa conversão.
-        caixa = retorno_da_safra(
+        medida_caixa = retorno_da_safra(
             SafraCarteira(safra=safra, ano_base=ano_base_do_score(safra),
                           inicio=inicio, fim=fim, completa=True, pesos={},
                           universo=tuple(universo), segmentos=0, saidas=saidas),
             precos, selic_por_ano=selic_macro, taxa_selic_aa=taxa_selic_aa,
-            selic_mensal=selic_mensal)["retorno_selic"]
-        if sinais_piores:
+            selic_mensal=selic_mensal)
+        caixa = medida_caixa["retorno_selic"]
+        # Safra sem preço nenhum no universo não é mensurável: as variantes a
+        # deixam fora em `itens_da_cadeia`, e os sinais também (senão o
+        # retorno ausente viraria zero inventado). A mensurabilidade só
+        # depende do universo, então a medida do caixa já a responde.
+        if sinais_piores and medida_caixa["mensuravel"]:
             import core.b3_sinais_piores as sp
             # Mesmos retornos, segmentos, guarda e caixa da banda: o veto pelo
             # sinal é mais uma opção dentro dela. Fica fora a safra que só
