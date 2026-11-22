@@ -163,8 +163,37 @@ def preparar(cache_dir: Path | None) -> dict:
     ibov = ibov_df["BOVA11"].dropna() if "BOVA11" in ibov_df.columns else None
 
     nome = RECOMENDADO
-    cache = (cache_dir / f"oos_{hashlib.md5(nome.encode()).hexdigest()[:10]}.pkl"
-             if cache_dir else None)
+    resultados, precos, params, decisao = rodada_da_aba(
+        M, view, nome, dict(PRESETS[nome].valores), cache_dir)
+    return {"M": M, "oos": oos, "nf": nf, "view": view,
+            "rodada": (resultados, precos, params, decisao),
+            "ibov": ibov, "cost_cfg": cost_cfg, "hoje": hoje, "perfil": nome}
+
+
+def _sem_desconto(score_map, anos_lideranca=None, **_):
+    """O desconto de liderança desligado: devolve os scores sem mexer."""
+    return dict(score_map)
+
+
+def caminho_do_cache(cache_dir: Path | None, nome: str, *,
+                     sem_decaimento: bool = False) -> Path | None:
+    """Pickle da rodada da aba; a rodada sem desconto tem o seu, separado."""
+    if cache_dir is None:
+        return None
+    sufixo = "_sem_decaimento" if sem_decaimento else ""
+    return cache_dir / f"oos_{hashlib.md5(nome.encode()).hexdigest()[:10]}{sufixo}.pkl"
+
+
+def rodada_da_aba(M, view, nome: str, valores: dict, cache_dir: Path | None, *,
+                  sem_decaimento: bool = False):
+    """A rodada da aba no perfil ``nome``, lida do pickle ou refeita.
+
+    ``sem_decaimento``: a aba roda com `views.portfolio_b3._apply_decay_penalty`
+    trocado pela identidade (o desconto de 7% a.a. por ano consecutivo de
+    liderança desligado, nas duas chamadas: o laço anual e a carteira atual).
+    A troca vale só durante a rodada.
+    """
+    cache = caminho_do_cache(cache_dir, nome, sem_decaimento=sem_decaimento)
     rodada = None
     if cache is not None and cache.exists():
         with cache.open("rb") as fh:
@@ -172,16 +201,20 @@ def preparar(cache_dir: Path | None) -> dict:
         if len(rodada) != 4:
             rodada = None
     if rodada is None:
-        print(f"== perfil {nome}: aba ==", flush=True)
-        rodada = M._rodar_perfil(nome, dict(PRESETS[nome].valores))
+        rotulo = " sem desconto de liderança" if sem_decaimento else ""
+        print(f"== perfil {nome}{rotulo}: aba ==", flush=True)
+        original = view._apply_decay_penalty
+        if sem_decaimento:
+            view._apply_decay_penalty = _sem_desconto
+        try:
+            rodada = M._rodar_perfil(nome, valores)
+        finally:
+            view._apply_decay_penalty = original
         if cache is not None:
             cache.parent.mkdir(parents=True, exist_ok=True)
             with cache.open("wb") as fh:
                 pickle.dump(rodada, fh)
-    resultados, precos, params, decisao = rodada
-    return {"M": M, "oos": oos, "nf": nf, "view": view,
-            "rodada": (resultados, precos, params, decisao),
-            "ibov": ibov, "cost_cfg": cost_cfg, "hoje": hoje, "perfil": nome}
+    return rodada
 
 
 def main() -> int:
