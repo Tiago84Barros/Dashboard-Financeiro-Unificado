@@ -14,8 +14,8 @@ Uso::
     python scripts/testar_vazamento_ia_b3.py --cache-dir data/cache_wh --n 60
     python scripts/testar_vazamento_ia_b3.py --cache-dir data/cache_wh --n 2 --dry-run
 
-Grava `data/oos_vazamento_ia_b3.json`. Chama a API da Anthropic (custo baixo:
-uma chamada curta por empresa-safra) com dados públicos de balanço.
+Grava `data/oos_vazamento_ia_b3.json`. Chama a LLM do app pela cadeia de
+`_chat_complete` (custo baixo: uma chamada curta por empresa-safra) com dados públicos de balanço.
 """
 from __future__ import annotations
 
@@ -94,8 +94,11 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true", help="não grava o JSON")
     args = ap.parse_args()
 
+    import core.llm_b3 as llm
+    cadeia_original = llm._provider_chain  # `preparar` desliga a LLM da medição
     from scripts.medir_nota_fatores_b3 import preparar
     prep = preparar(args.cache_dir)
+    llm._provider_chain = cadeia_original
     M = prep["M"]
     resultados, precos, params, decisao = prep["rodada"]
 
@@ -140,18 +143,16 @@ def main() -> int:
     amostra = casos[:args.n]
     print(f"{len(casos)} empresa-safras; amostra de {len(amostra)}", flush=True)
 
-    import core.llm_b3 as llm
-    client = llm._get_anthropic_client()
-    if client is None:
-        raise SystemExit("sem ANTHROPIC_API_KEY")
-    modelo = llm._anthropic_model()
+    if not llm.llm_disponivel():
+        raise SystemExit("nenhum provedor de LLM disponível")
+    modelos: set[str] = set()
 
     linhas, hit_t, hit_a = [], 0, 0
     for i, c in enumerate(amostra, 1):
-        msg = client.messages.create(
-            model=modelo, max_tokens=1500,
-            messages=[{"role": "user", "content": PROMPT + c["texto"]}])
-        txt = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+        # Pelo portão do app (`_chat_complete`): mesma cadeia de provedores.
+        txt = llm._chat_complete([{"role": "user", "content": PROMPT + c["texto"]}],
+                                 json_mode=True)
+        modelos.add(str(llm.ultimo_modelo()))
         resp = parse_resposta(txt)
         ok_t, ok_a = acertou(resp, c["ticker"], c["ano_n1"])
         hit_t += ok_t
@@ -165,7 +166,7 @@ def main() -> int:
     taxa = hit_t / n
     saida = {
         "medido_em": datetime.now().isoformat(timespec="seconds"),
-        "modelo": modelo, "semente": args.semente, "amostra": len(amostra),
+        "modelos_que_responderam": sorted(modelos), "semente": args.semente, "amostra": len(amostra),
         "universo_de_casos": len(casos),
         "dossie": "só números (retrato PIT, setor, ROIC e lucro por exercício), sem texto",
         "taxa_acerto_ticker": taxa, "taxa_acerto_ticker_e_ano": hit_a / n,
