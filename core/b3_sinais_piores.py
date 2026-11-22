@@ -137,7 +137,9 @@ def sinais_de_preco(serie: pd.Series | None, decisao_em: pd.Timestamp) -> dict:
             return None
         return p_fim / float(antes.iloc[-1]) - 1.0
 
-    janela = s[s.index > d_fim - pd.DateOffset(months=12)]
+    # a ponta de 12 meses atrás entra: com fechamentos mensais são 13 preços
+    # e 12 retornos, o de abril incluído
+    janela = s[s.index >= d_fim - pd.DateOffset(months=12)]
     rets = janela.pct_change().dropna()
     vol = float(rets.std(ddof=1)) if len(rets) >= MIN_RETORNOS_VOL else None
     topo = None
@@ -260,7 +262,12 @@ def medir_safra(safra: int, segmentos: list[Segmento], retornos: dict,
         return None
     nomes = sorted(cart["pesos"])
     com_ret = [(float(retornos[tk]), tk) for tk in nomes if _num(retornos.get(tk)) is not None]
-    pior = min(com_ret)[1] if com_ret else None
+    # empate no pior é comum: a winsorização corta as perdas extremas num
+    # piso único. Qualquer nome do empate conta como acerto, e o acaso passa
+    # a ser len(piores) / n.
+    piso = min(r for r, _ in com_ret) if com_ret else None
+    piores = sorted(tk for r, tk in com_ret if r == piso)
+    pior = piores[0] if piores else None
     excesso_de = {tk: _contado(tk)[0] - base for tk in nomes}
     acaso = float(np.mean(list(excesso_de.values())))
     oraculo = {lado: escolher_veto(segmentos, retornos, veta=lado, **tetos,
@@ -275,7 +282,7 @@ def medir_safra(safra: int, segmentos: list[Segmento], retornos: dict,
             "vetado": vetado,
             "excesso": excesso,
             "sobre_acaso": excesso - acaso,
-            "acertou_o_pior": (vetado is not None and vetado == pior),
+            "acertou_o_pior": (vetado is not None and vetado in piores),
             "ic": ic_de_posto(nomes, sinais, retornos, s.nome),
             "cobertura": sum(1 for tk in nomes
                              if _num((sinais.get(tk) or {}).get(s.nome)) is not None),
@@ -284,6 +291,7 @@ def medir_safra(safra: int, segmentos: list[Segmento], retornos: dict,
         "safra": int(safra),
         "n_nomes": len(nomes),
         "pior_realizado": pior,
+        "piores_realizados": piores,
         "retorno_do_pior": _num(retornos.get(pior)) if pior else None,
         "rendimento_sem_portao": base,
         "veto_ao_acaso": acaso,
@@ -304,7 +312,7 @@ def resumir_sinais(linhas: list[dict]) -> dict:
       (a régua que importa; é dela a ``leitura``);
     - ``ic``: Spearman médio entre suspeita e retorno (negativo = bom);
     - ``acertos``: safras em que o apontado foi o pior realizado, contra o
-      esperado ao acaso (soma de 1/n);
+      esperado ao acaso (soma de k/n, k = nomes empatados no pior);
     - ``fracao_do_oraculo``: média do veto sobre a média do oráculo.
     """
     linhas = [r for r in linhas if r]
@@ -326,7 +334,8 @@ def resumir_sinais(linhas: list[dict]) -> dict:
             "sobre_acaso": sobre,
             "ic": ic,
             "acertos": sum(1 for r in linhas if r["sinais"][s.nome]["acertou_o_pior"]),
-            "acertos_ao_acaso": float(sum(1.0 / r["n_nomes"] for r in linhas if r["n_nomes"])),
+            "acertos_ao_acaso": float(sum(len(r["piores_realizados"]) / r["n_nomes"]
+                                          for r in linhas if r["n_nomes"])),
             "fracao_do_oraculo": fracao,
             "leitura": leitura_honesta(sobre, "vetar um nome ao acaso",
                                        alternativa="vetar um nome ao acaso"),

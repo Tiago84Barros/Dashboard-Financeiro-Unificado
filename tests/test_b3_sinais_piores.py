@@ -201,3 +201,23 @@ def test_resumo_conta_acertos_contra_o_acaso_e_le_sobre_o_acaso():
     assert "vetar um nome ao acaso" in m["leitura"]
     assert m["veto"]["n_safras"] == 3
     assert res["aviso"] == sp.AVISO_COMPARACOES
+
+
+def test_volatilidade_conta_os_12_retornos_inclusive_o_de_abril():
+    decisao = pd.Timestamp(2020, 4, 1)
+    # queda forte em abril/2019 e depois tudo parado: só o retorno de abril varia
+    valores = [10.0] * 15 + [5.0] * 12  # jan/2018..mar/2019 = 10; abr/2019.. = 5
+    s = sp.sinais_de_preco(_mensal("2018-01-31", valores), decisao)
+    rets = pd.Series([-0.5] + [0.0] * 11)
+    assert s["volatilidade_12m"] == pytest.approx(float(rets.std(ddof=1)))
+
+
+def test_empate_no_pior_realizado_conta_qualquer_nome_do_empate():
+    segs, rets = _carteira()
+    rets = dict(rets, L2=-0.30)  # L2 empata com L3 no piso
+    sinais = _sinais(momento_12m={"L1": 0.5, "L2": -0.4, "L3": 0.2, "L4": 0.1})
+    linhas = [sp.medir_safra(2020, segs, rets, sinais, **TETOS)]
+    assert linhas[0]["piores_realizados"] == ["L2", "L3"]
+    assert linhas[0]["sinais"]["momento_12m"]["acertou_o_pior"]
+    res = sp.resumir_sinais(linhas)
+    assert res["sinais"]["momento_12m"]["acertos_ao_acaso"] == pytest.approx(0.5)
