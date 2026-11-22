@@ -1,0 +1,323 @@
+{
+  "versao_medicao": "filtro-lider-nf-1.0.0",
+  "versao_nota_fatores": "nota-fatores-1.0.0",
+  "versao_metodologia": "2.33.0",
+  "versao_presets": "b3-presets-1.0.0",
+  "medido_em": "2026-11-22T12:48:07",
+  "perfil": "Equilibrado (padrão)",
+  "regra": {
+    "piores": "os 30% piores do sinal nota + fatores do universo da safra (fica=False de carteira_nota_fatores)",
+    "onde": "rota líder de cada segmento, depois do piso de qualidade",
+    "troca": "próximo do ranking do mesmo segmento fora dos piores, da guarda de entrada e do piso de qualidade; herda o peso; sem substituto a vaga se perde",
+    "trocas_seguintes": "os piores ficam barrados também na guarda da medição"
+  },
+  "regra_de_decisao": "liga por padrão só se a média da diferença pareada LÍQUIDA (com filtro menos sem filtro, carteira sem portão) for > 0 e o IC 95% excluir o zero; senão fica opcional e desligado",
+  "decisao": "fica opcional e desligado",
+  "metrica_principal": "diferença pareada por safra do retorno LÍQUIDO da carteira sem portão: com filtro menos sem filtro",
+  "diferenca_pareada": {
+    "liquido": {
+      "media": -0.0032146742445304057,
+      "ic95": [
+        -0.0216725622633624,
+        0.010941009412963018
+      ],
+      "n_safras": 9,
+      "safras_negativas": [
+        2019,
+        2023,
+        2024
+      ],
+      "ic_cruza_zero": true,
+      "melhor_safra": 2018,
+      "media_sem_melhor_safra": -0.007444220833932619
+    },
+    "com_ir": {
+      "media": -0.003110668170230436,
+      "ic95": [
+        -0.02125407332064653,
+        0.011044327991787586
+      ],
+      "n_safras": 9,
+      "safras_negativas": [
+        2019,
+        2021,
+        2023,
+        2024
+      ],
+      "ic_cruza_zero": true,
+      "melhor_safra": 2018,
+      "media_sem_melhor_safra": -0.007327214000345153
+    }
+  },
+  "com_filtro": {
+    "vs_equal_weight": {
+      "media": 0.026014153512791207,
+      "ic95": [
+        -0.04672435041421483,
+        0.10211754143135424
+      ],
+      "n_safras": 9,
+      "safras_negativas": [
+        2017,
+        2018,
+        2019,
+        2023
+      ],
+      "ic_cruza_zero": true,
+      "melhor_safra": 2020,
+      "media_sem_melhor_safra": 0.0010118001190993278
+    },
+    "vs_equal_weight_com_ir": {
+      "media": 0.013164427984658587,
+      "ic95": [
+        -0.05281803238930139,
+        0.08435233676158514
+      ],
+      "n_safras": 9,
+      "safras_negativas": [
+        2017,
+        2018,
+        2019,
+        2023,
+        2025
+      ],
+      "ic_cruza_zero": true,
+      "melhor_safra": 2020,
+      "media_sem_melhor_safra": -0.013444141100049843
+    },
+    "vs_selic": {
+      "media": 0.07814346461472439,
+      "ic95": [
+        -0.07835769818897592,
+        0.2741862675063402
+      ],
+      "n_safras": 9,
+      "safras_negativas": [
+        2019,
+        2022,
+        2024
+      ],
+      "ic_cruza_zero": true,
+      "melhor_safra": 2020,
+      "media_sem_melhor_safra": -0.005007779939830759
+    },
+    "safras_em_caixa": [
+      2017
+    ],
+    "safras_sem_carteira": [
+      2015,
+      2016
+    ]
+  },
+  "sem_filtro": {
+    "vs_equal_weight": {
+      "media": 0.029228827757321614,
+      "ic95": [
+        -0.0487053424246967,
+        0.11128831033210945
+      ],
+      "n_safras": 9,
+      "safras_negativas": [
+        2017,
+        2018,
+        2023
+      ],
+      "ic_cruza_zero": true,
+      "melhor_safra": 2020,
+      "media_sem_melhor_safra": 0.004634582168131764
+    },
+    "vs_equal_weight_com_ir": {
+      "media": 0.01627509615488902,
+      "ic95": [
+        -0.05646157353680306,
+        0.09368200013023868
+      ],
+      "n_safras": 9,
+      "safras_negativas": [
+        2017,
+        2018,
+        2019,
+        2023,
+        2025
+      ],
+      "ic_cruza_zero": true,
+      "melhor_safra": 2020,
+      "media_sem_melhor_safra": -0.009938365884604873
+    },
+    "vs_selic": {
+      "media": 0.0813581388592548,
+      "ic95": [
+        -0.07170620165769716,
+        0.27603737063547323
+      ],
+      "n_safras": 9,
+      "safras_negativas": [
+        2019,
+        2022,
+        2024
+      ],
+      "ic_cruza_zero": true,
+      "melhor_safra": 2020,
+      "media_sem_melhor_safra": -0.001384997890798323
+    },
+    "safras_em_caixa": [
+      2017
+    ],
+    "safras_sem_carteira": [
+      2015,
+      2016
+    ]
+  },
+  "trocas_por_safra": {
+    "2015": {
+      "n_piores": 47,
+      "trocas": [],
+      "vagas_perdidas": 0,
+      "segmentos_perdidos": 0
+    },
+    "2016": {
+      "n_piores": 42,
+      "trocas": [],
+      "vagas_perdidas": 0,
+      "segmentos_perdidos": 0
+    },
+    "2017": {
+      "n_piores": 44,
+      "trocas": [
+        {
+          "sai": "RAPT4",
+          "entra": null
+        },
+        {
+          "sai": "DXCO3",
+          "entra": null
+        }
+      ],
+      "vagas_perdidas": 2,
+      "segmentos_perdidos": 1
+    },
+    "2018": {
+      "n_piores": 49,
+      "trocas": [
+        {
+          "sai": "POMO4",
+          "entra": "RAPT4"
+        },
+        {
+          "sai": "EMBJ3",
+          "entra": null
+        },
+        {
+          "sai": "MYPK3",
+          "entra": null
+        },
+        {
+          "sai": "DXCO3",
+          "entra": null
+        }
+      ],
+      "vagas_perdidas": 3,
+      "segmentos_perdidos": 2
+    },
+    "2019": {
+      "n_piores": 48,
+      "trocas": [
+        {
+          "sai": "VSPT4",
+          "entra": null
+        },
+        {
+          "sai": "DXCO3",
+          "entra": null
+        }
+      ],
+      "vagas_perdidas": 2,
+      "segmentos_perdidos": 2
+    },
+    "2020": {
+      "n_piores": 52,
+      "trocas": [],
+      "vagas_perdidas": 0,
+      "segmentos_perdidos": 0
+    },
+    "2021": {
+      "n_piores": 53,
+      "trocas": [
+        {
+          "sai": "VSPT4",
+          "entra": null
+        }
+      ],
+      "vagas_perdidas": 1,
+      "segmentos_perdidos": 0
+    },
+    "2022": {
+      "n_piores": 53,
+      "trocas": [],
+      "vagas_perdidas": 0,
+      "segmentos_perdidos": 0
+    },
+    "2023": {
+      "n_piores": 48,
+      "trocas": [],
+      "vagas_perdidas": 0,
+      "segmentos_perdidos": 0
+    },
+    "2024": {
+      "n_piores": 50,
+      "trocas": [
+        {
+          "sai": "EMBJ3",
+          "entra": null
+        }
+      ],
+      "vagas_perdidas": 1,
+      "segmentos_perdidos": 1
+    },
+    "2025": {
+      "n_piores": 45,
+      "trocas": [
+        {
+          "sai": "EMBJ3",
+          "entra": null
+        }
+      ],
+      "vagas_perdidas": 1,
+      "segmentos_perdidos": 1
+    }
+  },
+  "fora_da_regra": [
+    "portão de LLM (Inteligência e gate qualitativo) não roda na medição",
+    "troca ON/PN do piso de liquidez da tela não é refeita aqui",
+    "rota de revisão (b3_review) não aplica o filtro"
+  ],
+  "comeca_em": 2017,
+  "safras_por_carteira": {
+    "com_filtro": [
+      2015,
+      2016,
+      2017,
+      2018,
+      2019,
+      2020,
+      2021,
+      2022,
+      2023,
+      2024,
+      2025
+    ],
+    "sem_filtro": [
+      2015,
+      2016,
+      2017,
+      2018,
+      2019,
+      2020,
+      2021,
+      2022,
+      2023,
+      2024,
+      2025
+    ]
+  }
+}
