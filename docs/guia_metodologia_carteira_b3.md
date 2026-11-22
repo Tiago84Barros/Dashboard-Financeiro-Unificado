@@ -694,3 +694,58 @@ Senão fica opcional e desligado. A regra não é ajustada depois do resultado.
 Com nove safras o efeito tem de ser grande para o IC sair do zero. Um "não
 provado" é o resultado mais provável e não quer dizer que o filtro piora a
 carteira: quer dizer que ele não ganhou o direito de ser o padrão.
+
+## 19. Quatro carteiras de regra fundamentalista (22/11/2026, a medir)
+
+### Que pergunta elas respondem
+
+A carteira padrão ainda não se distingue de dividir igualmente entre as
+empresas. A nota do motor já mistura qualidade, ROIC, dívida, preço e
+dividendos, então pôr "mais Buffett" na mesma nota tende a não mudar nada. A
+pergunta aqui é outra: uma **regra simples, que o investidor repete em casa**,
+bate pesos iguais e a carteira padrão?
+
+### As regras (`core/b3_estrategias_fundamentalistas.py`)
+
+Fixadas antes de medir. Pesos iguais entre os escolhidos, formação em abril.
+
+1. **Rota de valor** — quem a rota da seção 11 classifica como `oportunidade`
+   no retrato da safra (margem de Graham/Bazin ≥ 20% e solvência preservada).
+   Nunca tinha sido medida fora da amostra.
+2. **Fórmula mágica (Greenblatt)** — soma do posto de ROIC e do posto do
+   rendimento operacional (1/EV_EBIT). Fica o terço melhor, no mínimo 10
+   nomes. Financeiras saem e só entra quem tem EV_EBIT > 0, como no livro.
+3. **Qualidade constante** — ROIC acima da Selic do próprio ano em ≥ 70% dos
+   últimos 7 exercícios (mínimo 5 com ROIC), lucro de N-1 positivo e maior que
+   o de três anos antes, e nenhuma falha da trava de solvência da rota de
+   valor. Dado ausente não é falha.
+4. **Qualidade segurada por 3 anos** — a regra 3 refeita na primeira safra e a
+   cada três. No meio só sai quem quebrou a solvência ou deixou o universo.
+   Carteira que zerou é refeita na safra seguinte.
+
+### Como se mede (`scripts/medir_estrategias_fundamentalistas_b3.py`)
+
+A régua de `scripts/medir_nota_fatores_b3.py::medir_escolha`, que passou a ser
+o ponto único das carteiras "de regra": o mesmo universo, saídas e retrato PIT
+de `_segmentos_por_safra`, o histórico cortado em N-1 pela mesma regra de
+vintage (`_aceita_da_safra`), custo do giro numa cadeia contínua desde a
+primeira safra com carteira da medição oficial e caixa a Selic na safra sem
+nome. Cada braço é comparado com pesos iguais e, **pareado safra a safra**, com
+a carteira padrão (Equilibrado, sem portão). Grava
+`data/oos_estrategias_fundamentalistas_b3.json`.
+
+**Regra de decisão, registrada antes de medir:** um braço só vira candidato a
+carteira padrão se, líquido do giro, (a) o excesso médio sobre pesos iguais for
+> 0 com IC 95% acima de zero, (b) a média sem a melhor safra continuar > 0 e
+(c) a diferença pareada contra a carteira padrão tiver média > 0. Com quatro
+braços, a chance de um falso positivo sobe para perto de 1 em 5; por isso (a)
+sozinho não basta. Nenhum passando, nada muda na tela.
+
+### O que a medição não cobre
+
+- os múltiplos anuais usam o preço do fim do exercício N-1, não o de abril/N;
+- o lucro da série de PL é cortado pelo ano do exercício, sem data de
+  publicação;
+- guarda de entrada, piso de qualidade, tetos do perfil e portão de LLM não
+  filtram estas carteiras;
+- nove safras não separam sorte de regra com folga.
