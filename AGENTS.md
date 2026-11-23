@@ -22,6 +22,7 @@ Aplicação Streamlit unificada para controle financeiro, investimentos, carteir
 - Usar consultas parametrizadas e filtrar dados pelo proprietário autorizado.
 - Não executar migração destrutiva; criar backup verificável, plano de reversão e teste em dados descartáveis.
 - Usar dados sintéticos em testes, exemplos, prompts, logs e validação visual.
+  - Exceção registrada pelo dono do repositório em 23/11/2026: o teste de vazamento da IA (`scripts/testar_vazamento_ia_b3.py`, §21 de `docs/guia_metodologia_carteira_b3.md`) envia a uma LLM externa dossiês reais de companhias abertas, porque a pergunta é justamente se a IA reconhece empresas de verdade. Vale só para dado público da CVM, anonimizado (sem nome, ticker nem data), sem dado de usuário, carteira ou pessoa física, e só com a flag explícita `--dados-reais-publicos`. Testes automatizados continuam sintéticos.
 - Executar testes, lint/checks configurados, varredura de segredos e inicialização do Streamlit antes de concluir.
 - Registrar comandos executados, resultados, falhas, verificações não realizadas e riscos pendentes.
 - Publicar cada atualização do aplicativo no Streamlit Cloud pelo fluxo de PR para a `main`. Após a integração, verificar o recebimento da atualização pelo Streamlit Cloud e informar o que foi possível confirmar no ambiente online.

@@ -22,7 +22,8 @@ Dados reais, não sintéticos: o teste só faz sentido com empresas de verdade
 prompts; por isso a chamada à LLM e o ``--exportar`` exigem
 ``--dados-reais-publicos``, que confirma o que vai no dossiê: balanço e
 documentos públicos da CVM de companhias abertas, anonimizados, sem dado de
-usuário, carteira ou pessoa física. Sem a flag, o script para antes de enviar
+usuário, carteira ou pessoa física (exceção registrada no AGENTS.md em
+23/11/2026, só nesses termos). Sem a flag, o script para antes de enviar
 ou exportar. ``--corrigir`` só lê respostas já gravadas e não exige a flag.
 """
 from __future__ import annotations
