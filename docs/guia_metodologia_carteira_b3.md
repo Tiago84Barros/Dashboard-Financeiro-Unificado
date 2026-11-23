@@ -1053,7 +1053,8 @@ entra o seguinte do mesmo tipo.
 - a razão social de qualquer sociedade citada ("X Y S.A."), inclusive
   controladora e contraparte, e todo apelido entre aspas fora de uma lista de
   termos jurídicos (ex.: ("Itaú Unibanco" ou "Companhia"));
-- o ticker da B3 com ou sem número (B3: GOAU), o do exterior (OTC, ADR, NYSE),
+- o ticker da B3 com ou sem número (B3: GOAU), inclusive o de raiz com
+  dígito (B3SA3, desde a revisão de 23/11/2026), o do exterior (OTC, ADR, NYSE),
   o CNPJ, o NIRE e o código CVM, e a sigla que vem logo antes da listagem
   ("O GPA [B3: ...]"), no texto todo;
 - site (inclusive ri.empresa.com), e-mail, endereço, a cidade da linha de
@@ -1076,22 +1077,30 @@ modelo (Sonnet 5.5), mesmos lotes limpos de 20 dossiês, mesmo `--corrigir`.
 
 | Modelo | Dossiê | Acerta o ticker | IC 95% (Wilson) | Ticker e ano |
 |---|---|---|---|---|
-| Sonnet 5.5 | números + texto | **88,3%** (53/60) | 77,8%–94,2% | 75,0% |
+| Sonnet 5.5 | números + texto | **90,0%** (54/60) | 79,9%–95,3% | 80,0% |
 
-- **Com texto, o Sonnet reconhece a empresa em quase 9 de 10 casos.** O piso
-  do intervalo (77,8%) fica quase quatro vezes acima do limite de 20%. Pela
+- **Com texto, o Sonnet reconhece a empresa em 9 de 10 casos.** O piso do
+  intervalo (79,9%) fica quase quatro vezes acima do limite de 20%. Pela
   regra registrada antes de medir, **a etapa 2 com texto cai também com o
   Sonnet.** Uma nota retroativa que lê release e fato relevante seria, na
   maior parte, memória do que a empresa fez depois.
+- **Revisão de 23/11/2026.** Na primeira rodada (88,3%, 53/60), o ticker
+  B3SA3 escapou no dossiê d027: a máscara não pegava ticker com dígito na
+  raiz. A máscara foi corrigida, os dossiês foram refeitos com a mesma
+  amostra e o lote 2 (o do d027) foi respondido de novo por um Sonnet limpo.
+  Além do d027, só o d021 perdeu uma palavra junto do nome escondido; os
+  outros cinco dossiês que mudaram mudaram só no espaço depois de "B3:".
+  Sem o ticker, o Sonnet ainda acertou B3SA3. No lote refeito, TUPY3 passou
+  de erro a acerto, e daí o 54/60.
 - A contagem é conservadora. O caso MBRF3 de 2024 foi respondido como MRFG3,
   que é a mesma empresa antes da troca de ticker. Contado como acerto, o
-  número sobe para 90,0% (54/60). Dos outros seis erros, três são
-  "desconhecida" (VSPT4 duas vezes e MYPK3) e três trocam por um par do mesmo
-  setor (AZUL4 por GOLL4, TUPY3 por MYPK3, TRIS3 por EVEN3).
-- O que entrega a empresa não é o nome, que foi escondido (a busca final nos
-  lotes não achou ticker, razão social nem cabeçalho do acervo). É o conjunto:
-  negócios adquiridos, marcas, contrapartes, a ordem de grandeza dos números e
-  o setor. Esconder isso tira do texto o que a etapa 2 queria ler.
+  número sobe para 91,7% (55/60). Dos outros cinco erros, três são
+  "desconhecida" (VSPT4 duas vezes e MYPK3) e dois trocam por um par do mesmo
+  setor (AZUL4 por GOLL4, TRIS3 por EVEN3).
+- O que entrega a empresa não é o nome, que foi escondido. Depois da revisão,
+  a busca nos lotes não acha ticker no padrão da B3. É o conjunto que
+  entrega: negócios adquiridos, marcas, contrapartes, a ordem de grandeza dos
+  números e o setor. Esconder isso tira do texto o que a etapa 2 queria ler.
 - **O que isto decide:** a hipótese "a IA lê o que os números não mostram"
   não tem teste limpo com o Sonnet 5.5 nem com o Opus 5.5 nas safras com
   texto (2024–2025). Os dois modelos viram o desfecho dessas safras no

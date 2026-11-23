@@ -182,7 +182,7 @@ def anonimizar(texto: str, nomes: list[str], ano_max: int) -> str:
                r"{1,7}(?=S\s?\.\s?A\.|S/A\b)",
                lambda m: m.group(0) if re.match(r"(Lei|B3)\b", m.group(0)) else "[NOME] ", t)
     t = re.sub(r"\b(OTC|NYSE|NASDAQ|LATIBEX|ADRs?(?:\s+(?:I{1,3}|N[ií]vel\s+\w+))?|B3|Bovespa|BM&FBovespa)"
-               r"\s*:\s*[A-Z][A-Z.]{2,7}\b(?!\d)", r"\1: [TICKER]", t)
+               r"\s*:\s*[A-Z][A-Z0-9.]{2,7}\b(?!\d)", r"\1: [TICKER]", t)
     # Sigla própria logo antes da listagem: "O GPA [B3: ...; NYSE: ...]" some no texto todo.
     for sigla in set(re.findall(r"\b([A-Z][A-Za-z&]{1,9})\s*[\[(]\s*(?:B3|Bovespa|NYSE|OTC|NASDAQ)\s*:", t)):
         if _sem_acento(sigla).lower() not in _COMUNS | _ALIAS_GENERICOS:
@@ -194,7 +194,8 @@ def anonimizar(texto: str, nomes: list[str], ano_max: int) -> str:
                r"(?:\s*/\s*[A-Z]{2})?(?:\s*,\s*Brasil)?\s*(?:,|\-)\s*"
                r"(?=\d{1,2}\s*(?:de\s+)?[a-zç]+\s+de\s+\d{4})",
                "[cidade], ", t)
-    t = re.sub(r"\b[A-Z]{4}(3|4|5|6|11)\b", "[TICKER]", t)
+    # Raiz com dígito também ("B3SA3"); mascarar a mais (ex.: "CPC06") não faz mal aqui.
+    t = re.sub(r"\b[A-Z][A-Z0-9]{3}(3|4|5|6|11)\b", "[TICKER]", t)
     t = re.sub(r"\d{2}\.?\d{3}\.?\d{3}\s?/\s?\d{4}\s?-\s?\d{2}", "[CNPJ]", t)
     t = re.sub(r"(NIRE|CVM)\s*(n[º°o.]*)?\s*[:\-]?\s*[\d.\-/]{5,}", r"\1 [n]", t, flags=re.I)
     t = re.sub(r"(https?://|www\.)\S+", "[site]", t, flags=re.I)
@@ -293,35 +294,85 @@ def parse_resposta(txt: str) -> dict:
         return {}
 
 
+def resposta_valida(resp) -> bool:
+    """Resposta que o modelo de fato deu: objeto com ``ticker`` em texto.
+
+    "desconhecida" é abstenção válida; ``{}`` (sem resposta ou JSON quebrado) não é.
+    """
+    return isinstance(resp, dict) and isinstance(resp.get("ticker"), str) and bool(resp["ticker"].strip())
+
+
+def _ano(v) -> int | None:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None  # "2023/2024", "desconhecido", 2023.5 em texto: conta como ano errado
+
+
 def acertou(resp: dict, ticker: str, ano_verdadeiro: int) -> tuple[bool, bool]:
     """(acertou o ticker, acertou o ticker e o ano). Casa pela raiz do ticker."""
-    t = str(resp.get("ticker") or "").upper()
+    if not resposta_valida(resp):
+        return False, False
+    t = resp["ticker"].upper()
     raiz = lambda x: re.sub(r"\d+$", "", x)  # noqa: E731  (ON/PN/UNIT contam)
-    ok_t = bool(t) and "DESCONHECIDA" not in t and raiz(t) == raiz(ticker.upper())
-    ok_a = ok_t and resp.get("ano_n1") is not None and int(resp["ano_n1"]) == int(ano_verdadeiro)
+    ok_t = "DESCONHECIDA" not in t and raiz(t) == raiz(ticker.upper())
+    ok_a = ok_t and _ano(resp.get("ano_n1")) == int(ano_verdadeiro)
     return ok_t, ok_a
 
 
-def resumo(amostra: list[dict], respostas: list[dict], modelos, n_universo: int,
+def veredito(acertos: int, invalidas: int, n: int) -> bool | None:
+    """Invalida a etapa 2? None quando as respostas que faltam podem virar o resultado.
+
+    Conta cada resposta faltante como erro (piso) e como acerto (teto): só há
+    veredito quando os dois lados do limite concordam.
+    """
+    if n <= 0:
+        return None
+    piso, teto = acertos / n, (acertos + invalidas) / n
+    if piso > LIMITE_VAZAMENTO:
+        return True
+    if teto <= LIMITE_VAZAMENTO:
+        return False
+    return None
+
+
+def resumo(amostra: list[dict], respostas: list[dict], modelo_por_caso: list[str], n_universo: int,
            semente: int, dossie_usado: str = None) -> dict:
-    """Pontua as respostas (na ordem da amostra) e monta o JSON de saída."""
-    linhas, hit_t, hit_a = [], 0, 0
-    for c, resp in zip(amostra, respostas):
+    """Pontua as respostas (na ordem da amostra) e monta o JSON de saída.
+
+    ``modelo_por_caso`` diz quem respondeu cada dossiê. Se a cadeia de provedores
+    trocou de modelo no meio, a taxa mistura modelos e não vale para nenhum deles:
+    o veredito fica None e a taxa sai separada por modelo.
+    """
+    linhas, hit_t, hit_a, invalidas = [], 0, 0, 0
+    por_modelo: dict[str, list[int]] = {}
+    for c, resp, mod in zip(amostra, respostas, modelo_por_caso):
         ok_t, ok_a = acertou(resp, c["ticker"], c["ano_n1"])
+        valida = resposta_valida(resp)
         hit_t += ok_t
         hit_a += ok_a
+        invalidas += not valida
+        conta = por_modelo.setdefault(str(mod), [0, 0])
+        conta[0] += ok_t
+        conta[1] += 1
         linhas.append({"ticker": c["ticker"], "safra": c["safra"], "ano_n1": c["ano_n1"],
-                       "resposta": resp, "acertou_ticker": ok_t, "acertou_ticker_e_ano": ok_a})
+                       "modelo": str(mod), "resposta": resp, "resposta_valida": valida,
+                       "acertou_ticker": ok_t, "acertou_ticker_e_ano": ok_a})
     n = max(len(amostra), 1)
     taxa = hit_t / n
+    inv = veredito(hit_t, invalidas, len(amostra))
+    if len(por_modelo) > 1:
+        inv = None  # taxa de modelos misturados não diz nada sobre nenhum deles
     return {
         "medido_em": datetime.now().isoformat(timespec="seconds"),
-        "modelos_que_responderam": sorted(modelos), "semente": semente, "amostra": len(amostra),
+        "modelos_que_responderam": sorted(por_modelo), "semente": semente, "amostra": len(amostra),
         "universo_de_casos": n_universo,
         "dossie": dossie_usado or DOSSIE_NUMEROS,
         "taxa_acerto_ticker": taxa, "taxa_acerto_ticker_e_ano": hit_a / n,
+        "taxa_acerto_ticker_por_modelo": {m: a / k for m, (a, k) in sorted(por_modelo.items())},
+        "sem_resposta": invalidas,
         "limite": LIMITE_VAZAMENTO,
-        "invalida_etapa_2": bool(taxa > LIMITE_VAZAMENTO),
+        "invalida_etapa_2": inv,
         "casos": linhas,
     }
 
@@ -335,13 +386,13 @@ def corrigir(gabarito: Path, respostas: Path, modelo: str, saida: Path) -> int:
     por_id = {str(r.get("id")): r for r in json.loads(respostas.read_text(encoding="utf-8"))}
     amostra = gab["casos"]
     resps = [por_id.get(str(c["id"]), {}) for c in amostra]
-    out = resumo(amostra, resps, [modelo], gab["universo_de_casos"], gab["semente"],
+    out = resumo(amostra, resps, [modelo] * len(amostra), gab["universo_de_casos"], gab["semente"],
                  gab.get("dossie"))
     out["canal"] = "fora do app: ajudante sem contexto, um lote de dossiês por chamada"
-    out["sem_resposta"] = sum(1 for r in resps if not r)
     saida.write_text(json.dumps(out, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"{modelo}: acerto ticker={out['taxa_acerto_ticker']:.1%} "
-          f"ticker+ano={out['taxa_acerto_ticker_e_ano']:.1%} sem_resposta={out['sem_resposta']}")
+          f"ticker+ano={out['taxa_acerto_ticker_e_ano']:.1%} sem_resposta={out['sem_resposta']} "
+          f"invalida_etapa_2={out['invalida_etapa_2']}")
     return 0
 
 
@@ -456,21 +507,21 @@ def main() -> int:
 
     if not llm.llm_disponivel():
         raise SystemExit("nenhum provedor de LLM disponível")
-    modelos: set[str] = set()
-
-    respostas = []
+    respostas, modelo_por_caso = [], []
     for i, c in enumerate(amostra, 1):
         # Pelo portão do app (`_chat_complete`): mesma cadeia de provedores.
         txt = llm._chat_complete([{"role": "user", "content": prompt + c["texto"]}],
                                  json_mode=True)
-        modelos.add(str(llm.ultimo_modelo()))
+        modelo_por_caso.append(str(llm.ultimo_modelo()))  # a cadeia pode trocar no meio
         resp = parse_resposta(txt)
         respostas.append(resp)
-        print(f"{i}/{len(amostra)} {c['ticker']}/{c['safra']} -> {resp.get('ticker')}", flush=True)
+        print(f"{i}/{len(amostra)} {c['ticker']}/{c['safra']} -> {resp.get('ticker')} "
+              f"({modelo_por_caso[-1]})", flush=True)
 
-    saida = resumo(amostra, respostas, modelos, len(casos), args.semente, rotulo_dossie)
+    saida = resumo(amostra, respostas, modelo_por_caso, len(casos), args.semente, rotulo_dossie)
     print(f"acerto ticker={saida['taxa_acerto_ticker']:.1%} "
           f"ticker+ano={saida['taxa_acerto_ticker_e_ano']:.1%} "
+          f"sem_resposta={saida['sem_resposta']} modelos={saida['modelos_que_responderam']} "
           f"invalida_etapa_2={saida['invalida_etapa_2']}", flush=True)
     if not args.dry_run:
         args.saida.write_text(json.dumps(saida, indent=2, ensure_ascii=False) + "\n",
