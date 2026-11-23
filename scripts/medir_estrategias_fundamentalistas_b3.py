@@ -82,30 +82,25 @@ def decidir(medido: dict, pareada: dict) -> dict:
     return {"testes": testes, "candidata": all(testes.values())}
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--dry-run", action="store_true", help="mede e imprime sem gravar")
-    ap.add_argument("--cache-dir", type=Path, default=None,
-                    help="reaproveita a rodada da aba (o mesmo pickle de "
-                         "medir_oos_carteira_b3.py --cache-dir)")
-    ap.add_argument("--enxuta", action="store_true",
-                    help="mede só a rota de valor completa e os braços top-10/15/20 "
-                         "(grava data/oos_rota_valor_enxuta_b3.json)")
-    args = ap.parse_args()
+def montar_recorte(cache_dir: Path | None) -> dict:
+    """A rodada da aba, a carteira padrão medida e as escolhas de cada braço.
 
+    Ponto único do recorte das carteiras de regra: esta medição e
+    `scripts/medir_carteiras_aleatorias_b3.py` (que põe cada braço entre
+    carteiras sorteadas do mesmo tamanho) leem daqui. ``escolhas`` traz os
+    cinco braços da §19 e os da rota enxuta (§20); ``medir`` é a régua
+    `medir_escolha` já presa a este recorte.
+    """
     from scripts.medir_nota_fatores_b3 import medir_escolha, preparar
 
-    prep = preparar(args.cache_dir)
+    prep = preparar(cache_dir)
     M, oos = prep["M"], prep["oos"]
     resultados, precos, params, decisao = prep["rodada"]
     ibov, cost_cfg, hoje, nome = prep["ibov"], prep["cost_cfg"], prep["hoje"], prep["perfil"]
 
     import core.b3_estrategias_fundamentalistas as fe
-    from core.b3_methodology import SCORE_VERSION
-    from core.b3_portfolio_presets import VERSION as PRESETS_VERSION
     from core.b3_retrato_pit import historico_ate, series_pl_ate
     from core.b3_vigencia import ano_base_do_score
-    from scripts.medir_vantagem_oos import _fonte_efetiva_b3
 
     medido, _ = M._medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje)
     padrao = medido["variantes"][oos.SEM_PORTAO]
@@ -184,20 +179,58 @@ def main() -> int:
         fe.QUALIDADE_3_ANOS: lambda p: segurada.get(p["safra"], []),
         fe.LIDER_SEGURADO: lambda p: lider_segurado.get(p["safra"], []),
     }
+    # Os braços da rota enxuta (PR de 22/11/2026): a rota de valor limitada
+    # a N nomes, mesma régua.
+    for n in fe.TAMANHOS_ROTA_ENXUTA:
+        escolhas[fe.rotulo_rota_topn(n)] = (
+            lambda p, n=n: fe.carteira_rota_valor_topn(
+                p["df_pit"], p["universo"], n, selic=selic_da_safra(p["safra"])))
+
+    def medir(escolha, memo=None):
+        return medir_escolha(por_safra, escolha, precos=precos, selic_macro=selic_macro,
+                             taxa=taxa, selic_mensal=selic_mensal, cost_cfg=cost_cfg,
+                             comeca_em=comeca_em, memo=memo)
+
+    return {
+        "prep": prep, "M": M, "oos": oos, "fe": fe, "nome": nome,
+        "ibov": ibov, "precos": precos, "padrao": padrao, "comeca_em": comeca_em,
+        "por_safra": por_safra, "cadeia": cadeia, "escolhas": escolhas,
+        "medir": medir, "lideres_padrao": lideres_padrao,
+        "lideres_por_safra": lideres_por_safra, "lider_segurado": lider_segurado,
+        "saidas_lider": saidas_lider,
+    }
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--dry-run", action="store_true", help="mede e imprime sem gravar")
+    ap.add_argument("--cache-dir", type=Path, default=None,
+                    help="reaproveita a rodada da aba (o mesmo pickle de "
+                         "medir_oos_carteira_b3.py --cache-dir)")
+    ap.add_argument("--enxuta", action="store_true",
+                    help="mede só a rota de valor completa e os braços top-10/15/20 "
+                         "(grava data/oos_rota_valor_enxuta_b3.json)")
+    args = ap.parse_args()
+
+    rc = montar_recorte(args.cache_dir)
+    oos, fe, nome, padrao = rc["oos"], rc["fe"], rc["nome"], rc["padrao"]
+    medir, cadeia = rc["medir"], rc["cadeia"]
+    lideres_por_safra, lider_segurado = rc["lideres_por_safra"], rc["lider_segurado"]
+    saidas_lider = rc["saidas_lider"]
+
+    from core.b3_methodology import SCORE_VERSION
+    from core.b3_portfolio_presets import VERSION as PRESETS_VERSION
+    from scripts.medir_vantagem_oos import _fonte_efetiva_b3
+
     if args.enxuta:
         # Só a Rota de valor limitada a N nomes (PR de 22/11/2026): braços
         # novos, mesma régua, outro JSON. A rota completa vem junto para a
         # comparação direta.
-        escolhas = {fe.ROTA_VALOR: escolhas[fe.ROTA_VALOR]}
-        for n in fe.TAMANHOS_ROTA_ENXUTA:
-            escolhas[fe.rotulo_rota_topn(n)] = (
-                lambda p, n=n: fe.carteira_rota_valor_topn(
-                    p["df_pit"], p["universo"], n, selic=selic_da_safra(p["safra"])))
-
-    def medir(escolha):
-        return medir_escolha(por_safra, escolha, precos=precos, selic_macro=selic_macro,
-                             taxa=taxa, selic_mensal=selic_mensal, cost_cfg=cost_cfg,
-                             comeca_em=comeca_em)
+        rotulos = [fe.ROTA_VALOR] + [fe.rotulo_rota_topn(n) for n in fe.TAMANHOS_ROTA_ENXUTA]
+    else:
+        rotulos = [fe.ROTA_VALOR, fe.FORMULA_MAGICA, fe.QUALIDADE_CONSTANTE,
+                   fe.QUALIDADE_3_ANOS, fe.LIDER_SEGURADO]
+    escolhas = {k: rc["escolhas"][k] for k in rotulos}
 
     bracos = {}
     for rotulo, escolha in escolhas.items():

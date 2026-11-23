@@ -1109,3 +1109,130 @@ modelo (Sonnet 5.5), mesmos lotes limpos de 20 dossiês, mesmo `--corrigir`.
   daqui para frente, em tempo real).
 
 Números em `data/oos_vazamento_ia_b3_sonnet_texto.json`.
+
+## 22. Carteiras sorteadas: 15 ou 30 ações? (23/11/2026, medido)
+
+### Que pergunta responde
+
+Duas perguntas, separadas:
+
+1. **Mais ações dão mais chance de vencer, ou só menos susto?** Sem nenhuma
+   análise, uma carteira de 30 ações sorteadas bate pesos iguais, Ibovespa e
+   Selic mais vezes que uma de 15?
+2. **As carteiras de regra do app mostram habilidade ou sorte?** Cada uma é
+   comparada com milhares de carteiras sorteadas do **mesmo tamanho, safra a
+   safra**. Se ela fica no meio dos sorteios, o resultado não se separa da
+   sorte.
+
+### O desenho (`scripts/medir_carteiras_aleatorias_b3.py`)
+
+Fixado antes de ver qualquer número:
+
+- **Universo:** o da medição oficial de cada safra (quem tinha score mais quem
+  saiu da bolsa nela). Sorteio sem reposição, pesos iguais, formação em abril.
+- **Régua:** a mesma das §18–§20 (`medir_escolha`): 9 safras, perfil
+  Equilibrado, custos de pessoa física, cadeia de custos contínua desde a
+  primeira safra com carteira. Ibovespa pelo BOVA11 nas mesmas pontas
+  (`oos.retorno_benchmark`); Selic a da vigência.
+- **Pergunta 1:** N ∈ {10, 15, 20, 30, 40}. **1.000 sorteios** por N, semente
+  20261123. Cada sorteio troca todos os nomes a cada safra. Se a safra tem
+  menos de N nomes, entra o universo inteiro.
+- **Pergunta 2:** para cada carteira de regra (carteira padrão com os mesmos
+  nomes em pesos iguais, rota de valor completa, top 10/15/20, fórmula mágica,
+  qualidade constante, qualidade 3 anos e líder segurado), 1.000 sorteios com
+  **o mesmo número de nomes que ela teve em cada safra**. Safra em que ela
+  ficou em caixa, o sorteio também fica.
+- **O que sai, por N:** excesso médio anual (líquido) sobre pesos iguais,
+  Ibovespa e Selic; a fração de sorteios com excesso médio > 0 contra cada um;
+  os percentis 5, 50 e 95 do excesso médio sobre pesos iguais.
+- **O que sai, por carteira de regra:** o percentil do excesso médio dela
+  entre os sorteios do mesmo tamanho, líquido e bruto.
+
+### Regra de decisão, registrada antes de medir
+
+- **"30 protege mais que 15"** se a faixa p5–p95 do excesso médio sobre pesos
+  iguais com N = 30 for mais estreita que com N = 15.
+- **"30 dá mais chance de vencer que 15"** só se a fração de sorteios que batem
+  pesos iguais (líquido) com N = 30 ficar **5 pontos ou mais** acima da de
+  N = 15. O mesmo vale contra o Ibovespa e a Selic, cada um lido à parte.
+- **Uma carteira de regra mostra habilidade** se ficar **acima do percentil
+  95** dos sorteios do mesmo tamanho, no líquido e no bruto. Entre 50 e 95:
+  não se separa da sorte. Abaixo de 50: pior que a sorte mediana.
+- O sorteio troca 100% dos nomes por ano; as carteiras de regra trocam menos
+  (§19, §20). Por isso o percentil sai também no bruto: um percentil alto só
+  no líquido pode vir do giro menor, não da escolha.
+- **Só informativo.** Nada muda na tela nem na carteira padrão. Nove safras
+  dão leitura fraca, e a correlação entre as carteiras de regra não é
+  corrigida.
+
+### O que se espera, e por quê
+
+Sem custo, a média dos sorteios de qualquer N fica perto de pesos iguais: cada
+nome tem a mesma chance de entrar. O N mexe na **dispersão**, não na média.
+Com custo, todo sorteio perde um pouco para pesos iguais. Se isso se
+confirmar, 30 ações reduzem o tamanho do erro, mas não aumentam a chance de
+vencer sem uma escolha que preste.
+
+### Resultado (medido em 23/11/2026, armazém local, perfil Equilibrado, 9 safras)
+
+Antes de sortear, o script conferiu que a régua com memória dá o mesmo que
+sem ela em três sorteios. Números em `data/oos_carteiras_aleatorias_b3.json`.
+
+**Pergunta 1 — por tamanho** (1.000 sorteios por N; excesso médio anual,
+líquido):
+
+| N | Média vs pesos iguais | Batem pesos iguais | p5 / p95 | Faixa p5–p95 | Batem Ibovespa | Batem Selic | Giro anual |
+|---|---|---|---|---|---|---|---|
+| 10 | −0,3 pp | 46% | −7,7 / +7,0 | 14,7 pp | 34% | 86% | 95% |
+| 15 | −0,2 pp | 45% | −5,4 / +5,5 | 10,9 pp | 30% | 94% | 93% |
+| 20 | −0,4 pp | 45% | −5,0 / +4,6 | 9,6 pp | 27% | 95% | 90% |
+| 30 | −0,3 pp | 45% | −4,1 / +3,6 | 7,7 pp | 24% | 98% | 85% |
+| 40 | −0,2 pp | 47% | −3,3 / +2,8 | 6,2 pp | 19% | 100% | 80% |
+
+- A média contra o Ibovespa fica em torno de −1,7 pp em todo N, e contra a
+  Selic em torno de +4,9 pp. No bruto, 48–51% dos sorteios batem pesos
+  iguais em todo N: o que separa do bruto é só o custo do giro.
+- **Decisão:** "30 protege mais que 15" — **sim** (faixa de 10,9 para 7,7
+  pp). "30 dá mais chance que 15" — **não**, nos três: pesos iguais (45% e
+  45%), Selic (+4 pontos, abaixo do limiar de 5) e Ibovespa, onde a chance
+  **cai** (30% para 24%). Na janela, o Ibovespa bateu o universo em pesos
+  iguais; quanto mais a carteira sorteada se parece com o universo, mais ela
+  herda essa perda.
+
+**Pergunta 2 — cada carteira de regra entre sorteios do mesmo tamanho:**
+
+| Carteira | Excesso vs pesos iguais | Percentil líquido / bruto | p95 dos sorteios | Giro (regra / sorteio) | Leitura |
+|---|---|---|---|---|---|
+| Rota de valor | +9,9 pp | 100% / 100% | +3,3 pp | 48% / 82% | acima do p95 |
+| Rota de valor, top 20 | +9,5 pp | 100% / 100% | +4,5 pp | 55% / 90% | acima do p95 |
+| Fórmula mágica | +5,6 pp | 99,7% / 99,7% | +3,3 pp | 43% / 83% | acima do p95 |
+| Rota de valor, top 10 | +11,1 pp | 98,9% / 98,8% | +7,6 pp | 62% / 95% | acima do p95 |
+| Rota de valor, top 15 | +7,9 pp | 98,4% / 98,3% | +5,8 pp | 63% / 92% | acima do p95 |
+| Qualidade constante | +2,7 pp | 84% / 83% | +4,5 pp | 54% / 87% | não se separa da sorte |
+| Carteira padrão, pesos iguais | +2,9 pp | 76% / 76% | +7,5 pp | 81% / 94% | não se separa da sorte |
+| Qualidade 3 anos | +1,0 pp | 66% / 65% | +4,9 pp | 31% / 90% | não se separa da sorte |
+| Líder segurado | −0,6 pp | 49% / 48% | +5,9 pp | 41% / 87% | pior que a sorte mediana |
+
+O percentil quase não muda do líquido para o bruto: o giro menor das
+carteiras de regra não explica a posição delas.
+
+### Leitura
+
+- **Mais ações reduzem o tamanho do erro, não aumentam a chance de vencer.**
+  Sem uma escolha que preste, 30 ações sorteadas batem pesos iguais tanto
+  quanto 15 (45%), e batem o Ibovespa menos.
+- **Concentração não é o problema; a regra de escolha é.** A rota de valor
+  com 10 ou 15 nomes fica acima de 98% das carteiras sorteadas do mesmo
+  tamanho, mesmo com a faixa de sorte mais larga que vem de poucos nomes.
+- **Isto não contradiz a §20.** Lá, o piso do IC 95% dos cortes fica abaixo
+  de zero: o intervalo mede a incerteza de **quais anos** vieram (sorteio das
+  safras). Aqui as nove safras ficam fixas e o sorteio é dos **nomes**. Nessas
+  safras a escolha bateu a sorte; se outras safras repetiriam isso, a §20
+  continua dizendo que não há certeza. A régua de decisão da §20 não muda.
+- **A carteira padrão do app não se separa da sorte** (percentil 76). O
+  excesso de +2,9 pp está dentro do que carteiras sorteadas com o mesmo
+  número de nomes alcançam com frequência.
+- Os limites da §20 continuam: nove safras, braços correlacionados entre si
+  e sem correção para isso, e pesos iguais e Ibovespa sem custo (viés contra
+  as carteiras). Um percentil de 98–100% em nove safras não prova que a
+  vantagem continua.

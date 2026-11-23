@@ -58,7 +58,7 @@ def _tirar_piores_pela_nota(universo, scores, corte):
 
 
 def medir_escolha(por_safra, escolha, *, precos, selic_macro, taxa, selic_mensal,
-                  cost_cfg, comeca_em) -> dict:
+                  cost_cfg, comeca_em, memo: dict | None = None) -> dict:
     """Carteira de pesos iguais em ``escolha(safra)``, medida contra pesos iguais.
 
     Ponto único da régua das carteiras "de regra" da B3 (nota + fatores, o
@@ -67,6 +67,13 @@ def medir_escolha(por_safra, escolha, *, precos, selic_macro, taxa, selic_mensal
     safra é o de `core.b3_safras.retorno_da_safra`, o giro de abril paga o
     custo de `oos.simular_custos` numa cadeia contínua desde ``comeca_em``, e
     safra sem nome vira caixa à Selic (`oos.itens_da_cadeia`).
+
+    ``memo`` (um dict vazio, reaproveitado entre chamadas): guarda por safra o
+    que não depende da escolha -- pesos iguais, Selic, se é mensurável e o
+    retorno winsorizado de cada papel do universo (os limites saem só do
+    universo). Serve a quem mede milhares de escolhas no mesmo recorte, como
+    `scripts/medir_carteiras_aleatorias_b3.py`; o resultado é o mesmo de sem
+    ``memo`` (o script confere com ``--conferir``).
     """
     import core.b3_oos_carteira as oos
     from core.b3_safras import SafraCarteira, retorno_da_safra
@@ -77,14 +84,30 @@ def medir_escolha(por_safra, escolha, *, precos, selic_macro, taxa, selic_mensal
         safra, universo, saidas = p["safra"], p["universo"], p["saidas"]
         fica = escolha(p)
         pesos = {t: 1.0 / len(fica) for t in fica} if fica else {}
-        inicio, fim = janela_de_vigencia(safra)
-        base = retorno_da_safra(
-            SafraCarteira(safra=safra, ano_base=ano_base_do_score(safra), inicio=inicio,
-                          fim=fim, completa=True, pesos=pesos, universo=tuple(universo),
-                          segmentos=1, saidas=saidas),
-            precos, selic_por_ano=selic_macro, taxa_selic_aa=taxa,
-            selic_mensal=selic_mensal)
-        rets = oos.retornos_por_ticker(list(pesos), universo, precos, safra, saidas)
+        guardado = memo.get(safra) if memo is not None else None
+        if guardado is None:
+            inicio, fim = janela_de_vigencia(safra)
+            base = retorno_da_safra(
+                SafraCarteira(safra=safra, ano_base=ano_base_do_score(safra), inicio=inicio,
+                              fim=fim, completa=True, pesos=pesos, universo=tuple(universo),
+                              segmentos=1, saidas=saidas),
+                precos, selic_por_ano=selic_macro, taxa_selic_aa=taxa,
+                selic_mensal=selic_mensal)
+            if memo is not None:
+                guardado = memo[safra] = {
+                    "base": {k: base[k] for k in ("mensuravel", "retorno_selic",
+                                                  "retorno_equal_weight")},
+                    "rets": oos.retornos_por_ticker(list(universo), universo, precos,
+                                                    safra, saidas)}
+        if guardado is None:
+            rets = oos.retornos_por_ticker(list(pesos), universo, precos, safra, saidas)
+        else:
+            base = guardado["base"]
+            fora = [t for t in pesos if t not in guardado["rets"]]
+            rets = {t: guardado["rets"][t] for t in pesos if t in guardado["rets"]}
+            if fora:
+                rets.update(oos.retornos_por_ticker(fora, universo, precos, safra, saidas))
+            rets = {t: rets[t] for t in pesos}
         linhas.append({"safra": safra, "pesos": pesos, "retornos": rets,
                        "inviavel_no_cap": False, "mensuravel": bool(base["mensuravel"]),
                        "selic": base["retorno_selic"], "ew": base["retorno_equal_weight"],
