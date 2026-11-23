@@ -40,7 +40,7 @@ def test_carimbo_aponta_para_a_base_que_o_alvo_escreve(chave, onde):
                           "b3_pregao", "fii_documentos", "cvm_ipe",
                           "b3_brapi", "b3_brapi_anual", "us_painel_armazem",
                           "us_sec_filings"}
-    escreve_arquivo = {"macro_insumos", "cdi_diario", "macro_brasil", "valuation_historico",
+    escreve_arquivo = {"macro_insumos", "cdi_diario", "macro_brasil", "ipca_grupos", "valuation_historico",
                        "cenarios_analogos",
                        "informacoes_recentes", "rag_corpus", "fii_metrics_monthly",
                        "b3_linhagem", "precos_mensais_b3", "carteira20_desempenho",
