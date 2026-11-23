@@ -914,7 +914,7 @@ Leitura com cautela:
   quiser: outra janela de safras, filtro de liquidez e capital mínimo por lote.
 
 
-## 21. A IA lê o que os números não mostram? (22/11/2026, desenho; etapa 1 em medição)
+## 21. A IA lê o que os números não mostram? (22/11/2026, desenho; etapa 1: Opus vaza, Sonnet passa)
 
 ### Que pergunta responde
 
@@ -984,3 +984,46 @@ Amostra de 60 empresa-safras (semente fixa), dossiê só de números.
 Pela regra, **a etapa 2 não pode começar** até repetir a etapa 1 com o mesmo
 modelo que daria as notas, e com crédito para isso. Números em
 `data/oos_vazamento_ia_b3.json`.
+
+### Resultado da etapa 1 com Claude (23/11/2026): o Opus vaza, o Sonnet passa raspando
+
+Mesma amostra (semente 20261122, 60 casos de 1.792), mesmo prompt, mesmo
+dossiê só de números. Desta vez quem respondeu foi o Claude, pelo Claude Code,
+sem gastar crédito da API.
+
+| Modelo | Acerto do ticker | Ticker e ano | IC 95% do ticker (Wilson) | Etapa 2 |
+|---|---|---|---|---|
+| Claude Opus 5.5 | **50,0%** (30 de 60) | 50,0% | 37,7% a 62,3% | **invalidada** |
+| Claude Sonnet 5.5 | 13,3% (8 de 60) | 5,0% | 6,9% a 24,2% | permitida pela regra |
+
+- **O Opus lembra.** Arriscou 35 nomes e acertou 30. Em todos os 30 acertou
+  também o ano. Não é palpite por setor: inclui nomes médios como RAPT4,
+  MDIA3, JSLG3, EZTC3, DXCO3 e COGN3. Com o Opus, uma nota retroativa seria
+  memória do que veio depois. **O Opus fica fora da etapa 2.**
+- **O Sonnet fica abaixo do limite**, com 13,3% no ticker. Ele erra o ano com
+  mais frequência (5% com o ano certo). Mas o teto do IC passa de 20%, e o dossiê
+  só de números tende a subestimar o vazamento (ver "Limites"). O Sonnet é o
+  modelo padrão do app (`core/llm_b3.py`).
+- **O que isto decide:** pela regra (c), a etapa 2 só pode rodar com o Sonnet.
+  Antes dela, a etapa 1 tem de ser repetida com o dossiê de texto, que é o que a
+  etapa 2 vai ler. Se o Sonnet passar de 20% com texto, a etapa 2 cai também.
+  A regra não muda depois de ver estes números.
+
+**Como foi rodado.** Cada ajudante abriu um contexto limpo, sem nada desta
+conversa. Recebeu um arquivo com 20 dossiês e ids opacos (`d001`…), sem
+gabarito, e foi proibido de usar outras ferramentas. Cada ajudante usou uma
+ferramenta só, a leitura do lote. Foram três lotes por modelo.
+`--exportar` grava os dossiês e o gabarito em arquivos separados, e
+`--corrigir` pontua as respostas.
+
+Isto difere da etapa 1 pelo app, que faz uma chamada por caso, em dois pontos:
+
+- no lote, a mesma empresa pode aparecer em duas safras, como SANB11, VIVT3 e
+  CIEL3, e as séries deslocadas ajudam a achar o ano;
+- o modelo é o do Claude Code, não a chamada da API com `effort` médio.
+
+Os dois pontos tendem a aumentar o acerto, o que pesa contra o Opus e não a
+favor dele.
+
+Números em `data/oos_vazamento_ia_b3_opus.json` e
+`data/oos_vazamento_ia_b3_sonnet.json`.

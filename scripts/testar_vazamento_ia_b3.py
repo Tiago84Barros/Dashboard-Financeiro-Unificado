@@ -86,13 +86,64 @@ def acertou(resp: dict, ticker: str, ano_verdadeiro: int) -> tuple[bool, bool]:
     return ok_t, ok_a
 
 
+def resumo(amostra: list[dict], respostas: list[dict], modelos, n_universo: int,
+           semente: int) -> dict:
+    """Pontua as respostas (na ordem da amostra) e monta o JSON de saída."""
+    linhas, hit_t, hit_a = [], 0, 0
+    for c, resp in zip(amostra, respostas):
+        ok_t, ok_a = acertou(resp, c["ticker"], c["ano_n1"])
+        hit_t += ok_t
+        hit_a += ok_a
+        linhas.append({"ticker": c["ticker"], "safra": c["safra"], "ano_n1": c["ano_n1"],
+                       "resposta": resp, "acertou_ticker": ok_t, "acertou_ticker_e_ano": ok_a})
+    n = max(len(amostra), 1)
+    taxa = hit_t / n
+    return {
+        "medido_em": datetime.now().isoformat(timespec="seconds"),
+        "modelos_que_responderam": sorted(modelos), "semente": semente, "amostra": len(amostra),
+        "universo_de_casos": n_universo,
+        "dossie": "só números (retrato PIT, setor, ROIC e lucro por exercício), sem texto",
+        "taxa_acerto_ticker": taxa, "taxa_acerto_ticker_e_ano": hit_a / n,
+        "limite": LIMITE_VAZAMENTO,
+        "invalida_etapa_2": bool(taxa > LIMITE_VAZAMENTO),
+        "casos": linhas,
+    }
+
+
+def corrigir(gabarito: Path, respostas: Path, modelo: str, saida: Path) -> int:
+    """Modo sem LLM: pontua respostas dadas fora do app (ex.: ajudante do Claude Code).
+
+    ``respostas`` é uma lista JSON de objetos com ``id`` e os campos do PROMPT.
+    """
+    gab = json.loads(gabarito.read_text(encoding="utf-8"))
+    por_id = {str(r.get("id")): r for r in json.loads(respostas.read_text(encoding="utf-8"))}
+    amostra = gab["casos"]
+    resps = [por_id.get(str(c["id"]), {}) for c in amostra]
+    out = resumo(amostra, resps, [modelo], gab["universo_de_casos"], gab["semente"])
+    out["canal"] = "fora do app: ajudante sem contexto, um lote de dossiês por chamada"
+    out["sem_resposta"] = sum(1 for r in resps if not r)
+    saida.write_text(json.dumps(out, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"{modelo}: acerto ticker={out['taxa_acerto_ticker']:.1%} "
+          f"ticker+ano={out['taxa_acerto_ticker_e_ano']:.1%} sem_resposta={out['sem_resposta']}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--cache-dir", type=Path, default=None)
     ap.add_argument("--n", type=int, default=60, help="tamanho da amostra")
     ap.add_argument("--semente", type=int, default=20261122)
     ap.add_argument("--dry-run", action="store_true", help="não grava o JSON")
+    ap.add_argument("--exportar", type=Path, default=None,
+                    help="grava dossies.json (sem resposta) e gabarito.json nesta pasta; não chama LLM")
+    ap.add_argument("--corrigir", type=Path, default=None, help="respostas.json a pontuar")
+    ap.add_argument("--gabarito", type=Path, default=None)
+    ap.add_argument("--modelo", default="desconhecido")
+    ap.add_argument("--saida", type=Path, default=CAMINHO)
     args = ap.parse_args()
+
+    if args.corrigir:
+        return corrigir(args.gabarito, args.corrigir, args.modelo, args.saida)
 
     import core.llm_b3 as llm
     cadeia_original = llm._provider_chain  # `preparar` desliga a LLM da medição
@@ -144,43 +195,43 @@ def main() -> int:
     amostra = casos[:args.n]
     print(f"{len(casos)} empresa-safras; amostra de {len(amostra)}", flush=True)
 
+    if args.exportar:
+        # Ids opacos: a ordem não revela nada; o gabarito fica em outro arquivo.
+        args.exportar.mkdir(parents=True, exist_ok=True)
+        for i, c in enumerate(amostra, 1):
+            c["id"] = f"d{i:03d}"
+        (args.exportar / "dossies.json").write_text(json.dumps(
+            {"prompt": PROMPT, "dossies": [{"id": c["id"], "texto": c["texto"]} for c in amostra]},
+            indent=1, ensure_ascii=False), encoding="utf-8")
+        (args.exportar / "gabarito.json").write_text(json.dumps(
+            {"semente": args.semente, "universo_de_casos": len(casos),
+             "casos": [{k: c[k] for k in ("id", "ticker", "safra", "ano_n1")} for c in amostra]},
+            indent=1, ensure_ascii=False), encoding="utf-8")
+        print(f"exportado em {args.exportar}")
+        return 0
+
     if not llm.llm_disponivel():
         raise SystemExit("nenhum provedor de LLM disponível")
     modelos: set[str] = set()
 
-    linhas, hit_t, hit_a = [], 0, 0
+    respostas = []
     for i, c in enumerate(amostra, 1):
         # Pelo portão do app (`_chat_complete`): mesma cadeia de provedores.
         txt = llm._chat_complete([{"role": "user", "content": PROMPT + c["texto"]}],
                                  json_mode=True)
         modelos.add(str(llm.ultimo_modelo()))
         resp = parse_resposta(txt)
-        ok_t, ok_a = acertou(resp, c["ticker"], c["ano_n1"])
-        hit_t += ok_t
-        hit_a += ok_a
-        linhas.append({"ticker": c["ticker"], "safra": c["safra"], "ano_n1": c["ano_n1"],
-                       "resposta": resp, "acertou_ticker": ok_t, "acertou_ticker_e_ano": ok_a})
-        print(f"{i}/{len(amostra)} {c['ticker']}/{c['safra']} -> "
-              f"{resp.get('ticker')} ({'ok' if ok_t else 'x'})", flush=True)
+        respostas.append(resp)
+        print(f"{i}/{len(amostra)} {c['ticker']}/{c['safra']} -> {resp.get('ticker')}", flush=True)
 
-    n = max(len(amostra), 1)
-    taxa = hit_t / n
-    saida = {
-        "medido_em": datetime.now().isoformat(timespec="seconds"),
-        "modelos_que_responderam": sorted(modelos), "semente": args.semente, "amostra": len(amostra),
-        "universo_de_casos": len(casos),
-        "dossie": "só números (retrato PIT, setor, ROIC e lucro por exercício), sem texto",
-        "taxa_acerto_ticker": taxa, "taxa_acerto_ticker_e_ano": hit_a / n,
-        "limite": LIMITE_VAZAMENTO,
-        "invalida_etapa_2": bool(taxa > LIMITE_VAZAMENTO),
-        "casos": linhas,
-    }
-    print(f"acerto ticker={taxa:.1%} ticker+ano={hit_a / n:.1%} "
+    saida = resumo(amostra, respostas, modelos, len(casos), args.semente)
+    print(f"acerto ticker={saida['taxa_acerto_ticker']:.1%} "
+          f"ticker+ano={saida['taxa_acerto_ticker_e_ano']:.1%} "
           f"invalida_etapa_2={saida['invalida_etapa_2']}", flush=True)
     if not args.dry_run:
-        CAMINHO.write_text(json.dumps(saida, indent=2, ensure_ascii=False) + "\n",
-                           encoding="utf-8")
-        print(f"gravado em {CAMINHO}")
+        args.saida.write_text(json.dumps(saida, indent=2, ensure_ascii=False) + "\n",
+                              encoding="utf-8")
+        print(f"gravado em {args.saida}")
     return 0
 
 
