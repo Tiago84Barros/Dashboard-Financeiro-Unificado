@@ -1,5 +1,5 @@
 """
-core/b3_estrategias_fundamentalistas.py — cinco carteiras "à moda dos grandes
+core/b3_estrategias_fundamentalistas.py — carteiras "à moda dos grandes
 fundamentalistas", para medir fora da amostra contra pesos iguais.
 
 Pergunta (22/11/2026): a carteira padrão da B3 não se distingue de dividir
@@ -38,6 +38,17 @@ As cinco regras, fixadas ANTES de medir (não são ajustadas depois):
    solvência da rota de valor, ou ter prejuízo no último exercício (lucro de
    N-1 <= 0). Dado ausente não é degradação. Pesos iguais entre todos.
 
+Duas regras a mais, fixadas antes de medir em 23/11/2026 (§23 do guia, com
+regra de decisão própria, ``REGRA_DE_DECISAO_PEQUENAS_DIVIDENDO``):
+
+6. ``pequenas_baratas`` — as empresas que o piso de R$ 1 bi de valor de
+   mercado corta (no universo da rodada sem piso, fora do universo com piso,
+   mesma liquidez mínima de R$ 500 mil) que a rota de valor classifica como
+   ``oportunidade``. Pesos iguais.
+7. ``dividendo_6`` — Bazin: DY médio dos três últimos exercícios (N-3 a N-1,
+   todos presentes) de pelo menos 6%, sem falha da trava de solvência.
+   Universo da carteira padrão. Pesos iguais.
+
 Todas leem só o que se sabia em abril/N: o retrato e o histórico da safra
 (exercícios até N-1, pela regra de vintage do motor), os múltiplos com o preço
 de fim do exercício (``data_pipeline.market.ingest``, histórico anual) e a
@@ -58,7 +69,7 @@ import pandas as pd
 
 from core.b3_value_route import OPORTUNIDADE, rank_value_opportunities
 
-VERSAO = "fundamentalistas-1.2.0"
+VERSAO = "fundamentalistas-1.3.0"
 
 ROTA_VALOR = "rota_valor"
 FORMULA_MAGICA = "formula_magica"
@@ -387,3 +398,106 @@ def segurar_lideres(safras: list[int], lideres_de, manter) -> dict[int, list[str
         atual = sorted(ficam | {str(t).upper() for t in lideres_de(s)})
         out[s] = list(atual)
     return out
+
+
+# ── 6 e 7. Pequenas baratas e dividendo de 6% (23/11/2026) ──────────────────
+#: Rótulos dos braços da §23 do guia. ``rota_valor_sem_piso`` é informativo:
+#: fica fora da regra de decisão.
+PEQUENAS_BARATAS = "pequenas_baratas"
+DIVIDENDO_6 = "dividendo_6"
+ROTA_VALOR_SEM_PISO = "rota_valor_sem_piso"
+
+#: Bazin: dividendo médio de ``ANOS_DY_BAZIN`` exercícios sobre o preço, no
+#: mínimo ``DY_ALVO_BAZIN``. DY fora de [0, ``DY_MAXIMO_CRIVEL``] (negativo ou
+#: acima de 100% ao ano) é erro de dado e conta como ano ausente.
+DY_ALVO_BAZIN = 0.06
+ANOS_DY_BAZIN = 3
+DY_MAXIMO_CRIVEL = 1.0
+
+#: Regra de decisão da §23, registrada antes de medir (23/11/2026).
+REGRA_DE_DECISAO_PEQUENAS_DIVIDENDO = (
+    "pequenas baratas e dividendo de 6% só viram candidatas se, LÍQUIDAS do "
+    "giro, passarem nos três testes da §19: (a) excesso médio sobre pesos "
+    "iguais no próprio universo > 0 com IC 95% acima de zero; (b) média sem a "
+    "melhor safra > 0; (c) diferença pareada contra a carteira padrão atual "
+    "(Equilibrado, sem portão) com média > 0. Dois braços: a chance de um falso "
+    "positivo fica perto de 1 em 10. A rota de valor sem piso de tamanho e o "
+    "excesso das pequenas sobre os pesos iguais do universo com piso são só "
+    "informativos. Passar não muda a tela; só abre a próxima etapa.")
+
+
+def pequenas(universo_sem_piso: Iterable[str],
+             universo_com_piso: Iterable[str]) -> list[str]:
+    """Quem o piso de tamanho corta: está no universo sem piso e não no com piso.
+
+    Os dois universos são da MESMA safra e com o MESMO filtro de liquidez.
+    Entra quem não tem valor de mercado medido (o piso também o corta).
+    """
+    com_piso = {str(t).upper() for t in universo_com_piso}
+    return sorted({str(t).upper() for t in universo_sem_piso} - com_piso)
+
+
+def carteira_pequenas_baratas(df_pit: pd.DataFrame | None,
+                              universo_sem_piso: Iterable[str],
+                              universo_com_piso: Iterable[str], *,
+                              selic: float | None = None) -> list[str]:
+    """Regra 6: a rota de valor aplicada só às pequenas (`pequenas`).
+
+    ``df_pit`` é o retrato da safra na rodada SEM piso de tamanho (o retrato
+    com piso não tem as pequenas). Mesmo critério da rota de valor: margem de
+    Graham e Bazin e trava de solvência, classificação ``oportunidade``.
+    """
+    return carteira_rota_valor(df_pit, pequenas(universo_sem_piso, universo_com_piso),
+                               selic=selic)
+
+
+def _dy_por_ano(hist: pd.DataFrame | None) -> dict[int, float]:
+    """DY de cada exercício; com duas linhas no ano, vale a de data mais nova."""
+    if hist is None or hist.empty or "Data" not in hist.columns or "DY" not in hist.columns:
+        return {}
+    d = pd.DataFrame({"data": pd.to_datetime(hist["Data"], errors="coerce"),
+                      "dy": pd.to_numeric(hist["DY"], errors="coerce")})
+    d = d.dropna(subset=["data"]).sort_values("data", kind="mergesort")
+    out: dict[int, float] = {}
+    for data, dy in zip(d["data"], d["dy"]):
+        out[int(data.year)] = dy
+    return {a: float(v) for a, v in out.items()
+            if v is not None and np.isfinite(float(v))
+            and 0.0 <= float(v) <= DY_MAXIMO_CRIVEL}
+
+
+def dy_medio(hist: pd.DataFrame | None, ano_max: int, *,
+             anos: int = ANOS_DY_BAZIN) -> float | None:
+    """Média do DY dos ``anos`` exercícios até ``ano_max``; None se faltar um.
+
+    ``hist`` já recortado em ``ano_max`` pelo chamador
+    (`core.b3_retrato_pit.historico_ate`, regra de vintage da safra).
+    """
+    por_ano = _dy_por_ano(hist)
+    janela = range(int(ano_max) - int(anos) + 1, int(ano_max) + 1)
+    if any(a not in por_ano for a in janela):
+        return None
+    return float(np.mean([por_ano[a] for a in janela]))
+
+
+def carteira_dividendo_bazin(df_pit: pd.DataFrame | None, universo: Iterable[str],
+                             historico: Mapping[str, pd.DataFrame] | None,
+                             ano_max: int, *, alvo: float = DY_ALVO_BAZIN,
+                             anos: int = ANOS_DY_BAZIN) -> list[str]:
+    """Regra 7 (Bazin): DY médio dos últimos ``anos`` exercícios >= ``alvo``.
+
+    Exige os ``anos`` exercícios com DY crível e nenhuma falha da trava de
+    solvência da rota de valor (ausência de dado não é falha). Pesos iguais
+    entre quem passa.
+    """
+    nomes = sorted({str(t).upper() for t in universo})
+    falhas = falhas_de_solvencia(df_pit, nomes)
+    hist = {str(k).upper(): v for k, v in (historico or {}).items()}
+    fica = []
+    for tk in nomes:
+        if falhas.get(tk):
+            continue
+        media = dy_medio(hist.get(tk), ano_max, anos=anos)
+        if media is not None and media >= float(alvo):
+            fica.append(tk)
+    return fica

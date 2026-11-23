@@ -208,15 +208,20 @@ def caminho_do_cache(cache_dir: Path | None, nome: str, *,
 
 
 def rodada_da_aba(M, view, nome: str, valores: dict, cache_dir: Path | None, *,
-                  sem_decaimento: bool = False):
+                  sem_decaimento: bool = False, chave_cache: str | None = None):
     """A rodada da aba no perfil ``nome``, lida do pickle ou refeita.
+
+    ``chave_cache``: nome do pickle quando ``nome`` não basta para separar a
+    rodada -- um perfil Personalizado (valores mudados) tem de ter o seu, ou
+    leria a rodada de outro conjunto de valores.
 
     ``sem_decaimento``: a aba roda com `views.portfolio_b3._apply_decay_penalty`
     trocado pela identidade (o desconto de 7% a.a. por ano consecutivo de
     liderança desligado, nas duas chamadas: o laço anual e a carteira atual).
     A troca vale só durante a rodada.
     """
-    cache = caminho_do_cache(cache_dir, nome, sem_decaimento=sem_decaimento)
+    cache = caminho_do_cache(cache_dir, chave_cache or nome,
+                             sem_decaimento=sem_decaimento)
     rodada = None
     if cache is not None and cache.exists():
         with cache.open("rb") as fh:
