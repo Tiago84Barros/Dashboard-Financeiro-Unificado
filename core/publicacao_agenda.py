@@ -374,6 +374,15 @@ ALVOS: tuple[Alvo, ...] = (
         artefatos=("data/public/cdi_diario.json.gz",),
     ),
     Alvo(
+        chave="ipca_grupos",
+        titulo="IPCA por grupo e pesos do IBGE (SIDRA 7060)",
+        passos=(("scripts/publicar_ipca_grupos.py",),),
+        cadencia_dias=7,
+        modulo="macro",
+        precisa_armazem=False,
+        artefatos=("data/public/ipca_grupos.json.gz",),
+    ),
+    Alvo(
         chave="macro_brasil",
         titulo="Macro do BCB para as LLMs (Selic meta, IPCA 12m, Focus)",
         # Ingestão antes da publicação, como em `macro_insumos`: publicar sem
