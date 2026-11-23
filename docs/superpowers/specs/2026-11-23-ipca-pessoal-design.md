@@ -42,16 +42,25 @@ A janela tem os 12 meses que terminam no mês escolhido na barra lateral do
 Controle Financeiro. Para 12 variações mensais são precisos 13 meses de
 lançamentos: o mês anterior à janela entra só como base de preço.
 
+Se o mês escolhido é posterior ao último mês publicado pelo IBGE, a janela
+termina no último mês publicado e a tela diz isso (com aviso extra quando o
+atraso passa de 60 dias). O mês do lançamento é o de `due_date`, como no resto
+do Controle Financeiro.
+
 ### Lançamentos que entram
 
 Só despesa real de consumo:
 
-- `type = 'expense'` e `status = 'settled'`;
-- fora: receitas, transferências, aporte e resgate de investimento,
-  pagamento de fatura (a mesma regra de `core.controle.is_investment_category`
-  e da classificação de pagamento de fatura já usadas no módulo);
-- fora: a categoria **Impostos e Taxas**, que não é consumo (o IPCA também não
-  mede imposto de renda nem taxa).
+- saída realizada (`amount < 0` e `core.previstos.sql_realizado`), com
+  `core.controle.canonical_transaction_type(...) == "expense"` — isso já tira
+  receitas, transferências e aporte/resgate de investimento;
+- fora: **Financiamento** (dívida, não consumo) e **Impostos e Taxas** (o IPCA
+  também não mede imposto de renda nem taxa);
+- **pagamento de fatura** (categorias "Pagamento de Cartão" / "Pagamento de
+  Fatura", fora da conta do cartão): sai no mês em que a fatura foi importada
+  em CSV, porque as compras dela já estão lá; no mês sem fatura importada,
+  entra como a categoria **"Cartão (sem detalhe)"**, para o gasto não sumir.
+  Essa categoria nunca usa a origem "seus itens" e não tem grupo do IPCA.
 
 Compra parcelada entra pelo valor da parcela do mês, como o Controle Financeiro
 já mostra. Parcelas ficam fora da medida de **preço** (ver abaixo), mas
@@ -93,8 +102,13 @@ r_{c,t} = Σ_i (valor_{i,t-1} · v_{i,t}) / Σ_i valor_{i,t-1}
 ```
 
 A categoria usa esta origem se os itens recorrentes cobrem **pelo menos 30%**
-do gasto dela na janela. Abaixo disso, a amostra não representa a categoria.
-Nesse caso a categoria inteira usa a origem (b), sem misturar origens no mês.
+do gasto dela na janela. Abaixo disso, a amostra não representa a categoria, e
+a categoria inteira usa a origem (b).
+
+Mesmo numa categoria que usa "seus itens", um mês sem nenhum par válido (item
+que não apareceu no mês anterior, ou só salto acima de 50%) usa a origem (b)
+naquele mês. A tela mostra quantos meses foram medidos pelos itens:
+"seus itens (n de 12 meses)".
 
 **b) Origem "estimativa oficial"** — variação mensal do grupo do IPCA
 equivalente, pelo mapeamento abaixo.
@@ -122,25 +136,26 @@ unidade (variação mensal em %), sem depender do IPCA "acumulado no ano" que
 
 ### Mapeamento categoria → grupo do IPCA
 
-Dicionário no código, com fallback explícito:
+Palavras-chave no código (`core/ipca_grupos.py::grupo_da_categoria`), porque
+as categorias reais do usuário vêm da importação e variam de nome. O nome da
+categoria é normalizado (sem acento e caixa) e casa por palavra inteira — "gas"
+não casa dentro de "gastos". A primeira regra que casa vence:
 
-| Categoria do app | Grupo do IPCA |
+| Palavras-chave | Grupo do IPCA |
 |---|---|
-| Moradia | Habitação |
-| Alimentação | Alimentação e bebidas |
-| Transporte | Transportes |
-| Saúde | Saúde e cuidados pessoais |
-| Educação | Educação |
-| Lazer | Despesas pessoais |
-| Vestuário | Vestuário |
-| Assinaturas | Comunicação |
-| Telefone / Internet | Comunicação |
-| Pets | Despesas pessoais |
-| Seguros | Despesas pessoais |
-| Presentes e Doações | Índice geral |
-| Outras Despesas | Índice geral |
-| Impostos e Taxas | fora da conta |
-| categoria criada pelo usuário ou pela importação de fatura | Índice geral, marcada "sem grupo definido" |
+| moradia, condominio, luz, agua, gas, aluguel, casa & construcao | Habitação |
+| alimentacao, mercado, supermercado | Alimentação e bebidas |
+| transporte, combustivel, automotivo | Transportes |
+| saude, bem estar, cuidados pessoais | Saúde e cuidados pessoais |
+| educacao | Educação |
+| lazer, pets, seguros, despesas domesticas, tarifas & anuidade | Despesas pessoais |
+| vestuario | Vestuário |
+| assinaturas, internet, telefone | Comunicação |
+| nenhuma (ex.: Outros, A Revisar, Gastos gerais, Cartão (sem detalhe)) | Índice geral, marcada "sem grupo definido" |
+
+Nos dados reais de 23/11/2026, cerca de 29% do gasto cai em "sem grupo
+definido" (sobretudo pagamento de fatura sem detalhe e "Outros"). A tela
+mostra esse percentual num aviso, com o nome das categorias.
 
 "Artigos de residência" fica sem categoria própria no app. Isso aparece na
 comparação de pesos como 0% do usuário.
@@ -149,48 +164,36 @@ comparação de pesos como 0% do usuário.
 
 ### Gastos
 
-A mesma leitura de lançamentos do Controle Financeiro (`core/controle.py`), sem
-nova conexão de banco. A camada de cálculo recebe uma lista de lançamentos já
-filtrada e não sabe de onde ela veio. Isso permite testar a conta sem banco.
+Leitura própria e enxuta em `core/ipca_pessoal_dados.py`, pela conexão única do
+app (`core.database.get_engine()`), no padrão de `core/controle.py`
+(`transactions` + `accounts` + `categories`, filtro `sql_realizado`). Lê 24
+meses até o mês pedido, para a janela poder recuar até o último mês do IBGE.
+A camada de cálculo recebe uma lista de lançamentos e não sabe de onde ela
+veio. Isso permite testar a conta sem banco.
 
-No modo de teste do app (`core/mock_data.py`, `views/app_test_mode.py`) a aba
-usa lançamentos fictícios com 13+ meses, como as outras telas fazem.
+No modo de teste do app (`MOCK_MODE`) a aba usa uma cesta fictícia e
+determinística de 24 meses.
 
 ### IPCA por grupo e pesos do IBGE
 
-Fonte: IBGE, SIDRA, tabela 7060 (IPCA: variação mensal e peso mensal, por
-grupo, de jan/2020 em diante). Variáveis: variação mensal e peso mensal. O
-número da tabela e das variáveis será conferido na primeira tarefa do plano.
+Fonte: IBGE, SIDRA, tabela 7060, variáveis 63 (variação mensal, %) e 66 (peso
+mensal, %), classificação 315 com o Índice geral (7169) e os 9 grupos. Conferido
+em 23/11/2026: série de 01/2020 a 10/2026.
 
-**Antes de criar qualquer coisa**, a primeira tarefa roda a skill
-`inventario-de-dados`: confere se essa série já está no Supabase
-(`public.macro`, `market.macro_indicators`) ou no armazém local
-(`macro_staging`). Se já estiver, usa a existente e a seção abaixo encolhe.
+O inventário (skill `inventario-de-dados`) foi feito: a série por grupo não
+está no Supabase nem no armazém local; só existe o IPCA cheio.
 
-Se não estiver:
+**Sem tabela no Supabase**: o plano free está em 497/500 MB. A série é pequena
+(10 séries × ~80 meses) e mora num **arquivo versionado**,
+`data/public/ipca_grupos.json.gz`, como os outros arquivos de `data/public/`
+que a Streamlit Cloud lê do repositório.
 
-- **Tabela nova no Supabase** (é pequena: 10 séries × ~80 meses), para a
-  Streamlit Cloud alcançar:
-
-  ```sql
-  CREATE TABLE IF NOT EXISTS ipca_grupos_mensal (
-      mes           DATE         NOT NULL,  -- primeiro dia do mês
-      grupo         VARCHAR(60)  NOT NULL,  -- 'Índice geral' ou um dos 9 grupos
-      variacao_pct  NUMERIC(8,4) NOT NULL,
-      peso_pct      NUMERIC(8,4),           -- nulo no Índice geral
-      fonte         VARCHAR(40)  NOT NULL DEFAULT 'ibge_sidra_7060',
-      atualizado_em TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-      PRIMARY KEY (mes, grupo)
-  );
-  ```
-
-  Script SQL novo e não destrutivo em `supabase_unificado/schema/`, no padrão
-  dos existentes. Leitura pública (dado oficial, sem usuário), escrita só
-  pelo serviço.
-
-- **Coleta em ETL separado** (`etl/`), com upsert por `(mes, grupo)`,
-  chamado pela rotina de atualização macro que já existe
-  (`run_macro_updates.py`). A tela só lê; nunca chama o IBGE.
+- `scripts/publicar_ipca_grupos.py` baixa do SIDRA e grava o arquivo (gzip
+  determinístico). Sem rede ou com resposta vazia, não grava e sai com código 1:
+  o arquivo anterior continua valendo.
+- Alvo `ipca_grupos` em `core/publicacao_agenda.py`, cadência de 7 dias,
+  módulo macro, sem armazém.
+- A tela só lê o arquivo; nunca chama o IBGE.
 
 ## 3. Módulos
 
@@ -198,10 +201,11 @@ Cada unidade com um papel, testável sozinha:
 
 | Unidade | Papel | Depende de |
 |---|---|---|
-| `core/ipca_pessoal.py` | Conta pura: filtro, normalização, recorrentes, pesos, variação por categoria, índice, contribuição. Recebe listas/DataFrames, devolve um resultado estruturado. | nada de banco |
-| `core/ipca_grupos.py` | Mapeamento categoria → grupo e leitura de `ipca_grupos_mensal` | `core/database.py` |
-| `etl/ipca_grupos_sidra.py` | Busca no SIDRA e grava | `core/database.py` |
-| `views/controle_ipca_pessoal.py` | Só desenha a tela | os dois módulos `core` |
+| `core/ipca_grupos.py` | Série do IBGE: parser do SIDRA, arquivo publicado (gravar/ler), download, mapeamento categoria → grupo | nada de banco |
+| `core/ipca_pessoal.py` | Conta pura: filtro, normalização, recorrentes, pesos, variação por categoria, índice, contribuição, linhas do contexto do chat. Recebe lista de lançamentos, devolve um resultado estruturado. | `core/ipca_grupos.py` |
+| `core/ipca_pessoal_dados.py` | Leitura dos lançamentos (ou da cesta fictícia) e a conta do mês | `core/database.py` |
+| `scripts/publicar_ipca_grupos.py` | Baixa do SIDRA e grava o arquivo | `core/ipca_grupos.py` |
+| `views/controle_ipca_pessoal.py` | Só desenha a tela | os módulos `core` |
 
 `views/controle_financeiro.py` já tem 3.900 linhas. A aba nova entra lá apenas
 como uma linha em `_SECOES` e uma chamada `render_ipca_pessoal(...)`, como
@@ -236,8 +240,9 @@ Seguem os componentes de aviso que o app já usa (`design/lacunas.py`).
 | Situação | O que a tela faz |
 |---|---|
 | Menos de 13 meses de lançamentos | Não mostra número. Diz quantos meses existem e quantos faltam. |
-| `ipca_grupos_mensal` vazia ou sem o mês | Não mostra índice. Nomeia a fonte que falhou. |
-| Série do IBGE com mais de 60 dias de atraso em relação ao mês pedido | Mostra o índice até o último mês disponível e diz isso. |
+| Arquivo `ipca_grupos.json.gz` ausente/ilegível, ou sem o Índice geral de um mês da janela | Não mostra índice. Nomeia a fonte que falhou. |
+| Leitura dos lançamentos falhou | Não mostra índice. Diz que a leitura falhou. |
+| Mês pedido depois do último mês do IBGE | Janela termina no último mês publicado, e a tela diz isso; aviso extra com mais de 60 dias de atraso. |
 | Categoria sem dado em algum mês | Calcula sem ela naquele mês e lista o mês no aviso. |
 | Categoria sem grupo definido | Usa o Índice geral e marca a linha. |
 
@@ -257,9 +262,13 @@ Aba nova é mudança de estrutura (regra de 29/10/2026). No mesmo PR:
 - **Mapa do App:** `docs/mapa_app/areas/controle_financeiro.json` e
   `python scripts/montar_mapa_app.py`;
 - **Documentação:** `views/documentacao.py`, nó e nota da tela nova;
-- **Grau de Confiança:** `core/confianca_secao.py`, seção nova em `_SECOES`
-  medindo `transactions` e `ipca_grupos_mensal`;
-- recontar textos que dizem "cinco abas" do Controle Financeiro, se houver.
+- **Grau de Confiança:** `core/confianca_secao.py`, componente novo "Série do
+  IPCA por grupo" **dentro** da seção Controle Financeiro (a aba é parte dela,
+  e os lançamentos já são medidos lá). Mede o frescor do último mês do arquivo:
+  100% até 75 dias, 0% com 150 dias ou mais; arquivo ausente vale 0% e vira
+  nota. Não é seção nova em `_SECOES`;
+- recontar textos que dizem "cinco abas" do Controle Financeiro (o Mapa do App
+  diz; passa a "seis abas").
 
 `tests/test_configuracoes_sincronizadas.py` tem de passar.
 
@@ -278,12 +287,21 @@ Em `tests/test_ipca_pessoal.py`, com números pequenos feitos à mão:
   conferido à mão;
 - soma das contribuições = acumulado;
 - histórico de 12 meses devolve aviso e nenhum número;
-- mês faltando renormaliza só aquele mês.
+- mês faltando renormaliza só aquele mês;
+- pagamento de fatura: entra como "Cartão (sem detalhe)" só no mês sem fatura
+  importada; Financiamento fica fora;
+- mês pedido depois do último mês do IBGE: a janela recua e avisa;
+- item com 2 meses cai na estimativa oficial; com 3, usa os itens só nos meses
+  com par válido.
 
 Em `tests/test_ipca_grupos_sidra.py`: o parser do SIDRA com uma resposta
-gravada em fixture (sem rede no teste).
+em fixture (sem rede no teste), o arquivo (ida e volta) e o publicador.
 
-Mais o teste de configurações sincronizadas, que já existe.
+Mais: leitura (`tests/test_ipca_pessoal_dados.py`), partes puras da tela,
+componente do Grau de Confiança, contexto do chat e o teste de configurações
+sincronizadas, que já existe.
+
+Plano de implementação: `docs/superpowers/plans/2026-11-23-ipca-pessoal.md`.
 
 ## Fora do escopo
 
