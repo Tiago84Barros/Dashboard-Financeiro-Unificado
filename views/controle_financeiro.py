@@ -78,6 +78,7 @@ from design.componentes import (
 from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 from design.tema_canvas import no_claro
 from views.controle_previstos import render_previstos
+from views.controle_ipca_pessoal import render_ipca_pessoal
 
 # Chat "Analista Financeiro Pessoal" (aba Análises) — importado localmente na
 # função de render para não pesar no carregamento das demais abas/reruns.
@@ -3884,7 +3885,8 @@ def render() -> None:
     # não foi desligado: `core.alertas` (R1) e o Dashboard Geral seguem lendo
     # os limites, editados em Configurações → Geral desde 31/10/2026.
     _SECOES = ["📊  Dashboard", "📈  Análises", "🧾  Tabelas",
-               "📅  A pagar e receber", "💳  Cartão de Crédito"]
+               "📅  A pagar e receber", "💳  Cartão de Crédito",
+               "🧮  IPCA Pessoal"]
     secao = abas_secao(_SECOES, key="cf_secao_ativa", default=_SECOES[0])
 
     if secao == _SECOES[1]:
@@ -3897,5 +3899,7 @@ def render() -> None:
         render_previstos()
     elif secao == _SECOES[4]:
         _tab_cartao(d, sel["ano"], sel["mes"])
+    elif secao == _SECOES[5]:
+        render_ipca_pessoal(sel["ano"], sel["mes"])
     else:
         _tab_dashboard(d, historico, fluxo_inv, investido_mes)
