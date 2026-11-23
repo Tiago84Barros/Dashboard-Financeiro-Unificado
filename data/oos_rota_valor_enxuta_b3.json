@@ -1,0 +1,1778 @@
+{
+  "versao_medicao": "fundamentalistas-1.2.0",
+  "versao_metodologia": "2.33.0",
+  "versao_presets": "b3-presets-1.0.0",
+  "medido_em": "2026-11-22T15:27:08",
+  "perfil": "Equilibrado (padrão)",
+  "safras": [
+    2017,
+    2018,
+    2019,
+    2020,
+    2021,
+    2022,
+    2023,
+    2024,
+    2025
+  ],
+  "janela": "abril/2017 a março/2026",
+  "regra_de_decisao": "uma estratégia só vira candidata a carteira padrão se, LÍQUIDA do giro: (a) o excesso médio sobre pesos iguais for > 0 com IC 95% acima de zero; (b) a média sem a melhor safra continuar > 0; e (c) a diferença pareada contra a carteira padrão atual (Equilibrado, sem portão) tiver média > 0. Com cinco braços, passar só em (a) não basta. Nenhuma passando, nada muda na tela.",
+  "regras": {
+    "rota_valor": "classificação 'oportunidade' da rota de valor (core.b3_value_route) no retrato da safra, Selic de N-1",
+    "formula_magica": "soma dos postos de ROIC e 1/EV_EBIT; terço melhor, mínimo 10; sem financeiras; só EV_EBIT > 0",
+    "qualidade_constante": "ROIC acima da Selic do ano em ≥ 70% de 7 exercícios (mín. 5); lucro N-1 > 0 e > lucro de 3 anos antes; sem falha de solvência",
+    "qualidade_3_anos": "a anterior refeita a cada 3 safras; no meio só sai quem quebra a solvência ou deixa o universo",
+    "lider_segurado": "carteira padrão da safra (Equilibrado, sem portão) mais os nomes das safras anteriores que não degradaram; degradar = deixar o universo, falhar na trava de solvência ou lucro de N-1 <= 0; dado ausente não degrada",
+    "rota_valor_top10": "a rota de valor limitada a 10 nomes: os 10 de maior valor_score da própria rota (desempate por margem e ticker); com menos de 10 oportunidades, todas",
+    "rota_valor_top15": "a rota de valor limitada a 15 nomes: os 15 de maior valor_score da própria rota (desempate por margem e ticker); com menos de 15 oportunidades, todas",
+    "rota_valor_top20": "a rota de valor limitada a 20 nomes: os 20 de maior valor_score da própria rota (desempate por margem e ticker); com menos de 20 oportunidades, todas",
+    "pesos": "iguais entre os escolhidos",
+    "formacao": "em abril (início da vigência)"
+  },
+  "metrica_principal": "excesso por safra (abril/N a março/N+1), LÍQUIDO do giro, sobre pesos iguais em todo o universo da safra",
+  "custos": {
+    "modelo": "CostConfig.brasil_pf_default()",
+    "benchmarks": "brutos (pesos iguais não paga custo): viés contra a carteira"
+  },
+  "fonte": {
+    "precos": "os da aba (mensal ajustado do armazém local)",
+    "fundamentos": "aba de Criação de Portfólio B3 sobre armazem local"
+  },
+  "limites": [
+    "múltiplos anuais com o preço de fim do exercício N-1, não o de abril/N",
+    "lucro da série de PL cortado por ano do exercício, sem data de publicação",
+    "cinco braços: a chance de um falso positivo sobe para perto de 1 em 4",
+    "nove safras não separam sorte de regra com folga; o teste (b) existe por isso",
+    "qualidade: ano sem Selic medida não conta na janela de ROIC; rota de valor: Selic de N-1 ou a última antes dela (média da série só se não houver nenhuma)",
+    "líder segurado: os pesos voltam a ser iguais em abril, então o vencedor antigo é aparado todo ano; a tela compra só com o aporte e não apara. A carteira cresce com os anos, e mais nomes a aproximam dos pesos iguais no universo"
+  ],
+  "fora_da_regra": [
+    "guarda de entrada e piso de qualidade não filtram estas carteiras",
+    "portão de LLM não avalia estas carteiras",
+    "tetos de setor e de ciclo do perfil não se aplicam"
+  ],
+  "estrategias": {
+    "rota_valor": {
+      "vs_equal_weight": {
+        "media": 0.0989940067133908,
+        "ic95": [
+          0.035880727753626544,
+          0.18443214501491215
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2019
+        ],
+        "ic_cruza_zero": false,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.06321117664876472
+      },
+      "bruto_vs_equal_weight": {
+        "media": 0.10052985737970467,
+        "ic95": [
+          0.037314821242360775,
+          0.18632940312461768
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2019
+        ],
+        "ic_cruza_zero": false,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.06459920971763534
+      },
+      "com_ir_vs_equal_weight": {
+        "media": 0.0829109973486566,
+        "ic95": [
+          0.015219029298104578,
+          0.1732623558157682
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2018,
+          2019,
+          2024
+        ],
+        "ic_cruza_zero": false,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.04511779111343881
+      },
+      "giro_medio_anual": 0.48431281225372075,
+      "custo_medio_anual": 0.0012260000261705786,
+      "leitura": "Excesso médio de +9.9 pp por safra sobre pesos iguais, intervalo 95% [+3.6; +18.4] pp, 9 safras, 1 negativa(s). O intervalo exclui o zero. Sem a melhor safra (2020), a média seria +6.3 pp.",
+      "safras": [
+        {
+          "safra": 2017,
+          "n_universo": 149,
+          "n_carteira": 31,
+          "liquido": 0.3861915496201249,
+          "bruto": 0.3880049108746546,
+          "liquido_com_ir": 0.3861915496201249,
+          "equal_weight": 0.25369392765126486,
+          "excesso_ew": 0.13249762196886006,
+          "excesso_ew_bruto": 0.13431098322338975,
+          "excesso_ew_com_ir": 0.13249762196886006,
+          "giro": 1.0000000000000002,
+          "custo_pct": 0.001306451612903226
+        },
+        {
+          "safra": 2018,
+          "n_universo": 165,
+          "n_carteira": 20,
+          "liquido": 0.1862752119309421,
+          "bruto": 0.18798783711956749,
+          "liquido_com_ir": 0.15603479337501946,
+          "equal_weight": 0.15782033945560164,
+          "excesso_ew": 0.028454872475340454,
+          "excesso_ew_bruto": 0.030167497663965842,
+          "excesso_ew_com_ir": -0.0017855460805821788,
+          "giro": 0.5920080209197524,
+          "custo_pct": 0.0014416184535843953
+        },
+        {
+          "safra": 2019,
+          "n_universo": 163,
+          "n_carteira": 41,
+          "liquido": -0.11577646360575211,
+          "bruto": -0.11453975955427895,
+          "liquido_com_ir": -0.13799556068624186,
+          "equal_weight": -0.07373992027676458,
+          "excesso_ew": -0.04203654332898753,
+          "excesso_ew_bruto": -0.04079983927751436,
+          "excesso_ew_com_ir": -0.06425564040947727,
+          "giro": 0.5853658536585368,
+          "custo_pct": 0.001396679370776144
+        },
+        {
+          "safra": 2020,
+          "n_universo": 174,
+          "n_carteira": 30,
+          "liquido": 0.9261090823951679,
+          "bruto": 0.9288274738410276,
+          "liquido_com_ir": 0.9261090823951672,
+          "equal_weight": 0.5408524351647683,
+          "excesso_ew": 0.38525664723039954,
+          "excesso_ew_bruto": 0.38797503867625927,
+          "excesso_ew_com_ir": 0.3852566472303989,
+          "giro": 0.5434552229531476,
+          "custo_pct": 0.0014093491941230662
+        },
+        {
+          "safra": 2021,
+          "n_universo": 179,
+          "n_carteira": 39,
+          "liquido": 0.1518388724665225,
+          "bruto": 0.1533080467261361,
+          "liquido_com_ir": 0.1084806283193982,
+          "equal_weight": 0.03917631051626264,
+          "excesso_ew": 0.11266256195025987,
+          "excesso_ew_bruto": 0.11413173620987346,
+          "excesso_ew_com_ir": 0.06930431780313556,
+          "giro": 0.49211882398288753,
+          "custo_pct": 0.001273878443651051
+        },
+        {
+          "safra": 2022,
+          "n_universo": 178,
+          "n_carteira": 57,
+          "liquido": -0.05093190176350637,
+          "bruto": -0.04985219817994187,
+          "liquido_com_ir": -0.07037175368839832,
+          "equal_weight": -0.1487468884801675,
+          "excesso_ew": 0.09781498671666114,
+          "excesso_ew_bruto": 0.09889469030022564,
+          "excesso_ew_com_ir": 0.07837513479176919,
+          "giro": 0.44457787182678854,
+          "custo_pct": 0.0011363532931360873
+        },
+        {
+          "safra": 2023,
+          "n_universo": 163,
+          "n_carteira": 52,
+          "liquido": 0.323435317766243,
+          "bruto": 0.3243532617860322,
+          "liquido_com_ir": 0.31781244475682935,
+          "equal_weight": 0.2520307404273625,
+          "excesso_ew": 0.0714045773388805,
+          "excesso_ew_bruto": 0.07232252135866968,
+          "excesso_ew_com_ir": 0.06578170432946684,
+          "giro": 0.2832767816472662,
+          "custo_pct": 0.0006931262573789112
+        },
+        {
+          "safra": 2024,
+          "n_universo": 167,
+          "n_carteira": 35,
+          "liquido": -0.06433890327930836,
+          "bruto": -0.06311207847978724,
+          "liquido_com_ir": -0.08820550284407325,
+          "equal_weight": -0.07589156652218879,
+          "excesso_ew": 0.011552663242880429,
+          "excesso_ew_bruto": 0.012779488042401546,
+          "excesso_ew_com_ir": -0.012313936321884461,
+          "giro": 0.501770751054665,
+          "custo_pct": 0.0013094680498502039
+        },
+        {
+          "safra": 2025,
+          "n_universo": 153,
+          "n_carteira": 44,
+          "liquido": 0.43442040297280227,
+          "bruto": 0.4360683303666507,
+          "liquido_com_ir": 0.43442040297280227,
+          "equal_weight": 0.3410817301465795,
+          "excesso_ew": 0.09333867282622277,
+          "excesso_ew_bruto": 0.09498660022007122,
+          "excesso_ew_com_ir": 0.09333867282622277,
+          "giro": 0.43192917198672237,
+          "custo_pct": 0.0011475271468647705
+        }
+      ],
+      "vs_carteira_padrao": {
+        "media": 0.0697651789560692,
+        "ic95": [
+          -0.01129661921199931,
+          0.1513457058372298
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2019,
+          2021,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2017,
+        "media_sem_melhor_safra": 0.04107216712588231,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.2993092735975642
+          },
+          {
+            "safra": 2018,
+            "dif": 0.11858867685143637
+          },
+          {
+            "safra": 2019,
+            "dif": -0.042958516963922166
+          },
+          {
+            "safra": 2020,
+            "dif": 0.15927385475955913
+          },
+          {
+            "safra": 2021,
+            "dif": -0.06802786350746781
+          },
+          {
+            "safra": 2022,
+            "dif": 0.0734199544068912
+          },
+          {
+            "safra": 2023,
+            "dif": 0.12112325435303406
+          },
+          {
+            "safra": 2024,
+            "dif": -0.12489930997666276
+          },
+          {
+            "safra": 2025,
+            "dif": 0.09205728708419048
+          }
+        ]
+      },
+      "decisao": {
+        "testes": {
+          "a_excesso_ew_ic_acima_de_zero": true,
+          "b_sem_melhor_safra_positiva": true,
+          "c_bate_a_carteira_padrao": true
+        },
+        "candidata": true
+      }
+    },
+    "rota_valor_top10": {
+      "vs_equal_weight": {
+        "media": 0.11070216445614674,
+        "ic95": [
+          -0.027008560416764426,
+          0.3123254119870002
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2019,
+          2023,
+          2025
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.019996219348001283
+      },
+      "bruto_vs_equal_weight": {
+        "media": 0.11270021069916808,
+        "ic95": [
+          -0.025263706849421898,
+          0.3148363969661503
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2019,
+          2023,
+          2025
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.021815070069752626
+      },
+      "com_ir_vs_equal_weight": {
+        "media": 0.09134705325282104,
+        "ic95": [
+          -0.041396403600323706,
+          0.2954330179832224
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2019,
+          2023,
+          2025
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": -0.001778280755740081
+      },
+      "giro_medio_anual": 0.6167154315571085,
+      "custo_medio_anual": 0.0016293438562256773,
+      "leitura": "Excesso médio de +11.1 pp por safra sobre pesos iguais, intervalo 95% [-2.7; +31.2] pp, 9 safras, 4 negativa(s). O intervalo cruza o zero: a medição NÃO distingue esta carteira de dividir igualmente entre as empresas. Sem a melhor safra (2020), a média seria +2.0 pp.",
+      "safras": [
+        {
+          "safra": 2017,
+          "n_universo": 149,
+          "n_carteira": 10,
+          "liquido": 0.18209517474755033,
+          "bruto": 0.1836338988160113,
+          "liquido_com_ir": 0.18209517474755033,
+          "equal_weight": 0.25369392765126486,
+          "excesso_ew": -0.07159875290371454,
+          "excesso_ew_bruto": -0.07006002883525356,
+          "excesso_ew_com_ir": -0.07159875290371454,
+          "giro": 1.0,
+          "custo_pct": 0.0013
+        },
+        {
+          "safra": 2018,
+          "n_universo": 165,
+          "n_carteira": 10,
+          "liquido": 0.25316788280058433,
+          "bruto": 0.25517273337925866,
+          "liquido_com_ir": 0.2311225871777569,
+          "equal_weight": 0.15782033945560164,
+          "excesso_ew": 0.09534754334498269,
+          "excesso_ew_bruto": 0.09735239392365702,
+          "excesso_ew_com_ir": 0.07330224772215527,
+          "giro": 0.6382884875264894,
+          "custo_pct": 0.0015972706587378826
+        },
+        {
+          "safra": 2019,
+          "n_universo": 163,
+          "n_carteira": 10,
+          "liquido": -0.15165069388233832,
+          "bruto": -0.15061598710143687,
+          "liquido_com_ir": -0.16863604153890688,
+          "equal_weight": -0.07373992027676458,
+          "excesso_ew": -0.07791077360557373,
+          "excesso_ew_bruto": -0.07687606682467228,
+          "excesso_ew_com_ir": -0.0948961212621423,
+          "giro": 0.4746893451517003,
+          "custo_pct": 0.0012181849024572448
+        },
+        {
+          "safra": 2020,
+          "n_universo": 174,
+          "n_carteira": 10,
+          "liquido": 1.3772021604860787,
+          "bruto": 1.38063377089926,
+          "liquido_com_ir": 1.3772021604860782,
+          "equal_weight": 0.5408524351647683,
+          "excesso_ew": 0.8363497253213104,
+          "excesso_ew_bruto": 0.8397813357344917,
+          "excesso_ew_com_ir": 0.8363497253213099,
+          "giro": 0.5323801576999451,
+          "custo_pct": 0.0014414692655080731
+        },
+        {
+          "safra": 2021,
+          "n_universo": 179,
+          "n_carteira": 10,
+          "liquido": 0.1808105975394203,
+          "bruto": 0.18344469938841612,
+          "liquido_com_ir": 0.1012313244508749,
+          "equal_weight": 0.03917631051626264,
+          "excesso_ew": 0.14163428702315767,
+          "excesso_ew_bruto": 0.14426838887215349,
+          "excesso_ew_com_ir": 0.06205501393461226,
+          "giro": 0.8153679188673126,
+          "custo_pct": 0.0022257920884321807
+        },
+        {
+          "safra": 2022,
+          "n_universo": 178,
+          "n_carteira": 10,
+          "liquido": 0.0004895162429836564,
+          "bruto": 0.002795946920901838,
+          "liquido_com_ir": -0.026504432740608874,
+          "equal_weight": -0.1487468884801675,
+          "excesso_ew": 0.14923640472315117,
+          "excesso_ew_bruto": 0.15154283540106936,
+          "excesso_ew_com_ir": 0.12224245573955864,
+          "giro": 0.9000000000000001,
+          "custo_pct": 0.0023
+        },
+        {
+          "safra": 2023,
+          "n_universo": 163,
+          "n_carteira": 10,
+          "liquido": 0.1955414898929939,
+          "bruto": 0.1964653725360656,
+          "liquido_com_ir": 0.19554148989299414,
+          "equal_weight": 0.2520307404273625,
+          "excesso_ew": -0.056489250534368596,
+          "excesso_ew_bruto": -0.0555653678912969,
+          "excesso_ew_com_ir": -0.056489250534368374,
+          "giro": 0.3021728727512284,
+          "custo_pct": 0.0007721766666036758
+        },
+        {
+          "safra": 2024,
+          "n_universo": 167,
+          "n_carteira": 10,
+          "liquido": -0.022281468350818345,
+          "bruto": -0.02123294962255698,
+          "liquido_com_ir": -0.03786165079503012,
+          "equal_weight": -0.07589156652218879,
+          "excesso_ew": 0.05361009817137044,
+          "excesso_ew_bruto": 0.05465861689963181,
+          "excesso_ew_com_ir": 0.038029915727158664,
+          "giro": 0.3708246704601917,
+          "custo_pct": 0.0010712648406555612
+        },
+        {
+          "safra": 2025,
+          "n_universo": 153,
+          "n_carteira": 10,
+          "liquido": 0.2672219287115847,
+          "bruto": 0.2702815191593116,
+          "liquido_com_ir": 0.2542099756773992,
+          "equal_weight": 0.3410817301465795,
+          "excesso_ew": -0.07385980143499482,
+          "excesso_ew_bruto": -0.07080021098726791,
+          "excesso_ew_com_ir": -0.08687175446918027,
+          "giro": 0.9000000000000002,
+          "custo_pct": 0.0024085924274108
+        }
+      ],
+      "vs_carteira_padrao": {
+        "media": 0.08147333669882512,
+        "ic95": [
+          -0.03025970418802485,
+          0.23596891485062377
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2019,
+          2021,
+          2023,
+          2024,
+          2025
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.01536163717986952,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.09521289872498961
+          },
+          {
+            "safra": 2018,
+            "dif": 0.1854813477210786
+          },
+          {
+            "safra": 2019,
+            "dif": -0.07883274724050837
+          },
+          {
+            "safra": 2020,
+            "dif": 0.61036693285047
+          },
+          {
+            "safra": 2021,
+            "dif": -0.03905613843457001
+          },
+          {
+            "safra": 2022,
+            "dif": 0.12484137241338122
+          },
+          {
+            "safra": 2023,
+            "dif": -0.00677057352021504
+          },
+          {
+            "safra": 2024,
+            "dif": -0.08284187504817275
+          },
+          {
+            "safra": 2025,
+            "dif": -0.07514118717702711
+          }
+        ]
+      },
+      "decisao": {
+        "testes": {
+          "a_excesso_ew_ic_acima_de_zero": false,
+          "b_sem_melhor_safra_positiva": true,
+          "c_bate_a_carteira_padrao": true
+        },
+        "candidata": false
+      },
+      "vs_rota_completa": {
+        "media": 0.011708157742755933,
+        "ic95": [
+          -0.09456572667389472,
+          0.14179028554606635
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2019,
+          2023,
+          2025
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": -0.043214957300763426,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": -0.2040963748725746
+          },
+          {
+            "safra": 2018,
+            "dif": 0.06689267086964223
+          },
+          {
+            "safra": 2019,
+            "dif": -0.035874230276586205
+          },
+          {
+            "safra": 2020,
+            "dif": 0.4510930780909108
+          },
+          {
+            "safra": 2021,
+            "dif": 0.028971725072897803
+          },
+          {
+            "safra": 2022,
+            "dif": 0.05142141800649003
+          },
+          {
+            "safra": 2023,
+            "dif": -0.1278938278732491
+          },
+          {
+            "safra": 2024,
+            "dif": 0.04205743492849001
+          },
+          {
+            "safra": 2025,
+            "dif": -0.1671984742612176
+          }
+        ]
+      }
+    },
+    "rota_valor_top15": {
+      "vs_equal_weight": {
+        "media": 0.0793812585697364,
+        "ic95": [
+          -0.02253040196425768,
+          0.2190704992593047
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.017089602635050723
+      },
+      "bruto_vs_equal_weight": {
+        "media": 0.08138173004900315,
+        "ic95": [
+          -0.02074490981944835,
+          0.22143167473266787
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.018897447417785686
+      },
+      "com_ir_vs_equal_weight": {
+        "media": 0.0633442221623679,
+        "ic95": [
+          -0.035449663385834614,
+          0.20550921572386713
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": -0.0005951735843842182
+      },
+      "giro_medio_anual": 0.6271262514905123,
+      "custo_medio_anual": 0.001673188825311134,
+      "leitura": "Excesso médio de +7.9 pp por safra sobre pesos iguais, intervalo 95% [-2.3; +21.9] pp, 9 safras, 2 negativa(s). O intervalo cruza o zero: a medição NÃO distingue esta carteira de dividir igualmente entre as empresas. Sem a melhor safra (2020), a média seria +1.7 pp.",
+      "safras": [
+        {
+          "safra": 2017,
+          "n_universo": 149,
+          "n_carteira": 15,
+          "liquido": 0.1523445761458162,
+          "bruto": 0.15392160233567476,
+          "liquido_com_ir": 0.1523445761458162,
+          "equal_weight": 0.25369392765126486,
+          "excesso_ew": -0.10134935150544866,
+          "excesso_ew_bruto": -0.0997723253155901,
+          "excesso_ew_com_ir": -0.10134935150544866,
+          "giro": 1.0000000000000002,
+          "custo_pct": 0.0013666666666666666
+        },
+        {
+          "safra": 2018,
+          "n_universo": 165,
+          "n_carteira": 15,
+          "liquido": 0.23523937837692288,
+          "bruto": 0.23706319582751753,
+          "liquido_com_ir": 0.22113257635763883,
+          "equal_weight": 0.15782033945560164,
+          "excesso_ew": 0.07741903892132124,
+          "excesso_ew_bruto": 0.07924285637191589,
+          "excesso_ew_com_ir": 0.06331223690203719,
+          "giro": 0.5632591231821223,
+          "custo_pct": 0.0014743122717951836
+        },
+        {
+          "safra": 2019,
+          "n_universo": 163,
+          "n_carteira": 15,
+          "liquido": -0.00801181314394872,
+          "bruto": -0.0065480055286717305,
+          "liquido_com_ir": -0.031023619024603932,
+          "equal_weight": -0.07373992027676458,
+          "excesso_ew": 0.06572810713281586,
+          "excesso_ew_bruto": 0.06719191474809286,
+          "excesso_ew_com_ir": 0.04271630125216065,
+          "giro": 0.5805395317769748,
+          "custo_pct": 0.0014734558120807306
+        },
+        {
+          "safra": 2020,
+          "n_universo": 174,
+          "n_carteira": 15,
+          "liquido": 1.11856694121199,
+          "bruto": 1.1221084262635113,
+          "liquido_com_ir": 1.1157118233011531,
+          "equal_weight": 0.5408524351647683,
+          "excesso_ew": 0.5777145060472217,
+          "excesso_ew_bruto": 0.5812559910987429,
+          "excesso_ew_com_ir": 0.5748593881363848,
+          "giro": 0.5875530396721087,
+          "custo_pct": 0.0016688520754603495
+        },
+        {
+          "safra": 2021,
+          "n_universo": 179,
+          "n_carteira": 15,
+          "liquido": 0.12203993529293444,
+          "bruto": 0.12428947477661006,
+          "liquido_com_ir": 0.04573263746219647,
+          "equal_weight": 0.03917631051626264,
+          "excesso_ew": 0.08286362477667181,
+          "excesso_ew_bruto": 0.08511316426034743,
+          "excesso_ew_com_ir": 0.0065563269459338255,
+          "giro": 0.7440961345078433,
+          "custo_pct": 0.00200085434769584
+        },
+        {
+          "safra": 2022,
+          "n_universo": 178,
+          "n_carteira": 15,
+          "liquido": -0.08277972481600249,
+          "bruto": -0.08057488207532541,
+          "liquido_com_ir": -0.10518746810877788,
+          "equal_weight": -0.1487468884801675,
+          "excesso_ew": 0.06596716366416502,
+          "excesso_ew_bruto": 0.0681720064048421,
+          "excesso_ew_com_ir": 0.04355942037138963,
+          "giro": 0.9333333333333331,
+          "custo_pct": 0.002398066680681648
+        },
+        {
+          "safra": 2023,
+          "n_universo": 163,
+          "n_carteira": 15,
+          "liquido": 0.1208755122429861,
+          "bruto": 0.12225862372350865,
+          "liquido_com_ir": 0.1208755122429861,
+          "equal_weight": 0.2520307404273625,
+          "excesso_ew": -0.13115522818437642,
+          "excesso_ew_bruto": -0.12977211670385386,
+          "excesso_ew_com_ir": -0.13115522818437642,
+          "giro": 0.4685969282911583,
+          "custo_pct": 0.0012324356002127383
+        },
+        {
+          "safra": 2024,
+          "n_universo": 167,
+          "n_carteira": 15,
+          "liquido": -0.022187824740726447,
+          "bruto": -0.020853662527519034,
+          "liquido_com_ir": -0.02218782474072656,
+          "equal_weight": -0.07589156652218879,
+          "excesso_ew": 0.05370374178146234,
+          "excesso_ew_bruto": 0.05503790399466975,
+          "excesso_ew_com_ir": 0.05370374178146223,
+          "giro": 0.4610166432208778,
+          "custo_pct": 0.0013625769327304598
+        },
+        {
+          "safra": 2025,
+          "n_universo": 153,
+          "n_carteira": 15,
+          "liquido": 0.3646214546403741,
+          "bruto": 0.3670479057284409,
+          "liquido_com_ir": 0.3589768939083473,
+          "equal_weight": 0.3410817301465795,
+          "excesso_ew": 0.0235397244937946,
+          "excesso_ew_bruto": 0.025966175581861428,
+          "excesso_ew_com_ir": 0.017895163761767807,
+          "giro": 0.6786152779396797,
+          "custo_pct": 0.0017749568818321237
+        }
+      ],
+      "vs_carteira_padrao": {
+        "media": 0.05015243081241478,
+        "ic95": [
+          -0.02934952681720098,
+          0.14579810465058338
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2021,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.012455020466918959,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.06546230012325549
+          },
+          {
+            "safra": 2018,
+            "dif": 0.16755284329741715
+          },
+          {
+            "safra": 2019,
+            "dif": 0.06480613349788122
+          },
+          {
+            "safra": 2020,
+            "dif": 0.35173171357638133
+          },
+          {
+            "safra": 2021,
+            "dif": -0.09782680068105587
+          },
+          {
+            "safra": 2022,
+            "dif": 0.04157213135439508
+          },
+          {
+            "safra": 2023,
+            "dif": -0.08143655117022286
+          },
+          {
+            "safra": 2024,
+            "dif": -0.08274823143808085
+          },
+          {
+            "safra": 2025,
+            "dif": 0.022258338751762308
+          }
+        ]
+      },
+      "decisao": {
+        "testes": {
+          "a_excesso_ew_ic_acima_de_zero": false,
+          "b_sem_melhor_safra_positiva": true,
+          "c_bate_a_carteira_padrao": true
+        },
+        "candidata": false
+      },
+      "vs_rota_completa": {
+        "media": -0.01961274814365441,
+        "ic95": [
+          -0.10567764280797401,
+          0.06223495055370017
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2021,
+          2022,
+          2023,
+          2025
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": -0.04612157401371399,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": -0.23384697347430872
+          },
+          {
+            "safra": 2018,
+            "dif": 0.048964166445980783
+          },
+          {
+            "safra": 2019,
+            "dif": 0.10776465046180339
+          },
+          {
+            "safra": 2020,
+            "dif": 0.1924578588168222
+          },
+          {
+            "safra": 2021,
+            "dif": -0.029798937173588058
+          },
+          {
+            "safra": 2022,
+            "dif": -0.031847823052496116
+          },
+          {
+            "safra": 2023,
+            "dif": -0.20255980552325692
+          },
+          {
+            "safra": 2024,
+            "dif": 0.04215107853858191
+          },
+          {
+            "safra": 2025,
+            "dif": -0.06979894833242817
+          }
+        ]
+      }
+    },
+    "rota_valor_top20": {
+      "vs_equal_weight": {
+        "media": 0.09475110064856761,
+        "ic95": [
+          -0.004359392707601275,
+          0.22373989683129747
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.03957339526781437
+      },
+      "bruto_vs_equal_weight": {
+        "media": 0.09650431222476018,
+        "ic95": [
+          -0.0028717995435902743,
+          0.22598089344153147
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.04113555813695423
+      },
+      "com_ir_vs_equal_weight": {
+        "media": 0.07870069995539358,
+        "ic95": [
+          -0.01658533298423652,
+          0.20771931534749274
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.022636869610314074
+      },
+      "giro_medio_anual": 0.546120116807037,
+      "custo_medio_anual": 0.0014301714601907631,
+      "leitura": "Excesso médio de +9.5 pp por safra sobre pesos iguais, intervalo 95% [-0.4; +22.4] pp, 9 safras, 2 negativa(s). O intervalo cruza o zero: a medição NÃO distingue esta carteira de dividir igualmente entre as empresas. Sem a melhor safra (2020), a média seria +4.0 pp.",
+      "safras": [
+        {
+          "safra": 2017,
+          "n_universo": 149,
+          "n_carteira": 20,
+          "liquido": 0.23145677484779847,
+          "bruto": 0.2330597525260823,
+          "liquido_com_ir": 0.23145677484779847,
+          "equal_weight": 0.25369392765126486,
+          "excesso_ew": -0.022237152803466387,
+          "excesso_ew_bruto": -0.020634175125182563,
+          "excesso_ew_com_ir": -0.022237152803466387,
+          "giro": 1.0,
+          "custo_pct": 0.0013
+        },
+        {
+          "safra": 2018,
+          "n_universo": 165,
+          "n_carteira": 20,
+          "liquido": 0.186455982629135,
+          "bruto": 0.18798783711956749,
+          "liquido_com_ir": 0.16797661115638007,
+          "equal_weight": 0.15782033945560164,
+          "excesso_ew": 0.028635643173533343,
+          "excesso_ew_bruto": 0.030167497663965842,
+          "excesso_ew_com_ir": 0.01015627170077843,
+          "giro": 0.5021430693718176,
+          "custo_pct": 0.0012894530083295682
+        },
+        {
+          "safra": 2019,
+          "n_universo": 163,
+          "n_carteira": 20,
+          "liquido": -0.019297468889590164,
+          "bruto": -0.01808358233213328,
+          "liquido_com_ir": -0.04055660013004447,
+          "equal_weight": -0.07373992027676458,
+          "excesso_ew": 0.05444245138717442,
+          "excesso_ew_bruto": 0.055656337944631304,
+          "excesso_ew_com_ir": 0.03318332014672011,
+          "giro": 0.49409963189000733,
+          "custo_pct": 0.0012362422458931147
+        },
+        {
+          "safra": 2020,
+          "n_universo": 174,
+          "n_carteira": 20,
+          "liquido": 1.0770251788593619,
+          "bruto": 1.0803067800919761,
+          "liquido_com_ir": 1.068063777880798,
+          "equal_weight": 0.5408524351647683,
+          "excesso_ew": 0.5361727436945936,
+          "excesso_ew_bruto": 0.5394543449272078,
+          "excesso_ew_com_ir": 0.5272113427160297,
+          "giro": 0.6063323462880379,
+          "custo_pct": 0.001577460240007998
+        },
+        {
+          "safra": 2021,
+          "n_universo": 179,
+          "n_carteira": 20,
+          "liquido": 0.16482035370096626,
+          "bruto": 0.16653082903054536,
+          "liquido_com_ir": 0.10740362966701422,
+          "equal_weight": 0.03917631051626264,
+          "excesso_ew": 0.12564404318470362,
+          "excesso_ew_bruto": 0.12735451851428273,
+          "excesso_ew_com_ir": 0.06822731915075159,
+          "giro": 0.5408320859393758,
+          "custo_pct": 0.0014662924348093351
+        },
+        {
+          "safra": 2022,
+          "n_universo": 178,
+          "n_carteira": 20,
+          "liquido": -0.08379144041512954,
+          "bruto": -0.08209470751201993,
+          "liquido_com_ir": -0.10768328354679135,
+          "equal_weight": -0.1487468884801675,
+          "excesso_ew": 0.06495544806503797,
+          "excesso_ew_bruto": 0.06665218096814758,
+          "excesso_ew_com_ir": 0.04106360493337616,
+          "giro": 0.7582643648696521,
+          "custo_pct": 0.001848483625702424
+        },
+        {
+          "safra": 2023,
+          "n_universo": 163,
+          "n_carteira": 20,
+          "liquido": 0.10672697676259091,
+          "bruto": 0.10783053792152528,
+          "liquido_com_ir": 0.10672697676259135,
+          "equal_weight": 0.2520307404273625,
+          "excesso_ew": -0.1453037636647716,
+          "excesso_ew_bruto": -0.14420020250583723,
+          "excesso_ew_com_ir": -0.14530376366477116,
+          "giro": 0.3588478065060672,
+          "custo_pct": 0.0009961461804480275
+        },
+        {
+          "safra": 2024,
+          "n_universo": 167,
+          "n_carteira": 20,
+          "liquido": -0.03267239416841161,
+          "bruto": -0.030999908181143135,
+          "liquido_com_ir": -0.03319599018281716,
+          "equal_weight": -0.07589156652218879,
+          "excesso_ew": 0.043219172353777174,
+          "excesso_ew_bruto": 0.04489165834104565,
+          "excesso_ew_com_ir": 0.04269557633937163,
+          "giro": 0.5924513616329867,
+          "custo_pct": 0.0017259915673785745
+        },
+        {
+          "safra": 2025,
+          "n_universo": 153,
+          "n_carteira": 20,
+          "liquido": 0.5083130505931059,
+          "bruto": 0.5102783794411601,
+          "liquido_com_ir": 0.49439151122633174,
+          "equal_weight": 0.3410817301465795,
+          "excesso_ew": 0.16723132044652644,
+          "excesso_ew_bruto": 0.16919664929458056,
+          "excesso_ew_com_ir": 0.15330978107975224,
+          "giro": 0.5159902679583516,
+          "custo_pct": 0.0013013023789570624
+        }
+      ],
+      "vs_carteira_padrao": {
+        "media": 0.065522272891246,
+        "ic95": [
+          -0.013974737124313482,
+          0.15196351944652126
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2021,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.03493881309968261,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.14457449882523776
+          },
+          {
+            "safra": 2018,
+            "dif": 0.11876944754962926
+          },
+          {
+            "safra": 2019,
+            "dif": 0.05352047775223978
+          },
+          {
+            "safra": 2020,
+            "dif": 0.31018995122375315
+          },
+          {
+            "safra": 2021,
+            "dif": -0.05504638227302405
+          },
+          {
+            "safra": 2022,
+            "dif": 0.04056041575526803
+          },
+          {
+            "safra": 2023,
+            "dif": -0.09558508665061805
+          },
+          {
+            "safra": 2024,
+            "dif": -0.09323280086576602
+          },
+          {
+            "safra": 2025,
+            "dif": 0.16594993470449415
+          }
+        ]
+      },
+      "decisao": {
+        "testes": {
+          "a_excesso_ew_ic_acima_de_zero": false,
+          "b_sem_melhor_safra_positiva": true,
+          "c_bate_a_carteira_padrao": true
+        },
+        "candidata": false
+      },
+      "vs_rota_completa": {
+        "media": -0.004242906064823187,
+        "ic95": [
+          -0.08006337462896286,
+          0.06302919288675947
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2022,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": -0.023637781380950337,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": -0.15473477477232644
+          },
+          {
+            "safra": 2018,
+            "dif": 0.00018077069819288916
+          },
+          {
+            "safra": 2019,
+            "dif": 0.09647899471616195
+          },
+          {
+            "safra": 2020,
+            "dif": 0.15091609646419402
+          },
+          {
+            "safra": 2021,
+            "dif": 0.012981481234443759
+          },
+          {
+            "safra": 2022,
+            "dif": -0.032859538651623166
+          },
+          {
+            "safra": 2023,
+            "dif": -0.2167083410036521
+          },
+          {
+            "safra": 2024,
+            "dif": 0.031666509110896746
+          },
+          {
+            "safra": 2025,
+            "dif": 0.07389264762030368
+          }
+        ]
+      }
+    }
+  },
+  "carteira_padrao": {
+    "vs_equal_weight": {
+      "media": 0.029228827757321614,
+      "ic95": [
+        -0.0487053424246967,
+        0.11128831033210945
+      ],
+      "n_safras": 9,
+      "safras_negativas": [
+        2017,
+        2018,
+        2023
+      ],
+      "ic_cruza_zero": true,
+      "melhor_safra": 2020,
+      "media_sem_melhor_safra": 0.004634582168131764
+    },
+    "fonte": "scripts/medir_oos_carteira_b3.py, mesma rodada, sem portão"
+  },
+  "candidatas": [
+    "rota_valor"
+  ],
+  "lider_segurado_por_safra": {
+    "2017": {
+      "lideres": [
+        "DXCO3",
+        "POMO4",
+        "WIZC3"
+      ],
+      "carteira": [
+        "DXCO3",
+        "POMO4",
+        "WIZC3"
+      ],
+      "saidas": {}
+    },
+    "2018": {
+      "lideres": [
+        "ABEV3",
+        "AZZA3",
+        "B3SA3",
+        "BPAC11",
+        "CIEL3",
+        "CVCB3",
+        "DXCO3",
+        "EMBJ3",
+        "HYPE3",
+        "LEVE3",
+        "LREN3",
+        "MGLU3",
+        "NEMO3",
+        "TUPY3",
+        "VALE3"
+      ],
+      "carteira": [
+        "ABEV3",
+        "AZZA3",
+        "B3SA3",
+        "BPAC11",
+        "CIEL3",
+        "CVCB3",
+        "DXCO3",
+        "EMBJ3",
+        "HYPE3",
+        "LEVE3",
+        "LREN3",
+        "MGLU3",
+        "NEMO3",
+        "POMO4",
+        "TUPY3",
+        "VALE3"
+      ],
+      "saidas": {
+        "WIZC3": [
+          "falha_solvencia"
+        ]
+      }
+    },
+    "2019": {
+      "lideres": [
+        "BRML3",
+        "BRQB3",
+        "CIEL3",
+        "DXCO3",
+        "HGTX3",
+        "ISAE4",
+        "MGLU3",
+        "RIAA3",
+        "SAPR4",
+        "SMFT3",
+        "UNIP6",
+        "VALE3",
+        "VSPT4"
+      ],
+      "carteira": [
+        "ABEV3",
+        "AZZA3",
+        "B3SA3",
+        "BRML3",
+        "BRQB3",
+        "CIEL3",
+        "DXCO3",
+        "HGTX3",
+        "HYPE3",
+        "ISAE4",
+        "LEVE3",
+        "LREN3",
+        "MGLU3",
+        "POMO4",
+        "RIAA3",
+        "SAPR4",
+        "SMFT3",
+        "TUPY3",
+        "UNIP6",
+        "VALE3",
+        "VSPT4"
+      ],
+      "saidas": {
+        "BPAC11": [
+          "falha_solvencia"
+        ],
+        "CVCB3": [
+          "falha_solvencia"
+        ],
+        "EMBJ3": [
+          "prejuizo_no_ultimo_exercicio"
+        ],
+        "NEMO3": [
+          "falha_solvencia"
+        ]
+      }
+    },
+    "2020": {
+      "lideres": [
+        "IGTI3",
+        "ISAE4",
+        "ITSA3",
+        "JBSS3",
+        "LAME4",
+        "PRIO3",
+        "RADL3",
+        "SAPR3",
+        "SLCE3",
+        "TRIS3",
+        "VIVT3",
+        "WEGE3"
+      ],
+      "carteira": [
+        "ABEV3",
+        "AZZA3",
+        "B3SA3",
+        "BRML3",
+        "BRQB3",
+        "CIEL3",
+        "DXCO3",
+        "HGTX3",
+        "HYPE3",
+        "IGTI3",
+        "ISAE4",
+        "ITSA3",
+        "JBSS3",
+        "LAME4",
+        "LEVE3",
+        "LREN3",
+        "POMO4",
+        "PRIO3",
+        "RADL3",
+        "RIAA3",
+        "SAPR3",
+        "SLCE3",
+        "TRIS3",
+        "TUPY3",
+        "UNIP6",
+        "VIVT3",
+        "WEGE3"
+      ],
+      "saidas": {
+        "MGLU3": [
+          "falha_solvencia"
+        ],
+        "SAPR4": [
+          "falha_solvencia"
+        ],
+        "SMFT3": [
+          "falha_solvencia",
+          "prejuizo_no_ultimo_exercicio"
+        ],
+        "VALE3": [
+          "prejuizo_no_ultimo_exercicio"
+        ],
+        "VSPT4": [
+          "prejuizo_no_ultimo_exercicio"
+        ]
+      }
+    },
+    "2021": {
+      "lideres": [
+        "APTI4",
+        "BEEF3",
+        "BRAP3",
+        "CESP6",
+        "GRND3",
+        "JHSF3",
+        "KEPL3",
+        "LCAM3",
+        "LOGN3",
+        "MGLU3",
+        "PCAR3",
+        "RANI3",
+        "SANB4",
+        "TASA4",
+        "TOTS3",
+        "UNIP3",
+        "VBBR3",
+        "VIVT3"
+      ],
+      "carteira": [
+        "ABEV3",
+        "APTI4",
+        "AZZA3",
+        "B3SA3",
+        "BEEF3",
+        "BRAP3",
+        "BRML3",
+        "BRQB3",
+        "CESP6",
+        "DXCO3",
+        "GRND3",
+        "HGTX3",
+        "HYPE3",
+        "IGTI3",
+        "ISAE4",
+        "ITSA3",
+        "JBSS3",
+        "JHSF3",
+        "KEPL3",
+        "LAME4",
+        "LCAM3",
+        "LEVE3",
+        "LOGN3",
+        "LREN3",
+        "MGLU3",
+        "PCAR3",
+        "POMO4",
+        "RADL3",
+        "RANI3",
+        "SANB4",
+        "SAPR3",
+        "SLCE3",
+        "TASA4",
+        "TOTS3",
+        "UNIP3",
+        "UNIP6",
+        "VBBR3",
+        "VIVT3",
+        "WEGE3"
+      ],
+      "saidas": {
+        "CIEL3": [
+          "falha_solvencia"
+        ],
+        "PRIO3": [
+          "falha_solvencia"
+        ],
+        "RIAA3": [
+          "falha_solvencia",
+          "prejuizo_no_ultimo_exercicio"
+        ],
+        "TRIS3": [
+          "falha_solvencia"
+        ],
+        "TUPY3": [
+          "prejuizo_no_ultimo_exercicio"
+        ]
+      }
+    },
+    "2022": {
+      "lideres": [
+        "AGRO3",
+        "AZZA3",
+        "B3SA3",
+        "BRAP3",
+        "BRQB3",
+        "DXCO3",
+        "ISAE4",
+        "ITSA4",
+        "KEPL3",
+        "LCAM3",
+        "LOGN3",
+        "MBRF3",
+        "NEMO3",
+        "PETR3",
+        "SUZB3",
+        "TASA3",
+        "UNIP6",
+        "VIVT3",
+        "VULC3"
+      ],
+      "carteira": [
+        "AGRO3",
+        "AZZA3",
+        "B3SA3",
+        "BRAP3",
+        "BRML3",
+        "BRQB3",
+        "DXCO3",
+        "GRND3",
+        "HYPE3",
+        "IGTI3",
+        "ISAE4",
+        "ITSA3",
+        "ITSA4",
+        "JBSS3",
+        "JHSF3",
+        "KEPL3",
+        "LCAM3",
+        "LEVE3",
+        "LOGN3",
+        "LREN3",
+        "MBRF3",
+        "NEMO3",
+        "PCAR3",
+        "PETR3",
+        "POMO4",
+        "RADL3",
+        "RANI3",
+        "SANB4",
+        "SAPR3",
+        "SLCE3",
+        "SUZB3",
+        "TASA3",
+        "TASA4",
+        "TOTS3",
+        "UNIP3",
+        "UNIP6",
+        "VBBR3",
+        "VIVT3",
+        "VULC3",
+        "WEGE3"
+      ],
+      "saidas": {
+        "ABEV3": [
+          "falha_solvencia"
+        ],
+        "APTI4": [
+          "falha_solvencia",
+          "prejuizo_no_ultimo_exercicio"
+        ],
+        "BEEF3": [
+          "falha_solvencia"
+        ],
+        "CESP6": [
+          "saiu_do_universo"
+        ],
+        "HGTX3": [
+          "saiu_do_universo"
+        ],
+        "LAME4": [
+          "saiu_do_universo"
+        ],
+        "LOGN3": [
+          "falha_solvencia"
+        ],
+        "MGLU3": [
+          "falha_solvencia"
+        ],
+        "VIVT3": [
+          "falha_solvencia"
+        ]
+      }
+    },
+    "2023": {
+      "lideres": [
+        "AGRO3",
+        "BBAS3",
+        "BRAP3",
+        "ENAT3",
+        "KEPL3",
+        "LOGN3",
+        "TASA4",
+        "UNIP3",
+        "VULC3"
+      ],
+      "carteira": [
+        "AGRO3",
+        "AZZA3",
+        "B3SA3",
+        "BBAS3",
+        "BRAP3",
+        "BRQB3",
+        "DXCO3",
+        "ENAT3",
+        "GRND3",
+        "HYPE3",
+        "ISAE4",
+        "JBSS3",
+        "KEPL3",
+        "LEVE3",
+        "LOGN3",
+        "LREN3",
+        "NEMO3",
+        "POMO4",
+        "RADL3",
+        "SANB4",
+        "SAPR3",
+        "SLCE3",
+        "SUZB3",
+        "TASA3",
+        "TASA4",
+        "TOTS3",
+        "UNIP3",
+        "UNIP6",
+        "VBBR3",
+        "VULC3",
+        "WEGE3"
+      ],
+      "saidas": {
+        "BRML3": [
+          "saiu_do_universo"
+        ],
+        "IGTI3": [
+          "saiu_do_universo"
+        ],
+        "ITSA3": [
+          "falha_solvencia"
+        ],
+        "ITSA4": [
+          "falha_solvencia"
+        ],
+        "JHSF3": [
+          "falha_solvencia"
+        ],
+        "LCAM3": [
+          "saiu_do_universo"
+        ],
+        "MBRF3": [
+          "falha_solvencia"
+        ],
+        "PCAR3": [
+          "falha_solvencia",
+          "prejuizo_no_ultimo_exercicio"
+        ],
+        "PETR3": [
+          "falha_solvencia"
+        ],
+        "RANI3": [
+          "falha_solvencia"
+        ],
+        "VIVT3": [
+          "falha_solvencia"
+        ]
+      }
+    },
+    "2024": {
+      "lideres": [
+        "APTI4",
+        "BBAS3",
+        "BRAP4",
+        "CPFE3",
+        "DEXP3",
+        "EMBJ3",
+        "KEPL3",
+        "LEVE3",
+        "PETR4",
+        "SUZB3",
+        "VULC3",
+        "WEGE3"
+      ],
+      "carteira": [
+        "AGRO3",
+        "APTI4",
+        "AZZA3",
+        "B3SA3",
+        "BBAS3",
+        "BRAP3",
+        "BRAP4",
+        "BRQB3",
+        "CPFE3",
+        "DEXP3",
+        "DXCO3",
+        "EMBJ3",
+        "GRND3",
+        "HYPE3",
+        "ISAE4",
+        "JBSS3",
+        "KEPL3",
+        "LEVE3",
+        "LOGN3",
+        "LREN3",
+        "NEMO3",
+        "PETR4",
+        "POMO4",
+        "RADL3",
+        "SANB4",
+        "SAPR3",
+        "SLCE3",
+        "SUZB3",
+        "TASA4",
+        "TOTS3",
+        "UNIP3",
+        "UNIP6",
+        "VBBR3",
+        "VULC3",
+        "WEGE3"
+      ],
+      "saidas": {
+        "ENAT3": [
+          "falha_solvencia"
+        ],
+        "TASA3": [
+          "saiu_do_universo"
+        ]
+      }
+    },
+    "2025": {
+      "lideres": [
+        "AGRO3",
+        "BRAP3",
+        "EMBJ3",
+        "ITUB3",
+        "LEVE3",
+        "PRIO3",
+        "UNIP6",
+        "VLID3",
+        "VULC3"
+      ],
+      "carteira": [
+        "AGRO3",
+        "APTI4",
+        "AZZA3",
+        "B3SA3",
+        "BBAS3",
+        "BRAP3",
+        "BRAP4",
+        "BRQB3",
+        "DXCO3",
+        "EMBJ3",
+        "GRND3",
+        "HYPE3",
+        "ITUB3",
+        "KEPL3",
+        "LEVE3",
+        "LOGN3",
+        "LREN3",
+        "POMO4",
+        "PRIO3",
+        "RADL3",
+        "SAPR3",
+        "SLCE3",
+        "TASA4",
+        "TOTS3",
+        "UNIP6",
+        "VBBR3",
+        "VLID3",
+        "VULC3",
+        "WEGE3"
+      ],
+      "saidas": {
+        "CPFE3": [
+          "falha_solvencia"
+        ],
+        "DEXP3": [
+          "saiu_do_universo"
+        ],
+        "ISAE4": [
+          "falha_solvencia"
+        ],
+        "JBSS3": [
+          "falha_solvencia"
+        ],
+        "NEMO3": [
+          "falha_solvencia",
+          "prejuizo_no_ultimo_exercicio"
+        ],
+        "PETR4": [
+          "falha_solvencia"
+        ],
+        "SANB4": [
+          "falha_solvencia"
+        ],
+        "SUZB3": [
+          "falha_solvencia",
+          "prejuizo_no_ultimo_exercicio"
+        ],
+        "UNIP3": [
+          "saiu_do_universo"
+        ]
+      }
+    }
+  }
+}
