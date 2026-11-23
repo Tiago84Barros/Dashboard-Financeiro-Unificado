@@ -1,4 +1,4 @@
-# Guia da Metodologia de Criação de Portfólio B3
+﻿# Guia da Metodologia de Criação de Portfólio B3
 
 > Documento explicativo para uso pessoal. Nível: intermediário.
 > Objetivo: entender **o que** a aba "Criação de Portfólio" faz, **por que** ela é
@@ -853,3 +853,407 @@ Cuidado ao repetir: a `SUPABASE_DB_URL` do `.env` vence a `DATABASE_URL`. Uma
 primeira passada desta rodada leu o banco da nuvem (o JSON diz "banco publicado
 (nuvem)" no campo `fundamentos`). Foi descartada e refeita no armazém local.
 Confira esse campo antes de aceitar uma medição.
+## 20. Rota de valor enxuta: 10, 15 e 20 ações (22/11/2026, medido: nenhum corte passa)
+
+### Que pergunta responde
+
+A rota de valor foi a melhor carteira da §19, mas segura em média ~39 ações
+(de 20 a 57). Quem tem pouco capital não monta isso: corretagem, lote mínimo e
+atenção pesam. A pergunta: **se a rota for cortada em 10, 15 ou 20 nomes, o
+excesso sobre pesos iguais sobrevive?**
+
+### A regra (`core.b3_estrategias_fundamentalistas.carteira_rota_valor_topn`)
+
+Fixada antes de ver qualquer número, sem parâmetro para ajustar:
+
+- Mesmo filtro da rota completa: classificação `oportunidade`.
+- Fica com os **N de maior `valor_score`** da própria rota (60% desconto,
+  40% folga de solvência). Desempate por margem de valor e depois ticker.
+- Com menos de N oportunidades na safra, fica com todas.
+- N ∈ {10, 15, 20}. Pesos iguais, formação em abril, mesma régua da §19
+  (9 safras, custos de pessoa física, caixa a Selic em safra vazia).
+
+Medição: `python scripts/medir_estrategias_fundamentalistas_b3.py --enxuta
+--cache-dir <pasta>` (grava `data/oos_rota_valor_enxuta_b3.json`; a rota
+completa roda junto, para comparar).
+
+### Regra de decisão, registrada antes de medir
+
+Um corte só é candidato se, líquido do giro, passar nos mesmos três testes da
+§19: (a) excesso médio sobre pesos iguais > 0 com piso do IC 95% > 0;
+(b) média sem a melhor safra > 0; (c) diferença pareada contra a carteira
+padrão > 0.
+
+Regras adicionais:
+
+- **Três cortes elevam a chance de falso positivo** (os cortes são
+  correlacionados entre si e com a rota completa, que já é uma candidata).
+  Não se escolhe o N de melhor número: vale o **menor N que passa nos três
+  testes**, porque o objetivo é viabilidade com pouco capital.
+- A comparação com a rota completa (`vs_rota_completa`) é **só informativa**:
+  mostra o custo do corte, não reprova nem aprova.
+- Nenhum corte passando: a rota de valor continua sem versão viável para
+  pouco capital, e isso fica registrado aqui. Nada muda na tela.
+- Passar não muda a carteira padrão nem a tela. Só abre a próxima etapa
+  (outra janela de safras, filtros de liquidez e tamanho do lote por capital).
+
+### Limites já conhecidos
+
+- Nove safras não separam sorte de regra com folga; (b) existe por isso.
+- Cortar em N aumenta a concentração: o risco de um nome ruim pesa mais
+  (10 ações = 10% cada).
+- Liquidez e lote mínimo não entram nesta medição.
+
+### Resultado (medido em 22/11/2026, armazém local, perfil Equilibrado, 9 safras)
+
+A regra acima foi aplicada sem mudança. A rota completa reproduziu a §19
+(+9,9 pp, piso +3,6 pp), o que confirma a mesma base de dados.
+
+| Carteira | Ações | (a) excesso | piso do IC 95% | (b) sem a melhor safra | (c) contra a padrão | Giro/ano | Veredito |
+|---|---|---|---|---|---|---|---|
+| Rota completa | ~39 | +9,9 pp | +3,6 pp | +6,3 pp | +7,0 pp | 48% | candidata |
+| Top 20 | 20 | +9,5 pp | −0,4 pp | +4,0 pp | +6,6 pp | 55% | fora (a) |
+| Top 15 | 15 | +7,9 pp | −2,3 pp | +1,7 pp | +5,0 pp | 63% | fora (a) |
+| Top 10 | 10 | +11,1 pp | −2,7 pp | +2,0 pp | +8,1 pp | 62% | fora (a) |
+
+Leitura com cautela:
+
+- **Nenhum corte passa em (a):** o piso do IC 95% fica abaixo de zero nos três.
+  Pela regra pré-registrada, nenhum é candidato. O top 20 chega perto (−0,4 pp),
+  mas perto não é passar, e a regra não muda depois de ver o número.
+- Os três passam em (b) e (c): a média continua positiva e acima da carteira
+  padrão. O que falta é certeza estatística, não direção.
+- **O corte aumenta a incerteza.** Top 10 tem o maior excesso médio (+11,1 pp),
+  puxado por uma safra de +83,6 pp; sem ela cai para +2,0 pp. Em três das nove
+  safras o top 10 perdeu para pesos iguais por 5 a 8 pp.
+- Contra a rota completa (informativo), os cortes ficam entre −2,0 e +1,2 pp,
+  com IC cruzando zero: **não se distingue** perder ou não com o corte, com
+  nove safras.
+- O giro sobe de 48% para 55–63% ao ano: o corte troca mais de nomes.
+- A rota de valor continua **sem versão viável medida para pouco capital**.
+  Nada muda na tela nem na carteira padrão. Próximas perguntas, se o usuário
+  quiser: outra janela de safras, filtro de liquidez e capital mínimo por lote.
+
+
+## 21. A IA lê o que os números não mostram? (22/11/2026, desenho; etapa 1: Opus vaza; Sonnet passa só com números e vaza com texto, 23/11/2026)
+
+### Que pergunta responde
+
+As regras de "qualidade" (§19) tentam adivinhar o futuro com números do
+passado e falharam. O que um investidor como Buffett acrescenta é julgamento
+sobre a vantagem competitiva duradoura, a gestão e a repetição do lucro.
+Pergunta: **uma IA lendo o que era público em março/N dá notas que preveem o
+retorno dos 12 meses seguintes, além do que a Rota de valor já capta?**
+
+### O problema: vazamento do futuro
+
+A IA foi treinada com dados até 2026. Em 2019, ela pode "lembrar" o que
+aconteceu depois, e a nota passa a ser memória, não leitura. O teste só vale
+se isso for controlado.
+
+### Três etapas
+
+1. **Teste de vazamento (primeiro).** Dossiê sem nome, ticker nem data
+   (anos relativos a N−1) de uma amostra de empresa-safra. Pergunta à IA qual
+   empresa e qual ano. **Acerto > 20% invalida a etapa 2.**
+   `scripts/testar_vazamento_ia_b3.py`.
+2. **Retroativa, às cegas.** Para cada empresa e safra 2017–2025, a IA lê só o
+   público até março/N, anonimizado, e dá três notas de 1 a 5 (vantagem
+   competitiva, gestão, repetição do lucro). Prompt fixado antes de rodar,
+   3 rodadas para medir a estabilidade.
+   - **Medida A (~900 casos):** correlação de postos entre a nota e o retorno
+     dos 12 meses seguintes.
+   - **Medida B (mesma régua da §19):** Rota de valor só com nota ≥ 4 contra a
+     Rota de valor inteira, pareado safra a safra.
+3. **Ao vivo.** Notas congeladas em abril/2027, medidas em março/2028. É a
+   única etapa sem vazamento possível.
+
+### Regra de decisão, registrada antes de medir
+
+A IA só vira "filtro opcional" (nunca padrão) se: (a) a Medida A for positiva
+com piso do IC 95% acima de zero; (b) a Medida B tiver diferença pareada média
+> 0, também sem a melhor safra; (c) o vazamento da etapa 1 for ≤ 20%. Se (c)
+falhar, o resultado retroativo é descartado, por mais bonito que seja. Nada
+muda na tela por esta seção.
+
+### Limites já conhecidos
+
+- A etapa 1 desta primeira rodada usa dossiê só de números (retrato PIT,
+  histórico de ROIC e lucro). O texto dos relatórios entra antes da etapa 2.
+  Dossiê só de números tende a **subestimar** o vazamento: se já vaza assim, vaza
+  mais com texto.
+- Anonimizar o texto pode tirar contexto que a IA usaria: pode subestimar o
+  valor da IA.
+- Nove safras são pouco para a Medida B; a Medida A existe por isso.
+
+### Resultado da etapa 1 (22/11/2026): inconclusivo, o modelo foi fraco
+
+Amostra de 60 empresa-safras (semente fixa), dossiê só de números.
+
+- Acerto do ticker: **6,7%** (4 de 60); ticker e ano: 1,7%. Abaixo do limite de
+  20%, mas **a conclusão não vale**.
+- **Quem respondeu foi um modelo gratuito do OpenRouter (Nemotron)**, não o
+  Claude nem o GPT: a conta da Anthropic estava sem crédito e a cadeia do app
+  passou ao próximo elo. Um modelo pequeno reconhece menos empresas do que um
+  grande. Se o modelo que daria as notas na etapa 2 for outro, o vazamento
+  dele é outro.
+- 11 das 60 respostas não vieram em JSON válido, o que também sugere um modelo
+  fraco para esta tarefa.
+- Os quatro acertos foram em nomes grandes e conhecidos (ROMI3, VIVT3, ITUB4,
+  SANB11).
+
+Pela regra, **a etapa 2 não pode começar** até repetir a etapa 1 com o mesmo
+modelo que daria as notas, e com crédito para isso. Números em
+`data/oos_vazamento_ia_b3.json`.
+
+### Resultado da etapa 1 com Claude (23/11/2026): o Opus vaza, o Sonnet passa raspando
+
+Mesma amostra (semente 20261122, 60 casos de 1.792), mesmo prompt, mesmo
+dossiê só de números. Desta vez quem respondeu foi o Claude, pelo Claude Code,
+sem gastar crédito da API.
+
+| Modelo | Acerto do ticker | Ticker e ano | IC 95% do ticker (Wilson) | Etapa 2 |
+|---|---|---|---|---|
+| Claude Opus 5.5 | **50,0%** (30 de 60) | 50,0% | 37,7% a 62,3% | **invalidada** |
+| Claude Sonnet 5.5 | 13,3% (8 de 60) | 5,0% | 6,9% a 24,2% | permitida pela regra |
+
+- **O Opus lembra.** Arriscou 35 nomes e acertou 30. Em todos os 30 acertou
+  também o ano. Não é palpite por setor: inclui nomes médios como RAPT4,
+  MDIA3, JSLG3, EZTC3, DXCO3 e COGN3. Com o Opus, uma nota retroativa seria
+  memória do que veio depois. **O Opus fica fora da etapa 2.**
+- **O Sonnet fica abaixo do limite**, com 13,3% no ticker. Ele erra o ano com
+  mais frequência (5% com o ano certo). Mas o teto do IC passa de 20%, e o dossiê
+  só de números tende a subestimar o vazamento (ver "Limites"). O Sonnet é o
+  modelo padrão do app (`core/llm_b3.py`).
+- **O que isto decide:** pela regra (c), a etapa 2 só pode rodar com o Sonnet.
+  Antes dela, a etapa 1 tem de ser repetida com o dossiê de texto, que é o que a
+  etapa 2 vai ler. Se o Sonnet passar de 20% com texto, a etapa 2 cai também.
+  A regra não muda depois de ver estes números.
+
+**Como foi rodado.** Cada ajudante abriu um contexto limpo, sem nada desta
+conversa. Recebeu um arquivo com 20 dossiês e ids opacos (`d001`…), sem
+gabarito, e foi proibido de usar outras ferramentas. Cada ajudante usou uma
+ferramenta só, a leitura do lote. Foram três lotes por modelo.
+`--exportar` grava os dossiês e o gabarito em arquivos separados, e
+`--corrigir` pontua as respostas.
+
+Isto difere da etapa 1 pelo app, que faz uma chamada por caso, em dois pontos:
+
+- no lote, a mesma empresa pode aparecer em duas safras, como SANB11, VIVT3 e
+  CIEL3, e as séries deslocadas ajudam a achar o ano;
+- o modelo é o do Claude Code, não a chamada da API com `effort` médio.
+
+Os dois pontos tendem a aumentar o acerto, o que pesa contra o Opus e não a
+favor dele.
+
+Números em `data/oos_vazamento_ia_b3_opus.json` e
+`data/oos_vazamento_ia_b3_sonnet.json`.
+
+### Etapa 1 com texto: desenho (23/11/2026, registrado antes de medir)
+
+**O que muda.** O dossiê ganha os textos que a etapa 2 vai ler, além dos
+números. São o release de resultados mais recente (até 3.500 caracteres) e os
+dois fatos relevantes mais recentes (até 1.200 cada), publicados de 01/01/N-1 a
+31/03/N. A fonte é `public.docs_corporativos` com `docs_corporativos_chunks`,
+no armazém local (16.731 documentos, 366 tickers).
+
+**O texto só cobre as safras 2024 e 2025.** O documento mais antigo do armazém
+é de 02/01/2023. Por isso o teste com texto, e a etapa 2 que ler texto, ficam
+nessas duas safras. Cobrir safras antigas exige ingerir o histórico de
+documentos da CVM (IPE). Caso sem documento no período sai da amostra.
+Documento que no acervo é só a linha de cabeçalho, sem corpo, é pulado e
+entra o seguinte do mesmo tipo.
+
+**O que se esconde** (`anonimizar` no script):
+
+- o nome da empresa (do cadastro, pela raiz do ticker, e do cabeçalho
+  "Empresa: TICKER (NOME)" que o acervo põe em cada trecho), as palavras
+  distintivas dele e as que começam por elas ("Randon" leva "Randoncorp"),
+  a razão social do documento e a palavra colada antes do nome
+  ("Metalúrgica", que separa GOAU de GGBR);
+- a razão social de qualquer sociedade citada ("X Y S.A."), inclusive
+  controladora e contraparte, e todo apelido entre aspas fora de uma lista de
+  termos jurídicos (ex.: ("Itaú Unibanco" ou "Companhia"));
+- o ticker da B3 com ou sem número (B3: GOAU), inclusive o de raiz com
+  dígito (B3SA3, desde a revisão de 23/11/2026), o do exterior (OTC, ADR, NYSE),
+  o CNPJ, o NIRE e o código CVM, e a sigla que vem logo antes da listagem
+  ("O GPA [B3: ...]"), no texto todo;
+- site (inclusive ri.empresa.com), e-mail, endereço, a cidade da linha de
+  data, a assinatura e sequências de três ou mais nomes próprios;
+- os anos, que viram relativos: "N" é o ano em curso, e 3T24 vira 3T(N-1).
+
+**O que fica, e é limite assumido:** marcas e produtos citados no texto (ex.:
+os nomes de negócios adquiridos), controladas e contrapartes citadas por um
+nome curto (ex.: "BRF" num texto da controladora, "Eletrobras" numa troca de
+usinas), nomes de cidade fora da linha de data, o
+setor, o tamanho e o tom. Um analista humano também veria isso. O que se mede
+é se o modelo reconhece a empresa por esse conjunto.
+
+**A regra não muda:** acerto do ticker acima de 20% invalida a etapa 2 com o
+Sonnet. A amostra é nova, porque o universo mudou: 60 casos sorteados com a
+mesma semente entre as empresa-safras de 2024 e 2025 que têm texto. Mesmo
+modelo (Sonnet 5.5), mesmos lotes limpos de 20 dossiês, mesmo `--corrigir`.
+
+### Etapa 1 com texto: resultado (23/11/2026)
+
+| Modelo | Dossiê | Acerta o ticker | IC 95% (Wilson) | Ticker e ano |
+|---|---|---|---|---|
+| Sonnet 5.5 | números + texto | **90,0%** (54/60) | 79,9%–95,3% | 80,0% |
+
+- **Com texto, o Sonnet reconhece a empresa em 9 de 10 casos.** O piso do
+  intervalo (79,9%) fica quase quatro vezes acima do limite de 20%. Pela
+  regra registrada antes de medir, **a etapa 2 com texto cai também com o
+  Sonnet.** Uma nota retroativa que lê release e fato relevante seria, na
+  maior parte, memória do que a empresa fez depois.
+- **Revisão de 23/11/2026.** Na primeira rodada (88,3%, 53/60), o ticker
+  B3SA3 escapou no dossiê d027: a máscara não pegava ticker com dígito na
+  raiz. A máscara foi corrigida, os dossiês foram refeitos com a mesma
+  amostra e o lote 2 (o do d027) foi respondido de novo por um Sonnet limpo.
+  Além do d027, só o d021 perdeu uma palavra junto do nome escondido; os
+  outros cinco dossiês que mudaram mudaram só no espaço depois de "B3:".
+  Sem o ticker, o Sonnet ainda acertou B3SA3. No lote refeito, TUPY3 passou
+  de erro a acerto, e daí o 54/60.
+- A contagem é conservadora. O caso MBRF3 de 2024 foi respondido como MRFG3,
+  que é a mesma empresa antes da troca de ticker. Contado como acerto, o
+  número sobe para 91,7% (55/60). Dos outros cinco erros, três são
+  "desconhecida" (VSPT4 duas vezes e MYPK3) e dois trocam por um par do mesmo
+  setor (AZUL4 por GOLL4, TRIS3 por EVEN3).
+- O que entrega a empresa não é o nome, que foi escondido. Depois da revisão,
+  a busca nos lotes não acha ticker no padrão da B3. É o conjunto que
+  entrega: negócios adquiridos, marcas, contrapartes, a ordem de grandeza dos
+  números e o setor. Esconder isso tira do texto o que a etapa 2 queria ler.
+- **O que isto decide:** a hipótese "a IA lê o que os números não mostram"
+  não tem teste limpo com o Sonnet 5.5 nem com o Opus 5.5 nas safras com
+  texto (2024–2025). Os dois modelos viram o desfecho dessas safras no
+  treino. Um teste limpo pede um modelo com corte de treino anterior ao
+  período medido, ou safras posteriores ao corte do modelo (o que só existe
+  daqui para frente, em tempo real).
+
+Números em `data/oos_vazamento_ia_b3_sonnet_texto.json`.
+
+## 22. Carteiras sorteadas: 15 ou 30 ações? (23/11/2026, medido)
+
+### Que pergunta responde
+
+Duas perguntas, separadas:
+
+1. **Mais ações dão mais chance de vencer, ou só menos susto?** Sem nenhuma
+   análise, uma carteira de 30 ações sorteadas bate pesos iguais, Ibovespa e
+   Selic mais vezes que uma de 15?
+2. **As carteiras de regra do app mostram habilidade ou sorte?** Cada uma é
+   comparada com milhares de carteiras sorteadas do **mesmo tamanho, safra a
+   safra**. Se ela fica no meio dos sorteios, o resultado não se separa da
+   sorte.
+
+### O desenho (`scripts/medir_carteiras_aleatorias_b3.py`)
+
+Fixado antes de ver qualquer número:
+
+- **Universo:** o da medição oficial de cada safra (quem tinha score mais quem
+  saiu da bolsa nela). Sorteio sem reposição, pesos iguais, formação em abril.
+- **Régua:** a mesma das §18–§20 (`medir_escolha`): 9 safras, perfil
+  Equilibrado, custos de pessoa física, cadeia de custos contínua desde a
+  primeira safra com carteira. Ibovespa pelo BOVA11 nas mesmas pontas
+  (`oos.retorno_benchmark`); Selic a da vigência.
+- **Pergunta 1:** N ∈ {10, 15, 20, 30, 40}. **1.000 sorteios** por N, semente
+  20261123. Cada sorteio troca todos os nomes a cada safra. Se a safra tem
+  menos de N nomes, entra o universo inteiro.
+- **Pergunta 2:** para cada carteira de regra (carteira padrão com os mesmos
+  nomes em pesos iguais, rota de valor completa, top 10/15/20, fórmula mágica,
+  qualidade constante, qualidade 3 anos e líder segurado), 1.000 sorteios com
+  **o mesmo número de nomes que ela teve em cada safra**. Safra em que ela
+  ficou em caixa, o sorteio também fica.
+- **O que sai, por N:** excesso médio anual (líquido) sobre pesos iguais,
+  Ibovespa e Selic; a fração de sorteios com excesso médio > 0 contra cada um;
+  os percentis 5, 50 e 95 do excesso médio sobre pesos iguais.
+- **O que sai, por carteira de regra:** o percentil do excesso médio dela
+  entre os sorteios do mesmo tamanho, líquido e bruto.
+
+### Regra de decisão, registrada antes de medir
+
+- **"30 protege mais que 15"** se a faixa p5–p95 do excesso médio sobre pesos
+  iguais com N = 30 for mais estreita que com N = 15.
+- **"30 dá mais chance de vencer que 15"** só se a fração de sorteios que batem
+  pesos iguais (líquido) com N = 30 ficar **5 pontos ou mais** acima da de
+  N = 15. O mesmo vale contra o Ibovespa e a Selic, cada um lido à parte.
+- **Uma carteira de regra mostra habilidade** se ficar **acima do percentil
+  95** dos sorteios do mesmo tamanho, no líquido e no bruto. Entre 50 e 95:
+  não se separa da sorte. Abaixo de 50: pior que a sorte mediana.
+- O sorteio troca 100% dos nomes por ano; as carteiras de regra trocam menos
+  (§19, §20). Por isso o percentil sai também no bruto: um percentil alto só
+  no líquido pode vir do giro menor, não da escolha.
+- **Só informativo.** Nada muda na tela nem na carteira padrão. Nove safras
+  dão leitura fraca, e a correlação entre as carteiras de regra não é
+  corrigida.
+
+### O que se espera, e por quê
+
+Sem custo, a média dos sorteios de qualquer N fica perto de pesos iguais: cada
+nome tem a mesma chance de entrar. O N mexe na **dispersão**, não na média.
+Com custo, todo sorteio perde um pouco para pesos iguais. Se isso se
+confirmar, 30 ações reduzem o tamanho do erro, mas não aumentam a chance de
+vencer sem uma escolha que preste.
+
+### Resultado (medido em 23/11/2026, armazém local, perfil Equilibrado, 9 safras)
+
+Antes de sortear, o script conferiu que a régua com memória dá o mesmo que
+sem ela em três sorteios. Números em `data/oos_carteiras_aleatorias_b3.json`.
+
+**Pergunta 1 — por tamanho** (1.000 sorteios por N; excesso médio anual,
+líquido):
+
+| N | Média vs pesos iguais | Batem pesos iguais | p5 / p95 | Faixa p5–p95 | Batem Ibovespa | Batem Selic | Giro anual |
+|---|---|---|---|---|---|---|---|
+| 10 | −0,3 pp | 46% | −7,7 / +7,0 | 14,7 pp | 34% | 86% | 95% |
+| 15 | −0,2 pp | 45% | −5,4 / +5,5 | 10,9 pp | 30% | 94% | 93% |
+| 20 | −0,4 pp | 45% | −5,0 / +4,6 | 9,6 pp | 27% | 95% | 90% |
+| 30 | −0,3 pp | 45% | −4,1 / +3,6 | 7,7 pp | 24% | 98% | 85% |
+| 40 | −0,2 pp | 47% | −3,3 / +2,8 | 6,2 pp | 19% | 100% | 80% |
+
+- A média contra o Ibovespa fica em torno de −1,7 pp em todo N, e contra a
+  Selic em torno de +4,9 pp. No bruto, 48–51% dos sorteios batem pesos
+  iguais em todo N: o que separa do bruto é só o custo do giro.
+- **Decisão:** "30 protege mais que 15" — **sim** (faixa de 10,9 para 7,7
+  pp). "30 dá mais chance que 15" — **não**, nos três: pesos iguais (45% e
+  45%), Selic (+4 pontos, abaixo do limiar de 5) e Ibovespa, onde a chance
+  **cai** (30% para 24%). Na janela, o Ibovespa bateu o universo em pesos
+  iguais; quanto mais a carteira sorteada se parece com o universo, mais ela
+  herda essa perda.
+
+**Pergunta 2 — cada carteira de regra entre sorteios do mesmo tamanho:**
+
+| Carteira | Excesso vs pesos iguais | Percentil líquido / bruto | p95 dos sorteios | Giro (regra / sorteio) | Leitura |
+|---|---|---|---|---|---|
+| Rota de valor | +9,9 pp | 100% / 100% | +3,3 pp | 48% / 82% | acima do p95 |
+| Rota de valor, top 20 | +9,5 pp | 100% / 100% | +4,5 pp | 55% / 90% | acima do p95 |
+| Fórmula mágica | +5,6 pp | 99,7% / 99,7% | +3,3 pp | 43% / 83% | acima do p95 |
+| Rota de valor, top 10 | +11,1 pp | 98,9% / 98,8% | +7,6 pp | 62% / 95% | acima do p95 |
+| Rota de valor, top 15 | +7,9 pp | 98,4% / 98,3% | +5,8 pp | 63% / 92% | acima do p95 |
+| Qualidade constante | +2,7 pp | 84% / 83% | +4,5 pp | 54% / 87% | não se separa da sorte |
+| Carteira padrão, pesos iguais | +2,9 pp | 76% / 76% | +7,5 pp | 81% / 94% | não se separa da sorte |
+| Qualidade 3 anos | +1,0 pp | 66% / 65% | +4,9 pp | 31% / 90% | não se separa da sorte |
+| Líder segurado | −0,6 pp | 49% / 48% | +5,9 pp | 41% / 87% | pior que a sorte mediana |
+
+O percentil quase não muda do líquido para o bruto: o giro menor das
+carteiras de regra não explica a posição delas.
+
+### Leitura
+
+- **Mais ações reduzem o tamanho do erro, não aumentam a chance de vencer.**
+  Sem uma escolha que preste, 30 ações sorteadas batem pesos iguais tanto
+  quanto 15 (45%), e batem o Ibovespa menos.
+- **Concentração não é o problema; a regra de escolha é.** A rota de valor
+  com 10 ou 15 nomes fica acima de 98% das carteiras sorteadas do mesmo
+  tamanho, mesmo com a faixa de sorte mais larga que vem de poucos nomes.
+- **Isto não contradiz a §20.** Lá, o piso do IC 95% dos cortes fica abaixo
+  de zero: o intervalo mede a incerteza de **quais anos** vieram (sorteio das
+  safras). Aqui as nove safras ficam fixas e o sorteio é dos **nomes**. Nessas
+  safras a escolha bateu a sorte; se outras safras repetiriam isso, a §20
+  continua dizendo que não há certeza. A régua de decisão da §20 não muda.
+- **A carteira padrão do app não se separa da sorte** (percentil 76). O
+  excesso de +2,9 pp está dentro do que carteiras sorteadas com o mesmo
+  número de nomes alcançam com frequência.
+- Os limites da §20 continuam: nove safras, braços correlacionados entre si
+  e sem correção para isso, e pesos iguais e Ibovespa sem custo (viés contra
+  as carteiras). Um percentil de 98–100% em nove safras não prova que a
+  vantagem continua.

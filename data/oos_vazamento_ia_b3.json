@@ -1,0 +1,692 @@
+{
+  "medido_em": "2026-11-22T20:17:56",
+  "modelos_que_responderam": [
+    "openrouter/nvidia/nemotron-3.5-super-vl:free"
+  ],
+  "semente": 20261122,
+  "amostra": 60,
+  "universo_de_casos": 1792,
+  "dossie": "só números (retrato PIT, setor, ROIC e lucro por exercício), sem texto",
+  "taxa_acerto_ticker": 0.06666666666666667,
+  "taxa_acerto_ticker_e_ano": 0.016666666666666666,
+  "limite": 0.2,
+  "invalida_etapa_2": false,
+  "casos": [
+    {
+      "ticker": "CTIP3",
+      "safra": 2015,
+      "ano_n1": 2014,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "PRNR3",
+      "safra": 2019,
+      "ano_n1": 2018,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "EMBJ3",
+      "safra": 2021,
+      "ano_n1": 2020,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "PDGR3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "ABEV3",
+      "safra": 2017,
+      "ano_n1": 2016,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "RAPT4",
+      "safra": 2023,
+      "ano_n1": 2022,
+      "resposta": {
+        "ticker": "TUPY3",
+        "ano_n1": 2022,
+        "confianca": 0.8
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "ANIM3",
+      "safra": 2019,
+      "ano_n1": 2018,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "CVCB3",
+      "safra": 2015,
+      "ano_n1": 2014,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "BBDC3",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "ticker": "BBAS3",
+        "ano_n1": 2022,
+        "confianca": 0.9
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "VBBR3",
+      "safra": 2020,
+      "ano_n1": 2019,
+      "resposta": {
+        "ticker": "PRIO3",
+        "ano_n1": 2023,
+        "confianca": 0.75
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "ROMI3",
+      "safra": 2020,
+      "ano_n1": 2019,
+      "resposta": {
+        "ticker": "ROMI3",
+        "ano_n1": 2022,
+        "confianca": 0.8
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "AMAR3",
+      "safra": 2016,
+      "ano_n1": 2015,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "SAPR3",
+      "safra": 2021,
+      "ano_n1": 2020,
+      "resposta": {
+        "ticker": "TAEE11",
+        "ano_n1": 2021,
+        "confianca": 0.8
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "BPAC11",
+      "safra": 2023,
+      "ano_n1": 2022,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "KLBN11",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {},
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "BRAP4",
+      "safra": 2020,
+      "ano_n1": 2019,
+      "resposta": {
+        "ticker": "USIM3",
+        "ano_n1": 2019,
+        "confianca": 0.9
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "MDIA3",
+      "safra": 2017,
+      "ano_n1": 2016,
+      "resposta": {},
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "MPLU3",
+      "safra": 2016,
+      "ano_n1": 2015,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "BAUH3",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "TPIS3",
+      "safra": 2015,
+      "ano_n1": 2014,
+      "resposta": {},
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "CIEL3",
+      "safra": 2019,
+      "ano_n1": 2018,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "VIVT3",
+      "safra": 2022,
+      "ano_n1": 2021,
+      "resposta": {
+        "ticker": "VIVT3",
+        "ano_n1": 2021,
+        "confianca": 0.9
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "BBDC4",
+      "safra": 2015,
+      "ano_n1": 2014,
+      "resposta": {
+        "ticker": "SANB11",
+        "ano_n1": 2022,
+        "confianca": 0.8
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "BRQB3",
+      "safra": 2016,
+      "ano_n1": 2015,
+      "resposta": {},
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "DASA3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "ticker": "HAPV3",
+        "ano_n1": 2023,
+        "confianca": 0.8
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "CIEL3",
+      "safra": 2020,
+      "ano_n1": 2019,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "B3SA3",
+      "safra": 2019,
+      "ano_n1": 2018,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "ITSA3",
+      "safra": 2018,
+      "ano_n1": 2017,
+      "resposta": {
+        "ticker": "BBAS3",
+        "ano_n1": 2022,
+        "confianca": 0.9
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "LCAM3",
+      "safra": 2021,
+      "ano_n1": 2020,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "IGTI4",
+      "safra": 2015,
+      "ano_n1": 2014,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "COGN3",
+      "safra": 2020,
+      "ano_n1": 2019,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "JSLG3",
+      "safra": 2015,
+      "ano_n1": 2014,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "FIBR3",
+      "safra": 2016,
+      "ano_n1": 2015,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "BRQB3",
+      "safra": 2018,
+      "ano_n1": 2017,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "YDUQ3",
+      "safra": 2019,
+      "ano_n1": 2018,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "FESA4",
+      "safra": 2021,
+      "ano_n1": 2020,
+      "resposta": {},
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "WEGE3",
+      "safra": 2023,
+      "ano_n1": 2022,
+      "resposta": {},
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "DIRR3",
+      "safra": 2019,
+      "ano_n1": 2018,
+      "resposta": {
+        "ticker": "HGTX3",
+        "ano_n1": 2021,
+        "confianca": 0.8
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "VIVT3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {},
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "STBP3",
+      "safra": 2019,
+      "ano_n1": 2018,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "BSEV3",
+      "safra": 2021,
+      "ano_n1": 2020,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "SANB4",
+      "safra": 2023,
+      "ano_n1": 2022,
+      "resposta": {
+        "ticker": "BBAS3",
+        "ano_n1": 2020,
+        "confianca": 0.9
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "SANB11",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {},
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "BRKM3",
+      "safra": 2022,
+      "ano_n1": 2021,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "LEVE3",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "ticker": "ALPA4",
+        "ano_n1": 2018,
+        "confianca": 0.9
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "GGBR3",
+      "safra": 2018,
+      "ano_n1": 2017,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "EZTC3",
+      "safra": 2019,
+      "ano_n1": 2018,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "POMO3",
+      "safra": 2023,
+      "ano_n1": 2022,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "ITUB4",
+      "safra": 2020,
+      "ano_n1": 2019,
+      "resposta": {
+        "ticker": "ITUB4",
+        "ano_n1": 2023,
+        "confianca": 0.9
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "BBAS3",
+      "safra": 2017,
+      "ano_n1": 2016,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "CXSE3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {},
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "KLBN11",
+      "safra": 2015,
+      "ano_n1": 2014,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "SANB11",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "ticker": "SANB11",
+        "ano_n1": 2022,
+        "confianca": 0.8
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "BRAP3",
+      "safra": 2020,
+      "ano_n1": 2019,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "PPAR3",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "RIAA3",
+      "safra": 2022,
+      "ano_n1": 2021,
+      "resposta": {},
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "MGEL3",
+      "safra": 2021,
+      "ano_n1": 2020,
+      "resposta": {
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "DXCO3",
+      "safra": 2022,
+      "ano_n1": 2021,
+      "resposta": {
+        "ticker": "CBA3",
+        "ano_n1": 2021,
+        "confianca": 0.8
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "CYRE3",
+      "safra": 2016,
+      "ano_n1": 2015,
+      "resposta": {
+        "ticker": "CVC3",
+        "ano_n1": 2019,
+        "confianca": 0.8
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "TUPY3",
+      "safra": 2019,
+      "ano_n1": 2018,
+      "resposta": {},
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    }
+  ]
+}

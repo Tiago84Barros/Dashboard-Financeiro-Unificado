@@ -58,7 +58,7 @@ import pandas as pd
 
 from core.b3_value_route import OPORTUNIDADE, rank_value_opportunities
 
-VERSAO = "fundamentalistas-1.1.0"
+VERSAO = "fundamentalistas-1.2.0"
 
 ROTA_VALOR = "rota_valor"
 FORMULA_MAGICA = "formula_magica"
@@ -138,6 +138,39 @@ def carteira_rota_valor(df_pit: pd.DataFrame | None, universo: Iterable[str], *,
         return []
     ranked = rank_value_opportunities(quadro, selic=selic)
     return sorted(ranked.loc[ranked["classificacao"] == OPORTUNIDADE, "Ticker"].astype(str))
+
+
+#: Tamanhos da Rota de valor enxuta (medidos em 22/11/2026, fixados antes de
+#: ver qualquer número). A rota completa tem ~39 nomes, inviável com pouco capital.
+TAMANHOS_ROTA_ENXUTA = (10, 15, 20)
+
+
+def rotulo_rota_topn(n: int) -> str:
+    return f"rota_valor_top{int(n)}"
+
+
+def carteira_rota_valor_topn(df_pit: pd.DataFrame | None, universo: Iterable[str],
+                             n: int, *, selic: float | None = None) -> list[str]:
+    """Os ``n`` primeiros da rota de valor, na ordem da PRÓPRIA rota.
+
+    Mesmo filtro da rota completa (``oportunidade``); a ordem é a do
+    ``valor_score`` da rota (60% desconto, 40% folga de solvência), desempate
+    por margem de valor e depois ticker. Nenhum critério novo: a regra não
+    tem nada a ajustar. Com menos de ``n`` oportunidades, fica com todas.
+    """
+    if int(n) <= 0:
+        return []
+    quadro = _do_universo(df_pit, universo)
+    if quadro.empty:
+        return []
+    ranked = rank_value_opportunities(quadro, selic=selic)
+    op = ranked[ranked["classificacao"] == OPORTUNIDADE].copy()
+    if op.empty:
+        return []
+    op["Ticker"] = op["Ticker"].astype(str)
+    op = op.sort_values(["valor_score", "margem_valor", "Ticker"],
+                        ascending=[False, False, True], kind="mergesort")
+    return sorted(op["Ticker"].head(int(n)))
 
 
 def falhas_de_solvencia(df_pit: pd.DataFrame | None,
