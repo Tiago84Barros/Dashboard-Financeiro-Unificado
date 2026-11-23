@@ -11,11 +11,19 @@ nome, ticker, data nem texto. Amostra fixa (``--semente``), prompt fixo.
 
 Uso::
 
-    python scripts/testar_vazamento_ia_b3.py --cache-dir data/cache_wh --n 60
-    python scripts/testar_vazamento_ia_b3.py --cache-dir data/cache_wh --n 2 --dry-run
+    python scripts/testar_vazamento_ia_b3.py --cache-dir data/cache_wh --n 60 --dados-reais-publicos
+    python scripts/testar_vazamento_ia_b3.py --cache-dir data/cache_wh --n 2 --dry-run --dados-reais-publicos
 
 Grava `data/oos_vazamento_ia_b3.json`. Chama a LLM do app pela cadeia de
-`_chat_complete` (custo baixo: uma chamada curta por empresa-safra) com dados públicos de balanço.
+`_chat_complete` (custo baixo: uma chamada curta por empresa-safra).
+
+Dados reais, não sintéticos: o teste só faz sentido com empresas de verdade
+(a pergunta é se a IA as reconhece). O AGENTS.md pede dados sintéticos em
+prompts; por isso a chamada à LLM e o ``--exportar`` exigem
+``--dados-reais-publicos``, que confirma o que vai no dossiê: balanço e
+documentos públicos da CVM de companhias abertas, anonimizados, sem dado de
+usuário, carteira ou pessoa física. Sem a flag, o script para antes de enviar
+ou exportar. ``--corrigir`` só lê respostas já gravadas e não exige a flag.
 """
 from __future__ import annotations
 
@@ -410,10 +418,18 @@ def main() -> int:
     ap.add_argument("--saida", type=Path, default=CAMINHO)
     ap.add_argument("--com-texto", action="store_true",
                     help="dossiê de números + trechos anonimizados da CVM/IPE (safras 2024-2025)")
+    ap.add_argument("--dados-reais-publicos", action="store_true",
+                    help="confirma o envio/exportação de dossiês reais (dados públicos da CVM, "
+                         "anonimizados); exceção à regra de dados sintéticos do AGENTS.md")
     args = ap.parse_args()
 
     if args.corrigir:
         return corrigir(args.gabarito, args.corrigir, args.modelo, args.saida)
+    if not args.dados_reais_publicos:
+        raise SystemExit(
+            "este teste monta dossiês com dados reais (públicos, anonimizados) e os envia a "
+            "uma LLM externa ou os exporta; o AGENTS.md pede dados sintéticos em prompts. "
+            "Passe --dados-reais-publicos para confirmar (ver §21 do guia).")
 
     import core.llm_b3 as llm
     cadeia_original = llm._provider_chain  # `preparar` desliga a LLM da medição
