@@ -1,0 +1,798 @@
+{
+  "medido_em": "2026-11-23T05:49:53",
+  "modelos_que_responderam": [
+    "claude-sonnet-5-5"
+  ],
+  "semente": 20261122,
+  "amostra": 60,
+  "universo_de_casos": 282,
+  "dossie": "números + release mais recente e 2 fatos relevantes da CVM/IPE publicados até 31/03/N, anonimizados (safras 2024-2025)",
+  "taxa_acerto_ticker": 0.8833333333333333,
+  "taxa_acerto_ticker_e_ano": 0.75,
+  "limite": 0.2,
+  "invalida_etapa_2": true,
+  "casos": [
+    {
+      "ticker": "GOAU3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d001",
+        "ticker": "GOAU4",
+        "ano_n1": 2023,
+        "confianca": 0.5
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "BEEF3",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d002",
+        "ticker": "BEEF3",
+        "ano_n1": 2023,
+        "confianca": 0.8
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "IRBR3",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d003",
+        "ticker": "IRBR3",
+        "ano_n1": 2024,
+        "confianca": 0.9
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "CMIG4",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d004",
+        "ticker": "CMIG4",
+        "ano_n1": 2024,
+        "confianca": 0.9
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "ITSA3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d005",
+        "ticker": "ITSA4",
+        "ano_n1": 2023,
+        "confianca": 0.8
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "LIGT3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d006",
+        "ticker": "LIGT3",
+        "ano_n1": 2023,
+        "confianca": 0.9
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "PCAR3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d007",
+        "ticker": "PCAR3",
+        "ano_n1": 2023,
+        "confianca": 0.85
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "ITUB4",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d008",
+        "ticker": "ITUB4",
+        "ano_n1": 2024,
+        "confianca": 0.8
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "ENGI11",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d009",
+        "ticker": "ENGI11",
+        "ano_n1": 2024,
+        "confianca": 0.75
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "PSSA3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d010",
+        "ticker": "PSSA3",
+        "ano_n1": 2023,
+        "confianca": 0.75
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "MOVI3",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d011",
+        "ticker": "MOVI3",
+        "ano_n1": 2023,
+        "confianca": 0.4
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "ITUB4",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d012",
+        "ticker": "ITUB4",
+        "ano_n1": 2023,
+        "confianca": 0.8
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "BBDC3",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d013",
+        "ticker": "BBDC4",
+        "ano_n1": 2024,
+        "confianca": 0.85
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "BRSR6",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d014",
+        "ticker": "BRSR6",
+        "ano_n1": 2024,
+        "confianca": 0.8
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "TGMA3",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d015",
+        "ticker": "TGMA3",
+        "ano_n1": 2024,
+        "confianca": 0.9
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "FRAS3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d016",
+        "ticker": "FRAS3",
+        "ano_n1": 2023,
+        "confianca": 0.9
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "MILS3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d017",
+        "ticker": "MILS3",
+        "ano_n1": 2023,
+        "confianca": 0.85
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "CPLE3",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d018",
+        "ticker": "CPLE3",
+        "ano_n1": 2024,
+        "confianca": 0.85
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "ECOR3",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d019",
+        "ticker": "ECOR3",
+        "ano_n1": 2024,
+        "confianca": 0.85
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "VBBR3",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d020",
+        "ticker": "VBBR3",
+        "ano_n1": 2024,
+        "confianca": 0.85
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "RAPT4",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d021",
+        "ticker": "RAPT4",
+        "ano_n1": 2023,
+        "confianca": 0.85
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "VSPT4",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d022",
+        "ticker": "desconhecida",
+        "ano_n1": 2023,
+        "confianca": 0.1
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "AZUL4",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d023",
+        "ticker": "GOLL4",
+        "ano_n1": 2023,
+        "confianca": 0.9
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "AGRO3",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d024",
+        "ticker": "AGRO3",
+        "ano_n1": 2024,
+        "confianca": 0.8
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "TUPY3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d025",
+        "ticker": "MYPK3",
+        "ano_n1": 2023,
+        "confianca": 0.8
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "BBSE3",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d026",
+        "ticker": "BBSE3",
+        "ano_n1": 2024,
+        "confianca": 0.85
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "B3SA3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d027",
+        "ticker": "B3SA3",
+        "ano_n1": 2023,
+        "confianca": 0.9
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "PDGR3",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d028",
+        "ticker": "PDGR3",
+        "ano_n1": 2023,
+        "confianca": 0.9
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "CVCB3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d029",
+        "ticker": "CVCB3",
+        "ano_n1": 2023,
+        "confianca": 0.9
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "BRKM5",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d030",
+        "ticker": "BRKM5",
+        "ano_n1": 2024,
+        "confianca": 0.85
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "AGRO3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d031",
+        "ticker": "AGRO3",
+        "ano_n1": 2023,
+        "confianca": 0.8
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "EVEN3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d032",
+        "ticker": "EVEN3",
+        "ano_n1": 2023,
+        "confianca": 0.85
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "ABEV3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d033",
+        "ticker": "ABEV3",
+        "ano_n1": 2023,
+        "confianca": 0.95
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "YDUQ3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d034",
+        "ticker": "YDUQ3",
+        "ano_n1": 2023,
+        "confianca": 0.85
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "PGMN3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d035",
+        "ticker": "PGMN3",
+        "ano_n1": 2023,
+        "confianca": 0.9
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "ABCB4",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d036",
+        "ticker": "ABCB4",
+        "ano_n1": 2023,
+        "confianca": 0.85
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "BEEF3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d037",
+        "ticker": "BEEF3",
+        "ano_n1": 2023,
+        "confianca": 0.6
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "MDIA3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d038",
+        "ticker": "MDIA3",
+        "ano_n1": 2023,
+        "confianca": 0.9
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "CPFE3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d039",
+        "ticker": "CPFE3",
+        "ano_n1": 2023,
+        "confianca": 0.9
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "NEOE3",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d040",
+        "ticker": "NEOE3",
+        "ano_n1": 2023,
+        "confianca": 0.85
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "FESA4",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d041",
+        "ticker": "FESA4",
+        "ano_n1": 2023,
+        "confianca": 0.9
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "CXSE3",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d042",
+        "ticker": "CXSE3",
+        "ano_n1": 2023,
+        "confianca": 0.75
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "MBRF3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d043",
+        "ticker": "MRFG3",
+        "ano_n1": 2023,
+        "confianca": 0.9
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "MYPK3",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d044",
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0.1
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "USIM3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d045",
+        "ticker": "USIM5",
+        "ano_n1": 2023,
+        "confianca": 0.9
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "ITSA4",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d046",
+        "ticker": "ITSA4",
+        "ano_n1": 2024,
+        "confianca": 0.5
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "TRIS3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d047",
+        "ticker": "EVEN3",
+        "ano_n1": 2023,
+        "confianca": 0.3
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "TEND3",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d048",
+        "ticker": "TEND3",
+        "ano_n1": 2024,
+        "confianca": 0.85
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "UNIP3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d049",
+        "ticker": "UNIP6",
+        "ano_n1": 2023,
+        "confianca": 0.9
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "VSPT4",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d050",
+        "ticker": "desconhecida",
+        "ano_n1": null,
+        "confianca": 0.1
+      },
+      "acertou_ticker": false,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "IRBR3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d051",
+        "ticker": "IRBR3",
+        "ano_n1": 2023,
+        "confianca": 0.9
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "EZTC3",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d052",
+        "ticker": "EZTC3",
+        "ano_n1": 2023,
+        "confianca": 0.8
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "RAPT4",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d053",
+        "ticker": "RAPT4",
+        "ano_n1": 2023,
+        "confianca": 0.9
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "AZUL4",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d054",
+        "ticker": "AZUL4",
+        "ano_n1": 2024,
+        "confianca": 0.95
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "AMER3",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d055",
+        "ticker": "AMER3",
+        "ano_n1": 2024,
+        "confianca": 0.95
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "LOGG3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d056",
+        "ticker": "LOGG3",
+        "ano_n1": 2023,
+        "confianca": 0.9
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "MDNE3",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d057",
+        "ticker": "MDNE3",
+        "ano_n1": 2024,
+        "confianca": 0.9
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "SANB3",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d058",
+        "ticker": "SANB11",
+        "ano_n1": 2023,
+        "confianca": 0.3
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": false
+    },
+    {
+      "ticker": "VALE3",
+      "safra": 2025,
+      "ano_n1": 2024,
+      "resposta": {
+        "id": "d059",
+        "ticker": "VALE3",
+        "ano_n1": 2024,
+        "confianca": 0.95
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    },
+    {
+      "ticker": "CAML3",
+      "safra": 2024,
+      "ano_n1": 2023,
+      "resposta": {
+        "id": "d060",
+        "ticker": "CAML3",
+        "ano_n1": 2023,
+        "confianca": 0.7
+      },
+      "acertou_ticker": true,
+      "acertou_ticker_e_ano": true
+    }
+  ],
+  "canal": "fora do app: ajudante sem contexto, um lote de dossiês por chamada",
+  "sem_resposta": 0
+}

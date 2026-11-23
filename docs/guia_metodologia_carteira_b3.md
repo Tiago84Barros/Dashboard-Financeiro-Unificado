@@ -914,7 +914,7 @@ Leitura com cautela:
   quiser: outra janela de safras, filtro de liquidez e capital mínimo por lote.
 
 
-## 21. A IA lê o que os números não mostram? (22/11/2026, desenho; etapa 1: Opus vaza, Sonnet passa)
+## 21. A IA lê o que os números não mostram? (22/11/2026, desenho; etapa 1: Opus vaza; Sonnet passa só com números e vaza com texto, 23/11/2026)
 
 ### Que pergunta responde
 
@@ -1027,3 +1027,76 @@ favor dele.
 
 Números em `data/oos_vazamento_ia_b3_opus.json` e
 `data/oos_vazamento_ia_b3_sonnet.json`.
+
+### Etapa 1 com texto: desenho (23/11/2026, registrado antes de medir)
+
+**O que muda.** O dossiê ganha os textos que a etapa 2 vai ler, além dos
+números. São o release de resultados mais recente (até 3.500 caracteres) e os
+dois fatos relevantes mais recentes (até 1.200 cada), publicados de 01/01/N-1 a
+31/03/N. A fonte é `public.docs_corporativos` com `docs_corporativos_chunks`,
+no armazém local (16.731 documentos, 366 tickers).
+
+**O texto só cobre as safras 2024 e 2025.** O documento mais antigo do armazém
+é de 02/01/2023. Por isso o teste com texto, e a etapa 2 que ler texto, ficam
+nessas duas safras. Cobrir safras antigas exige ingerir o histórico de
+documentos da CVM (IPE). Caso sem documento no período sai da amostra.
+Documento que no acervo é só a linha de cabeçalho, sem corpo, é pulado e
+entra o seguinte do mesmo tipo.
+
+**O que se esconde** (`anonimizar` no script):
+
+- o nome da empresa (do cadastro, pela raiz do ticker, e do cabeçalho
+  "Empresa: TICKER (NOME)" que o acervo põe em cada trecho), as palavras
+  distintivas dele e as que começam por elas ("Randon" leva "Randoncorp"),
+  a razão social do documento e a palavra colada antes do nome
+  ("Metalúrgica", que separa GOAU de GGBR);
+- a razão social de qualquer sociedade citada ("X Y S.A."), inclusive
+  controladora e contraparte, e todo apelido entre aspas fora de uma lista de
+  termos jurídicos (ex.: ("Itaú Unibanco" ou "Companhia"));
+- o ticker da B3 com ou sem número (B3: GOAU), o do exterior (OTC, ADR, NYSE),
+  o CNPJ, o NIRE e o código CVM, e a sigla que vem logo antes da listagem
+  ("O GPA [B3: ...]"), no texto todo;
+- site (inclusive ri.empresa.com), e-mail, endereço, a cidade da linha de
+  data, a assinatura e sequências de três ou mais nomes próprios;
+- os anos, que viram relativos: "N" é o ano em curso, e 3T24 vira 3T(N-1).
+
+**O que fica, e é limite assumido:** marcas e produtos citados no texto (ex.:
+os nomes de negócios adquiridos), controladas e contrapartes citadas por um
+nome curto (ex.: "BRF" num texto da controladora, "Eletrobras" numa troca de
+usinas), nomes de cidade fora da linha de data, o
+setor, o tamanho e o tom. Um analista humano também veria isso. O que se mede
+é se o modelo reconhece a empresa por esse conjunto.
+
+**A regra não muda:** acerto do ticker acima de 20% invalida a etapa 2 com o
+Sonnet. A amostra é nova, porque o universo mudou: 60 casos sorteados com a
+mesma semente entre as empresa-safras de 2024 e 2025 que têm texto. Mesmo
+modelo (Sonnet 5.5), mesmos lotes limpos de 20 dossiês, mesmo `--corrigir`.
+
+### Etapa 1 com texto: resultado (23/11/2026)
+
+| Modelo | Dossiê | Acerta o ticker | IC 95% (Wilson) | Ticker e ano |
+|---|---|---|---|---|
+| Sonnet 5.5 | números + texto | **88,3%** (53/60) | 77,8%–94,2% | 75,0% |
+
+- **Com texto, o Sonnet reconhece a empresa em quase 9 de 10 casos.** O piso
+  do intervalo (77,8%) fica quase quatro vezes acima do limite de 20%. Pela
+  regra registrada antes de medir, **a etapa 2 com texto cai também com o
+  Sonnet.** Uma nota retroativa que lê release e fato relevante seria, na
+  maior parte, memória do que a empresa fez depois.
+- A contagem é conservadora. O caso MBRF3 de 2024 foi respondido como MRFG3,
+  que é a mesma empresa antes da troca de ticker. Contado como acerto, o
+  número sobe para 90,0% (54/60). Dos outros seis erros, três são
+  "desconhecida" (VSPT4 duas vezes e MYPK3) e três trocam por um par do mesmo
+  setor (AZUL4 por GOLL4, TUPY3 por MYPK3, TRIS3 por EVEN3).
+- O que entrega a empresa não é o nome, que foi escondido (a busca final nos
+  lotes não achou ticker, razão social nem cabeçalho do acervo). É o conjunto:
+  negócios adquiridos, marcas, contrapartes, a ordem de grandeza dos números e
+  o setor. Esconder isso tira do texto o que a etapa 2 queria ler.
+- **O que isto decide:** a hipótese "a IA lê o que os números não mostram"
+  não tem teste limpo com o Sonnet 5.5 nem com o Opus 5.5 nas safras com
+  texto (2024–2025). Os dois modelos viram o desfecho dessas safras no
+  treino. Um teste limpo pede um modelo com corte de treino anterior ao
+  período medido, ou safras posteriores ao corte do modelo (o que só existe
+  daqui para frente, em tempo real).
+
+Números em `data/oos_vazamento_ia_b3_sonnet_texto.json`.
