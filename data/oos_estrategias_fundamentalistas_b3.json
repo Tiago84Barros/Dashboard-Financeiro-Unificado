@@ -2,7 +2,7 @@
   "versao_medicao": "fundamentalistas-1.1.0",
   "versao_metodologia": "2.33.0",
   "versao_presets": "b3-presets-1.0.0",
-  "medido_em": "2026-11-22T13:45:16",
+  "medido_em": "2026-11-23T12:30:35",
   "perfil": "Equilibrado (padrão)",
   "safras": [
     2017,
@@ -94,7 +94,7 @@
         "melhor_safra": 2020,
         "media_sem_melhor_safra": 0.04511779111343881
       },
-      "giro_medio_anual": 0.48431281225372075,
+      "giro_medio_anual": 0.4843128122537207,
       "custo_medio_anual": 0.0012260000261705786,
       "leitura": "Excesso médio de +9.9 pp por safra sobre pesos iguais, intervalo 95% [+3.6; +18.4] pp, 9 safras, 1 negativa(s). O intervalo exclui o zero. Sem a melhor safra (2020), a média seria +6.3 pp.",
       "safras": [
@@ -110,7 +110,7 @@
           "excesso_ew_bruto": 0.13431098322338975,
           "excesso_ew_com_ir": 0.13249762196886006,
           "giro": 1.0000000000000002,
-          "custo_pct": 0.001306451612903226
+          "custo_pct": 0.0013064516129032261
         },
         {
           "safra": 2018,
@@ -123,8 +123,8 @@
           "excesso_ew": 0.028454872475340454,
           "excesso_ew_bruto": 0.030167497663965842,
           "excesso_ew_com_ir": -0.0017855460805821788,
-          "giro": 0.5920080209197524,
-          "custo_pct": 0.001441618453584395
+          "giro": 0.5920080209197522,
+          "custo_pct": 0.0014416184535843953
         },
         {
           "safra": 2019,
@@ -138,7 +138,7 @@
           "excesso_ew_bruto": -0.04079983927751436,
           "excesso_ew_com_ir": -0.06425564040947727,
           "giro": 0.5853658536585368,
-          "custo_pct": 0.0013966793707761431
+          "custo_pct": 0.0013966793707761436
         },
         {
           "safra": 2020,
@@ -152,7 +152,7 @@
           "excesso_ew_bruto": 0.38797503867625927,
           "excesso_ew_com_ir": 0.3852566472303989,
           "giro": 0.5434552229531475,
-          "custo_pct": 0.001409349194123066
+          "custo_pct": 0.0014093491941230666
         },
         {
           "safra": 2021,
@@ -166,7 +166,7 @@
           "excesso_ew_bruto": 0.11413173620987346,
           "excesso_ew_com_ir": 0.06930431780313556,
           "giro": 0.49211882398288753,
-          "custo_pct": 0.0012738784436510508
+          "custo_pct": 0.001273878443651051
         },
         {
           "safra": 2022,
@@ -179,8 +179,8 @@
           "excesso_ew": 0.09781498671666114,
           "excesso_ew_bruto": 0.09889469030022564,
           "excesso_ew_com_ir": 0.07837513479176919,
-          "giro": 0.44457787182678843,
-          "custo_pct": 0.0011363532931360878
+          "giro": 0.44457787182678854,
+          "custo_pct": 0.001136353293136087
         },
         {
           "safra": 2023,
@@ -193,8 +193,8 @@
           "excesso_ew": 0.0714045773388805,
           "excesso_ew_bruto": 0.07232252135866968,
           "excesso_ew_com_ir": 0.06578170432946684,
-          "giro": 0.2832767816472662,
-          "custo_pct": 0.0006931262573789112
+          "giro": 0.2832767816472661,
+          "custo_pct": 0.0006931262573789113
         },
         {
           "safra": 2024,
@@ -207,7 +207,7 @@
           "excesso_ew": 0.011552663242880429,
           "excesso_ew_bruto": 0.012779488042401546,
           "excesso_ew_com_ir": -0.012313936321884461,
-          "giro": 0.501770751054665,
+          "giro": 0.5017707510546648,
           "custo_pct": 0.001309468049850204
         },
         {
@@ -222,7 +222,7 @@
           "excesso_ew_bruto": 0.09498660022007122,
           "excesso_ew_com_ir": 0.09333867282622277,
           "giro": 0.43192917198672237,
-          "custo_pct": 0.0011475271468647712
+          "custo_pct": 0.0011475271468647707
         }
       ],
       "vs_carteira_padrao": {
@@ -337,8 +337,8 @@
         "melhor_safra": 2024,
         "media_sem_melhor_safra": 0.031206174553550587
       },
-      "giro_medio_anual": 0.4255443792469735,
-      "custo_medio_anual": 0.0010295937992897922,
+      "giro_medio_anual": 0.4255443792469736,
+      "custo_medio_anual": 0.0010295937992897924,
       "leitura": "Excesso médio de +5.6 pp por safra sobre pesos iguais, intervalo 95% [+1.3; +10.0] pp, 9 safras, 3 negativa(s). O intervalo exclui o zero. Sem a melhor safra (2021), a média seria +4.4 pp.",
       "safras": [
         {
@@ -367,7 +367,7 @@
           "excesso_ew_bruto": 0.05185366110580383,
           "excesso_ew_com_ir": 0.02352736553936602,
           "giro": 0.5394356105936464,
-          "custo_pct": 0.0012999904885074118
+          "custo_pct": 0.001299990488507412
         },
         {
           "safra": 2019,
@@ -394,8 +394,8 @@
           "excesso_ew": 0.1377997619115663,
           "excesso_ew_bruto": 0.13960955287360488,
           "excesso_ew_com_ir": 0.11203467685329249,
-          "giro": 0.44592693982952253,
-          "custo_pct": 0.0010769603685894338
+          "giro": 0.4459269398295226,
+          "custo_pct": 0.001076960368589434
         },
         {
           "safra": 2021,
@@ -409,7 +409,7 @@
           "excesso_ew_bruto": 0.153452814693411,
           "excesso_ew_com_ir": 0.10238644792273627,
           "giro": 0.6031137662143733,
-          "custo_pct": 0.001462930777180923
+          "custo_pct": 0.0014629307771809237
         },
         {
           "safra": 2022,
@@ -422,8 +422,8 @@
           "excesso_ew": 0.06486563759387179,
           "excesso_ew_bruto": 0.06592421583357105,
           "excesso_ew_com_ir": 0.04899392080562129,
-          "giro": 0.4846546374135806,
-          "custo_pct": 0.0011541696552331796
+          "giro": 0.4846546374135807,
+          "custo_pct": 0.00115416965523318
         },
         {
           "safra": 2023,
@@ -436,7 +436,7 @@
           "excesso_ew": -0.047958444378007004,
           "excesso_ew_bruto": -0.04710309971843213,
           "excesso_ew_com_ir": -0.047958444378007004,
-          "giro": 0.2896920011437642,
+          "giro": 0.28969200114376414,
           "custo_pct": 0.0007098722202699562
         },
         {
@@ -450,7 +450,7 @@
           "excesso_ew": 0.11651002751358211,
           "excesso_ew_bruto": 0.11757155740071507,
           "excesso_ew_com_ir": 0.11287667238882496,
-          "giro": 0.40174901739133023,
+          "giro": 0.4017490173913302,
           "custo_pct": 0.0010190556566585976
         },
         {
@@ -464,8 +464,8 @@
           "excesso_ew": -0.004808788295684319,
           "excesso_ew_bruto": -0.0037761377640772587,
           "excesso_ew_com_ir": -0.018816447079285425,
-          "giro": 0.31052280439714813,
-          "custo_pct": 0.0007721874024074174
+          "giro": 0.3105228043971481,
+          "custo_pct": 0.0007721874024074173
         }
       ],
       "vs_carteira_padrao": {
@@ -581,7 +581,7 @@
         "melhor_safra": 2019,
         "media_sem_melhor_safra": -0.004599439330360091
       },
-      "giro_medio_anual": 0.5358898557871591,
+      "giro_medio_anual": 0.5358898557871592,
       "custo_medio_anual": 0.0013329916654507869,
       "leitura": "Excesso médio de +2.7 pp por safra sobre pesos iguais, intervalo 95% [-2.2; +7.6] pp, 9 safras, 2 negativa(s). O intervalo cruza o zero: a medição NÃO distingue esta carteira de dividir igualmente entre as empresas. Sem a melhor safra (2019), a média seria +1.2 pp.",
       "safras": [
@@ -597,7 +597,7 @@
           "excesso_ew_bruto": 0.011398370841222472,
           "excesso_ew_com_ir": 0.00988999156225101,
           "giro": 0.9999999999999999,
-          "custo_pct": 0.0011923076923076922
+          "custo_pct": 0.001192307692307692
         },
         {
           "safra": 2018,
@@ -611,7 +611,7 @@
           "excesso_ew_bruto": -0.09827581696907271,
           "excesso_ew_com_ir": -0.11456897161714091,
           "giro": 0.47058823529411764,
-          "custo_pct": 0.0012974269126383607
+          "custo_pct": 0.0012974269126383605
         },
         {
           "safra": 2019,
@@ -638,8 +638,8 @@
           "excesso_ew": 0.030573896835098147,
           "excesso_ew_bruto": 0.03272124523008879,
           "excesso_ew_com_ir": -0.0050703031174959,
-          "giro": 0.5768143499592797,
-          "custo_pct": 0.0013646316163929495
+          "giro": 0.5768143499592796,
+          "custo_pct": 0.0013646316163929497
         },
         {
           "safra": 2021,
@@ -652,7 +652,7 @@
           "excesso_ew": 0.1006689225316994,
           "excesso_ew_bruto": 0.10255951281998527,
           "excesso_ew_com_ir": 0.05717498795910785,
-          "giro": 0.6679814269900934,
+          "giro": 0.6679814269900936,
           "custo_pct": 0.0016558911874739377
         },
         {
@@ -680,8 +680,8 @@
           "excesso_ew": -0.07360776356664767,
           "excesso_ew_bruto": -0.07245688733136668,
           "excesso_ew_com_ir": -0.07360776356664789,
-          "giro": 0.4150322576280644,
-          "custo_pct": 0.0009756711987641773
+          "giro": 0.41503225762806434,
+          "custo_pct": 0.0009756711987641775
         },
         {
           "safra": 2024,
@@ -694,8 +694,8 @@
           "excesso_ew": 0.012116564789423717,
           "excesso_ew_bruto": 0.013180704447842875,
           "excesso_ew_com_ir": -0.001688333465838493,
-          "giro": 0.4372007332292748,
-          "custo_pct": 0.0011353376619450757
+          "giro": 0.43720073322927483,
+          "custo_pct": 0.0011353376619450753
         },
         {
           "safra": 2025,
@@ -708,7 +708,7 @@
           "excesso_ew": 0.027260713729036934,
           "excesso_ew_bruto": 0.029165293842228268,
           "excesso_ew_com_ir": 0.027260713729036712,
-          "giro": 0.549844683799895,
+          "giro": 0.5498446837998953,
           "custo_pct": 0.0013899538403281978
         }
       ],
@@ -828,7 +828,7 @@
         "media_sem_melhor_safra": -0.019051513875246236
       },
       "giro_medio_anual": 0.3128911699736741,
-      "custo_medio_anual": 0.0007603535529974627,
+      "custo_medio_anual": 0.0007603535529974628,
       "leitura": "Excesso médio de +1.0 pp por safra sobre pesos iguais, intervalo 95% [-4.3; +5.9] pp, 9 safras, 3 negativa(s). O intervalo cruza o zero: a medição NÃO distingue esta carteira de dividir igualmente entre as empresas. Sem a melhor safra (2022), a média seria -0.6 pp.",
       "safras": [
         {
@@ -843,7 +843,7 @@
           "excesso_ew_bruto": 0.011398370841222472,
           "excesso_ew_com_ir": 0.00988999156225101,
           "giro": 0.9999999999999999,
-          "custo_pct": 0.0011923076923076922
+          "custo_pct": 0.001192307692307692
         },
         {
           "safra": 2018,
@@ -856,8 +856,8 @@
           "excesso_ew": -0.14291074783947905,
           "excesso_ew_bruto": -0.14245986170715744,
           "excesso_ew_com_ir": -0.14953469822379856,
-          "giro": 0.17229768756339348,
-          "custo_pct": 0.0004440650805331035
+          "giro": 0.17229768756339353,
+          "custo_pct": 0.00044406508053310346
         },
         {
           "safra": 2019,
@@ -899,7 +899,7 @@
           "excesso_ew_bruto": 0.06085183947153424,
           "excesso_ew_com_ir": 0.03313164282004515,
           "giro": 0.26299791706093256,
-          "custo_pct": 0.0007022428708770483
+          "custo_pct": 0.0007022428708770485
         },
         {
           "safra": 2022,
@@ -912,8 +912,8 @@
           "excesso_ew": 0.13991191218165425,
           "excesso_ew_bruto": 0.14024931160159596,
           "excesso_ew_com_ir": 0.13448791467366975,
-          "giro": 0.14399019073220595,
-          "custo_pct": 0.0003402910694655808
+          "giro": 0.1439901907322059,
+          "custo_pct": 0.00034029106946558086
         },
         {
           "safra": 2023,
@@ -927,7 +927,7 @@
           "excesso_ew_bruto": -0.07245688733136668,
           "excesso_ew_com_ir": -0.10967086157883799,
           "giro": 0.7826086956521733,
-          "custo_pct": 0.0018454138477937748
+          "custo_pct": 0.0018454138477937746
         },
         {
           "safra": 2024,
@@ -940,8 +940,8 @@
           "excesso_ew": -0.005582867791941254,
           "excesso_ew_bruto": -0.005121068318110558,
           "excesso_ew_com_ir": -0.014831980430624586,
-          "giro": 0.202553298420896,
-          "custo_pct": 0.0005025090565311625
+          "giro": 0.20255329842089598,
+          "custo_pct": 0.0005025090565311624
         },
         {
           "safra": 2025,
@@ -954,8 +954,8 @@
           "excesso_ew": 0.003427908425860271,
           "excesso_ew_bruto": 0.0038957907377301093,
           "excesso_ew_com_ir": -0.0006960612869401084,
-          "giro": 0.13633300623491923,
-          "custo_pct": 0.00034787370391330574
+          "giro": 0.13633300623491926,
+          "custo_pct": 0.0003478737039133058
         }
       ],
       "vs_carteira_padrao": {
@@ -1061,10 +1061,10 @@
         "media_sem_melhor_safra": -0.02147244789548444
       },
       "com_ir_vs_equal_weight": {
-        "media": -0.016847327786171935,
+        "media": -0.016847327786172057,
         "ic95": [
-          -0.05883442472289862,
-          0.026638170389699522
+          -0.05883442472289868,
+          0.02663817038969946
         ],
         "n_safras": 9,
         "safras_negativas": [
@@ -1076,9 +1076,9 @@
         ],
         "ic_cruza_zero": true,
         "melhor_safra": 2021,
-        "media_sem_melhor_safra": -0.03149029740020719
+        "media_sem_melhor_safra": -0.03149029740020727
       },
-      "giro_medio_anual": 0.41025308879783595,
+      "giro_medio_anual": 0.4102530887978359,
       "custo_medio_anual": 0.0010198212538291413,
       "leitura": "Excesso médio de -0.6 pp por safra sobre pesos iguais, intervalo 95% [-5.0; +4.1] pp, 9 safras, 5 negativa(s). O intervalo cruza o zero: a medição NÃO distingue esta carteira de dividir igualmente entre as empresas. Sem a melhor safra (2021), a média seria -2.3 pp.",
       "safras": [
@@ -1116,13 +1116,13 @@
           "n_carteira": 21,
           "liquido": -0.0999892589709398,
           "bruto": -0.09887945501933403,
-          "liquido_com_ir": -0.1101542281262956,
+          "liquido_com_ir": -0.11015422812629605,
           "equal_weight": -0.07373992027676458,
           "excesso_ew": -0.026249338694175214,
           "excesso_ew_bruto": -0.02513953474256944,
-          "excesso_ew_com_ir": -0.03641430784953102,
+          "excesso_ew_com_ir": -0.036414307849531466,
           "giro": 0.4568196258973167,
-          "custo_pct": 0.0012315821204915817
+          "custo_pct": 0.001231582120491582
         },
         {
           "safra": 2020,
@@ -1130,13 +1130,13 @@
           "n_carteira": 27,
           "liquido": 0.569174196129496,
           "bruto": 0.5706535179954895,
-          "liquido_com_ir": 0.5508674692118094,
+          "liquido_com_ir": 0.5508674692118092,
           "equal_weight": 0.5408524351647683,
           "excesso_ew": 0.028321760964727716,
           "excesso_ew_bruto": 0.029801082830721137,
-          "excesso_ew_com_ir": 0.010015034047041071,
+          "excesso_ew_com_ir": 0.01001503404704085,
           "giro": 0.43425146833818,
-          "custo_pct": 0.0009418511778975286
+          "custo_pct": 0.0009418511778975289
         },
         {
           "safra": 2021,
@@ -1144,13 +1144,13 @@
           "n_carteira": 39,
           "liquido": 0.16763912591317975,
           "bruto": 0.16889321507482907,
-          "liquido_com_ir": 0.13947273964237272,
+          "liquido_com_ir": 0.13947273964237228,
           "equal_weight": 0.03917631051626264,
           "excesso_ew": 0.12846281539691712,
           "excesso_ew_bruto": 0.12971690455856644,
-          "excesso_ew_com_ir": 0.10029642912611009,
+          "excesso_ew_com_ir": 0.10029642912610964,
           "giro": 0.4468871963624449,
-          "custo_pct": 0.0010728859963217042
+          "custo_pct": 0.0010728859963217037
         },
         {
           "safra": 2022,
@@ -1158,11 +1158,11 @@
           "n_carteira": 40,
           "liquido": -0.1100499039420687,
           "bruto": -0.10945942304645497,
-          "liquido_com_ir": -0.11489084097360402,
+          "liquido_com_ir": -0.11489084097360391,
           "equal_weight": -0.1487468884801675,
           "excesso_ew": 0.038696984538098805,
           "excesso_ew_bruto": 0.039287465433712546,
-          "excesso_ew_com_ir": 0.033856047506563486,
+          "excesso_ew_com_ir": 0.0338560475065636,
           "giro": 0.25902837777677745,
           "custo_pct": 0.0006630589452013434
         },
@@ -1177,7 +1177,7 @@
           "excesso_ew": -0.020637840879329072,
           "excesso_ew_bruto": -0.019780807811391382,
           "excesso_ew_com_ir": -0.020637840879329072,
-          "giro": 0.28940570284209133,
+          "giro": 0.2894057028420913,
           "custo_pct": 0.00069550262917697
         },
         {
@@ -1186,13 +1186,13 @@
           "n_carteira": 35,
           "liquido": -0.029298031235813538,
           "bruto": -0.028781474103748886,
-          "liquido_com_ir": -0.0377345236330785,
+          "liquido_com_ir": -0.03773452363307839,
           "equal_weight": -0.07589156652218879,
           "excesso_ew": 0.04659353528637525,
           "excesso_ew_bruto": 0.0471100924184399,
-          "excesso_ew_com_ir": 0.03815704288911029,
+          "excesso_ew_com_ir": 0.0381570428891104,
           "giro": 0.20648415596844114,
-          "custo_pct": 0.0005318649905157082
+          "custo_pct": 0.0005318649905157084
         },
         {
           "safra": 2025,
@@ -1200,12 +1200,12 @@
           "n_carteira": 29,
           "liquido": 0.2812307909365177,
           "bruto": 0.2821402440022366,
-          "liquido_com_ir": 0.2679881048852677,
+          "liquido_com_ir": 0.2679881048852675,
           "equal_weight": 0.3410817301465795,
           "excesso_ew": -0.05985093921006179,
           "excesso_ew_bruto": -0.058941486144342914,
-          "excesso_ew_com_ir": -0.0730936252613118,
-          "giro": 0.3141481831974357,
+          "excesso_ew_com_ir": -0.07309362526131202,
+          "giro": 0.31414818319743576,
           "custo_pct": 0.0007093241710282932
         }
       ],

@@ -3,7 +3,7 @@
   "versao_nota_fatores": "nota-fatores-1.0.0",
   "versao_metodologia": "2.33.0",
   "versao_presets": "b3-presets-1.0.0",
-  "medido_em": "2026-11-22T12:48:07",
+  "medido_em": "2026-11-23T12:44:16",
   "perfil": "Equilibrado (padrão)",
   "regra": {
     "piores": "os 30% piores do sinal nota + fatores do universo da safra (fica=False de carteira_nota_fatores)",
