@@ -1359,7 +1359,7 @@ Leitura com cautela:
   IR no lugar do líquido simples, e ver quanto ele se sobrepõe à rota de
   valor.
 
-## 24. O dividendo de 6% em outra janela: safras 2013 a 2016 (24/11/2026, desenho)
+## 24. O dividendo de 6% em outra janela: safras 2013 a 2016 (24/11/2026, medido: confirma)
 
 ### Que pergunta responde
 
@@ -1428,3 +1428,51 @@ python scripts/medir_estrategias_fundamentalistas_b3.py --cache-dir <pasta> --di
 ```
 
 Grava `data/oos_dividendo_outra_janela_b3.json`.
+
+### Resultado (24/11/2026): confirma
+
+`data/oos_dividendo_outra_janela_b3.json`. Excesso por safra sobre pesos
+iguais no universo da padrão, líquido do giro:
+
+| Safra | Universo | Na carteira | Carteira | Pesos iguais | Excesso |
+|---|---|---|---|---|---|
+| 2013 | 165 | 38 | −4,1% | −7,4% | +3,3 pp |
+| 2014 | 161 | 36 | −0,7% | −4,7% | +4,0 pp |
+| 2015 | 159 | 35 | −0,6% | −4,6% | +4,0 pp |
+| 2016 | 142 | 37 | +36,9% | +29,6% | +7,3 pp |
+
+- **(a)** média **+4,6 pp** ao ano, IC 95% **[+3,5; +6,5]**: acima de zero.
+- **(b)** sem a melhor safra (2016): **+3,8 pp**.
+- Nenhuma safra negativa. **Leitura: confirma.**
+
+O que torna o resultado mais forte do que o número sozinho: nas três safras de
+queda (2013 a 2015) a carteira perdeu menos que pesos iguais, e na de alta
+(2016) ganhou mais. Na §23 o padrão era misto: perdeu menos nas quedas de
+2022 e 2024, mas perdeu mais na de 2019.
+
+Informativos:
+
+- **Com IR:** igual ao líquido nas quatro safras. As perdas de 2013 a 2015
+  ficam como prejuízo a compensar e cobrem o ganho realizado em 2016.
+- **Bruto (sem custo de giro):** +4,8 pp. O giro custa ~0,1 pp ao ano.
+- **Janela inteira 2013–2025 (13 safras):** +4,9 pp, IC [+2,4; +7,3], sem a
+  melhor safra +4,3; com IR +3,7 pp, IC [+1,0; +6,0]. Negativas só 2018 e
+  2019. Com 13 safras o piso do IC com IR sai do zero, o que a §23 sozinha
+  não mostrava (−0,06).
+- **Conferência com a §23:** 2018 a 2025 batem até a 15ª casa decimal. 2017
+  difere 0,05 pp (+7,11 contra +7,07), como previsto: o giro de 2017 agora
+  parte da carteira de 2016, não do caixa.
+- **Conferência dos preços:** 470 colunas, 47.356 pontos em comum com a aba,
+  diferença máxima 0,0. Os preços sem corte começam em 2000-01-31.
+
+O que isto não diz:
+
+- Quatro safras ainda são poucas; o IC estreito vem de quatro números
+  parecidos, não de muitos.
+- Três das quatro safras foram de queda (recessão de 2014 a 2016). A
+  janela nova é um tipo de mercado só; não prova que a regra vai bem em
+  qualquer mercado.
+- Não compara com a rota de valor (+9,9 pp na §23), que não tem carteira
+  antes de 2017.
+
+Passar não muda a tela.
