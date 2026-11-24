@@ -1237,7 +1237,7 @@ carteiras de regra não explica a posição delas.
   as carteiras). Um percentil de 98–100% em nove safras não prova que a
   vantagem continua.
 
-## 23. Pequenas baratas e dividendo de 6% (24/11/2026, medido: o dividendo passa, as pequenas não)
+## 23. Pequenas baratas e dividendo de 6% (24/11/2026, medido e refeito com o leitor corrigido: nenhuma das duas passa)
 
 ### Que pergunta responde
 
@@ -1308,65 +1308,73 @@ Regras adicionais:
 - O armazém tem viés de sobrevivência parcial (§19): quem saiu da bolsa entra
   pela lista de saídas, mas nem toda saída tem preço até o fim.
 
-### Resultado (medido em 24/11/2026, armazém local, perfil Equilibrado, 9 safras)
+### Correção de 24/11/2026: a primeira rodada leu múltiplos velhos
 
-A regra acima foi aplicada sem mudança. A carteira padrão reproduziu a §22
-(+2,9 pp sobre pesos iguais), o que confirma a mesma base de dados. A rota de
-valor completa da §19 entra na tabela só como referência.
+A primeira versão deste resultado dizia "o dividendo passa" (+5,0 pp, IC
+[+1,4; +8,4]). Ela estava errada, e o erro não era da regra:
 
-| Carteira | Ações | (a) excesso | piso do IC 95% | (b) sem a melhor safra | (c) contra a padrão | Giro/ano | Veredito |
+- O histórico anual B3 (`core.market_read._annual_long`) lia, de
+  `market.calculated_metric_vintages`, o cálculo gravado **primeiro**
+  (`recorded_at ASC`). O reprocess de 12/11 regravou os múltiplos corrigidos
+  com a mesma data de publicação, e a leitura seguiu com os velhos. Exemplo:
+  WEGE3, DY de 2014 lido como 15,7%; o corrigido é 2,4%.
+- Com a regra antiga, 16.924 múltiplos anuais divergiam mais de 10% do valor
+  corrigido. Com a regra nova (primeira publicação, cálculo mais novo dela:
+  `ORDEM_DA_SAFRA_VIGENTE`), são 2.
+- A conferência dos preços pedida na revisão do #804 também falhou: a rodada
+  da aba guardada em 14/11 tinha 2.418 níveis de preço que já não batiam com
+  `market.historical_prices` (grupamentos retroajustados depois).
+
+A rodada foi refeita do zero, com o leitor corrigido e os preços de hoje. A
+conferência ponto a ponto agora dá diferença máxima 0,0 em 47.356 pontos. As
+§23, §24 e §25 abaixo são da rodada nova. **As §1 a §22 ainda usam a leitura
+antiga** e não foram refeitas.
+
+### Resultado (refeito em 24/11/2026, armazém local, perfil Equilibrado, 9 safras)
+
+A regra acima foi aplicada sem mudança. A carteira padrão rende +1,2 pp sobre
+pesos iguais nesta rodada (IC [−6,6; +9,4]); a §22, com a leitura antiga,
+dava +2,9 pp. A rota de valor completa da §19 entra na tabela só como
+referência.
+
+| Carteira | Ações | (a) excesso | IC 95% | (b) sem a melhor safra | (c) contra a padrão | Giro/ano | Veredito |
 |---|---|---|---|---|---|---|---|
-| Dividendo de 6% | 34–55 | +5,0 pp | +1,4 pp | +4,1 pp | +2,1 pp | 39% | **candidata** |
-| Pequenas baratas | 2–9 | +18,1 pp | −3,5 pp | +6,9 pp | +16,0 pp | 66% | fora (a) |
-| Rota de valor sem piso (informativa) | 22–61 | +9,7 pp | +3,9 pp | +6,9 pp | +7,6 pp | 48% | — |
-| Rota de valor completa (§19, referência) | ~39 | +9,9 pp | +3,6 pp | +6,3 pp | +7,0 pp | 48% | candidata |
-
-Tamanho dos universos: o piso de R$ 1 bi corta de 15 a 25 empresas por safra
-(de 2017 a 2025). Entre elas, só 2 a 9 são `oportunidade` para a rota de
-valor.
+| Dividendo de 6% | 15–39 | +2,1 pp | [−3,6; +7,3] | +0,5 pp | +0,9 pp | 50% | fora (a) |
+| Pequenas baratas | 0–9 | +6,9 pp | [−17,3; +29,5] | +1,2 pp | +6,5 pp | 53% | fora (a) |
+| Rota de valor sem piso (informativa) | 9–49 | +16,2 pp | [+3,1; +36,1] | +7,3 pp | +15,8 pp | 62% | — |
+| Rota de valor completa (§19, referência) | 9–44 | +16,3 pp | [+2,8; +38,5] | +5,8 pp | — | 63% | — |
 
 Leitura com cautela:
 
-- **O dividendo de 6% passa nos três testes.** Bateu pesos iguais em sete das
-  nove safras (perdeu em 2018 e 2019) e a média não depende de um ano só.
-  Pela regra pré-registrada, é candidata.
-- **Mas ganha pouco da carteira padrão.** A diferença pareada é +2,1 pp, com
-  IC 95% de −4,9 a +9,3 pp; sem a melhor safra (2017) fica em −0,6 pp. A
-  regra (c) só pede média > 0, e isso foi cumprido, mas não há certeza de
-  que o dividendo supere a padrão.
-- **Com o imposto de renda, o piso do IC do dividendo encosta no zero**
-  (−0,06 pp). O resultado depende do custo tributário de quem investe.
-- **O dividendo fica atrás da rota de valor.** Ganha uns 5 pp a menos por
-  ano sobre pesos iguais, com giro um pouco menor (39% contra 48%). Não é uma rota melhor; é uma
-  segunda rota que também passa.
-- **As pequenas baratas não passam em (a).** A média de +18,1 pp vem de uma
-  carteira de 2 a 9 ações, e uma safra (2020: +108 pp sobre pesos iguais)
-  carrega quase tudo. Sem ela a média cai para +6,9 pp. Em quatro das nove
-  safras perderam para pesos iguais. Com tão poucos nomes, a incerteza é
-  grande demais para separar regra de sorte.
-- **Tirar o piso não melhora a rota de valor.** A rota sem piso (+9,7 pp)
-  fica igual à rota completa da §19 (+9,9 pp). As pequenas acrescentam
-  poucos nomes e muita variação, não excesso.
+- **O dividendo de 6% não passa em (a).** O IC cruza o zero. Perdeu para
+  pesos iguais em 2018, 2020 e 2023. Sem a melhor safra (2022, quando
+  Petrobras pagou muito) a média cai para +0,5 pp. Com IR, +0,6 pp.
+- **O que mudou foi a carteira, não a regra.** Com os DY velhos e inflados
+  a carteira tinha 34 a 55 ações; com os corrigidos, 15 a 39. Saíram nomes
+  como WEGE3 e TOTS3, que não pagavam perto de 6%.
+- **As pequenas baratas também não passam.** Duas safras (2019 e 2020) não
+  tiveram nenhum nome e ficaram em caixa. As outras têm de 1 a 9 ações. A
+  incerteza continua grande demais para separar regra de sorte.
+- **A rota de valor ficou mais forte, mas mais concentrada.** +16,3 pp por
+  ano, IC acima de zero. Só que 2020 (+99,5 pp com 9 ações, a volta da
+  COVID com PRIO3 e ROMI3 subindo mais de 400%) pesa muito: sem 2020,
+  +5,8 pp. De 2017 a 2021 a rota teve só 9 a 17 ações. Ela não está sob regra nesta seção; o
+  número fica como referência para a §19 ser refeita.
+- **Tirar o piso não muda a rota** (+16,2 contra +16,3 pp).
 - Contra os pesos iguais **do universo com piso** (informativo), as pequenas
-  ficam em +18,9 pp com IC de −4,7 a +49,9 pp: a mesma conclusão.
-- **Dois braços:** a chance de um falso positivo entre os dois fica perto de
-  1 em 10. A candidatura do dividendo é para a próxima etapa, não uma prova.
-- Os limites acima continuam. O custo das pequenas na régua é o de pessoa
-  física, menor que o spread real delas; isso favorece as pequenas, e mesmo
-  assim elas não passam.
-- **Nada muda na tela nem na carteira padrão.** Próximo passo possível, se o
-  usuário quiser: medir o dividendo de 6% em outra janela de safras e com o
-  IR no lugar do líquido simples, e ver quanto ele se sobrepõe à rota de
-  valor.
+  ficam em +7,7 pp com IC de −13,8 a +29,1 pp: a mesma conclusão.
+- **Nada muda na tela nem na carteira padrão.**
 
-## 24. O dividendo de 6% em outra janela: safras 2013 a 2016 (24/11/2026, medido: confirma)
+## 24. O dividendo de 6% em outra janela: safras 2013 a 2016 (24/11/2026, medido: confirma, mas a janela principal não passa)
 
 ### Que pergunta responde
 
-A §23 mediu o dividendo de 6% (Bazin) em nove safras, de 2017 a 2025, e ele
-passou nos três testes com folga pequena. Nove safras não separam regra de
-sorte com segurança. A pergunta: **a mesma regra, sem mudar nada, também bate
-pesos iguais em safras que ninguém olhou?**
+A §23 mediu o dividendo de 6% (Bazin) em nove safras, de 2017 a 2025. Na
+primeira rodada ele passou nos três testes com folga pequena; refeita com o
+leitor corrigido, não passa (ver a correção na §23). Nove safras não separam
+regra de sorte com segurança. A pergunta, fixada quando ele ainda passava:
+**a mesma regra, sem mudar nada, também bate pesos iguais em safras que
+ninguém olhou?**
 
 ### Por que 2013 a 2016
 
@@ -1429,39 +1437,43 @@ python scripts/medir_estrategias_fundamentalistas_b3.py --cache-dir <pasta> --di
 
 Grava `data/oos_dividendo_outra_janela_b3.json`.
 
-### Resultado (24/11/2026): confirma
+### Resultado (refeito em 24/11/2026 com o leitor corrigido): confirma
 
 `data/oos_dividendo_outra_janela_b3.json`. Excesso por safra sobre pesos
 iguais no universo da padrão, líquido do giro:
 
 | Safra | Universo | Na carteira | Carteira | Pesos iguais | Excesso |
 |---|---|---|---|---|---|
-| 2013 | 165 | 38 | −4,1% | −7,4% | +3,3 pp |
-| 2014 | 161 | 36 | −0,7% | −4,7% | +4,0 pp |
-| 2015 | 159 | 35 | −0,6% | −4,6% | +4,0 pp |
-| 2016 | 142 | 37 | +36,9% | +29,6% | +7,3 pp |
+| 2013 | 165 | 13 | −1,0% | −7,4% | +6,4 pp |
+| 2014 | 161 | 11 | +5,5% | −4,7% | +10,2 pp |
+| 2015 | 159 | 12 | −1,9% | −4,6% | +2,7 pp |
+| 2016 | 142 | 15 | +30,0% | +29,6% | +0,4 pp |
 
-- **(a)** média **+4,6 pp** ao ano, IC 95% **[+3,5; +6,5]**: acima de zero.
-- **(b)** sem a melhor safra (2016): **+3,8 pp**.
+- **(a)** média **+4,9 pp** ao ano, IC 95% **[+1,6; +8,3]**: acima de zero.
+- **(b)** sem a melhor safra (2014): **+3,2 pp**.
 - Nenhuma safra negativa. **Leitura: confirma.**
 
-O que torna o resultado mais forte do que o número sozinho: nas três safras de
-queda (2013 a 2015) a carteira perdeu menos que pesos iguais, e na de alta
-(2016) ganhou mais. Na §23 o padrão era misto: perdeu menos nas quedas de
-2022 e 2024, mas perdeu mais na de 2019.
+**Mas a regra não fecha a história.** A §24 foi desenhada para conferir uma
+regra que passava na §23. Com o leitor corrigido ela não passa lá (+2,1 pp,
+IC cruzando o zero). E a janela inteira, 2013 a 2025, também não passa:
+
+- **Janela inteira 2013–2025 (13 safras):** +3,0 pp, IC [−1,2; +6,8], sem
+  a melhor safra +2,0; com IR +1,6 pp, IC [−2,5; +5,5]. Negativas: 2018,
+  2020 e 2023.
+
+Leitura honesta: o dividendo de 6% foi bem na recessão de 2013 a 2016 (perdeu
+menos que pesos iguais nas quedas de 2013 a 2015) e não se distinguiu de
+pesos iguais de 2017 em diante. Somando tudo, o resultado não separa regra de
+sorte.
 
 Informativos:
 
-- **Com IR:** igual ao líquido nas quatro safras. As perdas de 2013 a 2015
-  ficam como prejuízo a compensar e cobrem o ganho realizado em 2016.
-- **Bruto (sem custo de giro):** +4,8 pp. O giro custa ~0,1 pp ao ano.
-- **Janela inteira 2013–2025 (13 safras):** +4,9 pp, IC [+2,4; +7,3], sem a
-  melhor safra +4,3; com IR +3,7 pp, IC [+1,0; +6,0]. Negativas só 2018 e
-  2019. Com 13 safras o piso do IC com IR sai do zero, o que a §23 sozinha
-  não mostrava (−0,06).
+- **Com IR:** +4,8 pp, IC [+1,2; +8,3]. As perdas de 2013 e 2015 ficam
+  como prejuízo a compensar.
+- **Bruto (sem custo de giro):** +5,1 pp. O giro custa ~0,1 pp ao ano.
 - **Conferência com a §23:** 2018 a 2025 batem até a 15ª casa decimal. 2017
-  difere 0,05 pp (+7,11 contra +7,07), como previsto: o giro de 2017 agora
-  parte da carteira de 2016, não do caixa.
+  difere 0,009 pp, como previsto: o giro de 2017 agora parte da carteira de
+  2016, não do caixa.
 - **Conferência dos preços:** 470 colunas, 47.356 pontos em comum com a aba,
   diferença máxima 0,0. Os preços sem corte começam em 2000-01-31 e vêm de
   `market.historical_prices` (armazém local), lido do rótulo que o próprio
@@ -1475,8 +1487,8 @@ O que isto não diz:
 - Três das quatro safras foram de queda (recessão de 2014 a 2016). A
   janela nova é um tipo de mercado só; não prova que a regra vai bem em
   qualquer mercado.
-- Não compara com a rota de valor (+9,9 pp na §23), que não tem carteira
-  antes de 2017.
+- Não compara com a rota de valor (+16,3 pp na §23 refeita), que não tem
+  carteira antes de 2017.
 
 Passar não muda a tela.
 
@@ -1484,8 +1496,9 @@ Passar não muda a tela.
 
 ### Que pergunta responde
 
-Nas safras 2017 a 2025, a rota de valor (§19) rendeu +9,9 pp por ano sobre
-pesos iguais e o dividendo de 6% (§23) rendeu +5,0 pp. As duas regras olham
+Nas safras 2017 a 2025, com a leitura antiga, a rota de valor (§19) rendia
++9,9 pp por ano sobre pesos iguais e o dividendo de 6% (§23) +5,0 pp. Com o
+leitor corrigido: +16,3 e +2,1 pp (ver a correção na §23). As duas regras olham
 preço baixo e trava de solvência, então podem comprar as mesmas ações. Duas
 perguntas:
 
@@ -1547,66 +1560,67 @@ python scripts/medir_estrategias_fundamentalistas_b3.py --cache-dir <pasta> --so
 
 Grava `data/oos_sobreposicao_dividendo_rota_b3.json`.
 
-### Resultado (24/11/2026): não se distingue
+### Resultado (refeito em 24/11/2026 com o leitor corrigido): não se distingue
 
 Nove safras, 2017 a 2025 (abril/2017 a março/2026). A rota e o dividendo
-repetem os números da §23, então a rodada usa a mesma régua.
+repetem os números da §23 refeita, então a rodada usa a mesma régua. A
+primeira versão desta seção, com a leitura antiga, também deu "não se
+distingue" (−2,4 pp, IC [−6,6; +0,5]).
 
-**Quanto se repetem.** Em média, 55% dos nomes do dividendo já estão na rota
-(de 34% em 2018 a 71% em 2023). O índice de Jaccard médio é 0,42: menos da
-metade da união está nas duas.
+**Quanto se repetem.** Em média, 43% dos nomes do dividendo já estão na rota
+(de 13% em 2020 a 67% em 2023). O índice de Jaccard médio é 0,30.
 
 | Safra | Rota | Dividendo | Em comum | Fração do dividendo na rota |
 |---|---:|---:|---:|---:|
-| 2017 | 31 | 47 | 24 | 51% |
-| 2018 | 20 | 41 | 14 | 34% |
-| 2019 | 41 | 35 | 22 | 63% |
-| 2020 | 30 | 34 | 17 | 50% |
-| 2021 | 39 | 48 | 24 | 50% |
-| 2022 | 57 | 50 | 35 | 70% |
-| 2023 | 52 | 55 | 39 | 71% |
-| 2024 | 35 | 50 | 24 | 48% |
-| 2025 | 44 | 43 | 26 | 60% |
+| 2017 | 10 | 22 | 7 | 32% |
+| 2018 | 11 | 16 | 5 | 31% |
+| 2019 | 17 | 16 | 8 | 50% |
+| 2020 | 9 | 15 | 2 | 13% |
+| 2021 | 9 | 15 | 5 | 33% |
+| 2022 | 44 | 28 | 17 | 61% |
+| 2023 | 40 | 39 | 26 | 67% |
+| 2024 | 27 | 37 | 18 | 49% |
+| 2025 | 40 | 36 | 20 | 56% |
 
 **Excesso sobre pesos iguais, líquido do giro:**
 
 | Braço | Média | IC 95% | Sem a melhor safra | Giro anual |
 |---|---:|---|---:|---:|
-| rota de valor | +9,9 pp | [+3,6; +18,4] | +6,3 | 48% |
-| dividendo de 6% | +5,0 pp | [+1,4; +8,4] | +4,1 | 39% |
-| **rota + dividendo** | +7,5 pp | [+3,1; +12,1] | +5,8 | 38% |
-| dividendo fora da rota | +3,5 pp | [−1,2; +7,5] | +2,8 | 55% |
-| meio a meio (informativo) | +7,5 pp | [+2,9; +12,6] | +5,5 | — |
+| rota de valor | +16,3 pp | [+2,8; +38,5] | +5,8 | 63% |
+| dividendo de 6% | +2,1 pp | [−3,6; +7,3] | +0,5 | 50% |
+| **rota + dividendo** | +7,7 pp | [+3,8; +13,2] | +5,3 | 52% |
+| dividendo fora da rota | +2,3 pp | [−5,3; +8,3] | +0,9 | 58% |
+| meio a meio (informativo) | +9,2 pp | [+2,9; +18,6] | +5,0 | — |
 
-**Sob a regra — rota + dividendo menos a rota sozinha:** −2,4 pp por ano,
-IC 95% [−6,6; +0,5], sem a melhor safra −3,2. Sete das nove safras ficaram
-negativas (só 2019 e 2024 positivas). O IC encosta no zero, mas cruza:
-**não se distingue**.
+**Sob a regra — rota + dividendo menos a rota sozinha:** −8,5 pp por ano,
+IC 95% [−25,4; +1,4], sem a melhor safra −10,1. Cinco das nove safras
+ficaram negativas. O IC cruza o zero: **não se distingue**.
 
 Informativos, todos contra a rota sozinha:
 
 | Diferença | Média | IC 95% |
 |---|---:|---|
-| rota + dividendo, com IR | −2,3 pp | [−6,7; +0,9] |
-| dividendo fora da rota | −6,4 pp | [−18,0; +1,5] |
-| dividendo inteiro | −4,9 pp | [−12,3; +0,5] |
-| meio a meio | −2,4 pp | [−6,2; +0,3] |
+| rota + dividendo, com IR | −8,3 pp | [−25,5; +1,8] |
+| dividendo fora da rota | −13,9 pp | [−43,2; +4,0] |
+| dividendo inteiro | −14,1 pp | [−41,1; +2,9] |
+| meio a meio | −7,1 pp | [−20,6; +1,5] |
 
 ### Leitura
 
-- **Somar o dividendo à rota não rendeu mais.** O sinal é contra: a união
-  ficou atrás da rota em sete de nove safras, cerca de 2,4 pp por ano. Nove
-  safras não bastam para afirmar que tira, e a regra não diz que tira.
-- **O que o dividendo traz de novo é o que rende menos.** Os nomes do
-  dividendo que a rota não tem renderam +3,5 pp sobre pesos iguais, com IC
-  cruzando o zero, e 6,4 pp por ano abaixo da rota. Em 2020 ficaram 48 pp
-  atrás.
+- **Somar o dividendo à rota não rendeu mais.** A média é −8,5 pp, mas quase
+  tudo vem de 2020: a rota tinha 9 ações e subiu +99,5 pp sobre pesos
+  iguais; a união diluiu essa alta (−72,7 pp naquela safra). Nas outras oito
+  safras a diferença fica entre −9,6 e +3,9 pp. Nove safras não bastam para
+  afirmar que tira, e a regra não diz que tira.
+- **O que o dividendo traz de novo rende como pesos iguais.** Os nomes do
+  dividendo que a rota não tem renderam +2,3 pp sobre pesos iguais, com IC
+  cruzando o zero.
 - **O que a união tem a favor é depender menos de uma safra.** O IC da
-  união é mais estreito que o da rota ([+3,1; +12,1] contra [+3,6; +18,4]) e
-  o giro é menor (38% contra 48%). Isso é dispersão entre safras, não risco
-  medido mês a mês, e não foi critério da regra.
+  união é bem mais estreito que o da rota ([+3,8; +13,2] contra
+  [+2,8; +38,5]) e sem a melhor safra as duas ficam perto (+5,3 contra
+  +5,8). Isso é dispersão entre safras, não risco medido mês a mês, e não
+  foi critério da regra.
 - Para quem já segue a rota de valor, o dividendo de 6% não é um acréscimo
-  de retorno medido. Para quem quer só uma das duas, a §23 continua valendo:
-  o dividendo passa sozinho, a rota passa com folga maior.
+  de retorno medido. E sozinho ele não passa mais (§23 refeita).
 
 Nada muda na tela.
