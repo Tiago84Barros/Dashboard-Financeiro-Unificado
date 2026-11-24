@@ -55,3 +55,11 @@ def test_conta_do_mes_usa_a_serie_publicada(monkeypatch):
 def test_sql_le_so_realizado_e_saida():
     assert sql_realizado("t", "ac") in dados._SQL
     assert "t.amount < 0" in dados._SQL
+
+
+def test_sem_owner_a_leitura_levanta_em_vez_de_historico_vazio(monkeypatch):
+    monkeypatch.setattr(dados.settings, "MOCK_MODE", False)
+    monkeypatch.setattr(dados.settings, "OWNER_USER_ID", "")
+    import pytest
+    with pytest.raises(RuntimeError, match="OWNER_USER_ID"):
+        dados.carregar_lancamentos_ipca(2026, 10)

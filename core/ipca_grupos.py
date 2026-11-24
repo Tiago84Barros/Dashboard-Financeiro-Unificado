@@ -146,7 +146,7 @@ def ler_ipca_grupos_publicado(caminho: Path | None = None) -> SerieIpcaGrupos:
     alvo = Path(caminho) if caminho is not None else CAMINHO_IPCA_GRUPOS
     try:
         return desserializar_ipca_grupos(alvo.read_bytes())
-    except (OSError, ValueError, EOFError, KeyError, TypeError) as exc:
+    except (OSError, ValueError, EOFError, KeyError, TypeError, AttributeError) as exc:
         logger.info("ipca_grupos: arquivo %s ausente ou ilegível (%s)", alvo, exc)
         return SerieIpcaGrupos()
 

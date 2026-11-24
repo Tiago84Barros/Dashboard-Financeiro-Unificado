@@ -40,12 +40,15 @@ dessa família. Aqui a conta é a mesma, mas com **o seu** orçamento.
    - **sem grupo definido** — a categoria não tem grupo equivalente e usa o
      Índice geral do IPCA.
 3. **IPCA Pessoal do mês** = soma de peso × variação de cada categoria. Os 12
-   meses são encadeados, como o IBGE faz.
+   meses são encadeados, como o IBGE faz. Se uma categoria não tem variação de
+   preço num mês, o peso dela é redistribuído entre as que têm, só nesse mês.
 
 **Fica de fora:** receitas, transferências, investimentos, Financiamento e
 Impostos e Taxas. O pagamento da fatura do cartão só entra (como "Cartão (sem
 detalhe)") nos meses em que a fatura não foi importada; com a fatura importada,
-entram as compras dela, para o mesmo gasto não ser contado duas vezes.
+entram as compras dela, para o mesmo gasto não ser contado duas vezes. A regra
+vale por mês, não por cartão: com mais de um cartão, importar a fatura de um
+também tira, nesse mês, o pagamento da fatura do outro.
 
 **Ignorados:** quando o valor de um gasto repetido muda mais de 50% de um mês
 para o outro, o par sai da conta — parece troca de produto ou erro de

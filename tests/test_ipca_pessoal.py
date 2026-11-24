@@ -327,3 +327,41 @@ def test_linhas_de_contexto():
     assert ip.pct_br(res.oficial_12m) in texto
     assert "11/2025 a 10/2026" in texto
     assert "Alimentação" in texto and ip.ORIGEM_OFICIAL in texto
+
+
+# ── correções da revisão final ───────────────────────────────────────────────
+
+@pytest.mark.parametrize("nome", ["Cartão de Crédito", "Cartão"])
+def test_gemeos_do_pagamento_de_fatura_seguem_a_mesma_regra(nome):
+    setembro, outubro = somar_meses(FIM, -1), FIM
+    lancs = [
+        _gasto(setembro, 1000, nome, "Pagamento fatura"),
+        _gasto(outubro, 1200, nome, "Pagamento fatura"),
+        _gasto(outubro, 80, "Alimentação", "IFOOD", conta="credit_card", fonte="csv"),
+        # compra dentro do CSV do cartão, na mesma categoria: não é pagamento
+        _gasto(outubro, 30, nome, "Anuidade", conta="credit_card", fonte="csv"),
+    ]
+    saida = ip.filtrar_consumo(lancs)
+    assert [(l.data.month, l.categoria, l.valor) for l in saida] == [
+        (9, ip.CARTAO_SEM_DETALHE, 1000.0),
+        (10, "Alimentação", 80.0),
+        (10, nome, 30.0),
+    ]
+
+
+def test_mes_vazio_no_meio_da_janela_vira_aviso_nomeado():
+    meses = _meses()
+    vazio = meses[5]
+    lancs = [_gasto(m, 100, "Alimentação", _unico("feira", i))
+             for i, m in enumerate(meses) if m != vazio]
+    res = calcular_ipca_pessoal(lancs, _serie({ALIM: 1.0}), 2026, 10)
+    assert res.ok
+    aviso = next(a for a in res.avisos if a.startswith("Sem gastos registrados"))
+    assert f"{vazio:%m/%Y}" in aviso
+
+
+def test_historico_completo_nao_tem_aviso_de_mes_vazio():
+    lancs, serie = _cesta_duas_categorias()
+    res = calcular_ipca_pessoal(lancs, serie, 2026, 10)
+    assert res.ok
+    assert not any(a.startswith("Sem gastos registrados") for a in res.avisos)

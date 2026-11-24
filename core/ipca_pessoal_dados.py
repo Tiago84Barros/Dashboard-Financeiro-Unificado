@@ -46,11 +46,18 @@ _SQL = """
 
 @user_cache_data(ttl=300)
 def carregar_lancamentos_ipca(ano: int, mes: int) -> list[Lancamento] | None:
-    """Saídas realizadas dos 24 meses até ``ano/mes``; ``None`` se a leitura falha."""
+    """Saídas realizadas dos 24 meses até ``ano/mes``; ``None`` se a leitura falha.
+
+    Levanta ``RuntimeError`` sem ``OWNER_USER_ID`` (quem chama já trata).
+    """
     if settings.MOCK_MODE:
         return lancamentos_mock(ano, mes)
+    owner = settings.OWNER_USER_ID
+    if not owner:
+        # Como os demais loaders: sem dono não há "histórico vazio", há erro.
+        raise RuntimeError("OWNER_USER_ID não configurado.")
     pedido = date(ano, mes, 1)
-    params = {"uid": settings.OWNER_USER_ID,
+    params = {"uid": owner,
               "inicio": somar_meses(pedido, 1 - MESES_LIDOS),
               "fim": somar_meses(pedido, 1)}
     try:

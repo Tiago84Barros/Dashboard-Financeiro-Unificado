@@ -42,7 +42,12 @@ ATRASO_MAXIMO_DIAS = 60
 # Normalizadas (core.categorias.normalizar). Financiamento é dívida, não
 # consumo; imposto e taxa o IPCA também não mede.
 CATEGORIAS_FORA = frozenset({"financiamento", "impostos e taxas"})
-CATEGORIAS_PAGAMENTO_CARTAO = frozenset({"pagamento de cartao", "pagamento de fatura"})
+# Pagamento de fatura: as quatro categorias em que o importador de extratos
+# (core/bank_statement_import.py, lista de candidatas ~l.1123) arquiva o
+# pagamento, normalizadas. Só vale fora da conta do cartão (ver filtrar_consumo),
+# então compras dentro de um CSV de cartão nessas categorias seguem como consumo.
+CATEGORIAS_PAGAMENTO_CARTAO = frozenset({
+    "pagamento de cartao", "pagamento de fatura", "cartao de credito", "cartao"})
 CARTAO_SEM_DETALHE = "Cartão (sem detalhe)"
 SEM_CATEGORIA = "Sem categoria"
 SEM_GRUPO_DEFINIDO = "Sem grupo definido"
@@ -162,6 +167,10 @@ def filtrar_consumo(lancamentos: list[Lancamento]) -> list[Lancamento]:
     ``CARTAO_SEM_DETALHE`` só no mês em que a fatura não foi importada em CSV;
     no mês com CSV, as compras do cartão já estão lá, e contar o pagamento
     seria contar o mesmo gasto duas vezes.
+
+    Premissa: um cartão só. A regra é por mês, não por cartão: com mais de um
+    cartão, importar a fatura de um também descarta, nesse mês, o pagamento da
+    fatura do outro (o gasto dele some). Está dito na explicação da tela.
     """
     meses_com_fatura_csv = {
         _mes(l.data) for l in lancamentos
@@ -267,6 +276,15 @@ def calcular_ipca_pessoal(lancamentos: list[Lancamento], serie: SerieIpcaGrupos,
             f"{fim:%m/%Y}); há {ha} meses e falta{'m' if falta > 1 else ''} {falta}.",
             avisos)
     consumo = [l for l in consumo_ate_fim if _mes(l.data) >= base]
+    com_gasto = {_mes(l.data) for l in consumo}
+    vazios = [m for m in (base, *janela) if m not in com_gasto]
+    if vazios:
+        avisos.append(
+            f"Sem gastos registrados em {' e '.join(f'{m:%m/%Y}' for m in vazios)}"
+            if len(vazios) <= 2 else
+            f"Sem gastos registrados em {', '.join(f'{m:%m/%Y}' for m in vazios)}"
+        )
+        avisos[-1] += ": o peso e a variação usam só os outros meses (lançamentos ausentes?)."
 
     gasto: dict[str, float] = defaultdict(float)
     for l in consumo:

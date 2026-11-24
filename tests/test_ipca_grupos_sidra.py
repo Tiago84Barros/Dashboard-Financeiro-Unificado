@@ -167,3 +167,10 @@ def test_publicador_dry_run_nao_grava(tmp_path, capsys):
     assert codigo == 0
     assert not saida.exists()
     assert json.loads(capsys.readouterr().out)["gravado"] is False
+
+
+def test_json_que_nao_e_objeto_vira_serie_vazia(tmp_path):
+    import gzip
+    alvo = tmp_path / "lista.json.gz"
+    alvo.write_bytes(gzip.compress(json.dumps([1, 2, 3]).encode()))
+    assert ig.ler_ipca_grupos_publicado(alvo).meses() == []
