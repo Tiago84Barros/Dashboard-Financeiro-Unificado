@@ -260,6 +260,7 @@ def main() -> int:
     from core.b3_methodology import SCORE_VERSION
     from core.b3_portfolio_presets import VERSION as PRESETS_VERSION
     from core.b3_vigencia import janela_de_vigencia
+    from scripts.medir_estrategias_fundamentalistas_b3 import fonte_dos_precos_da_aba
     from scripts.medir_vantagem_oos import _fonte_efetiva_b3
 
     # Régua oficial da carteira concentrada: controle e início da cadeia.
@@ -335,7 +336,7 @@ def main() -> int:
             "benchmarks": "brutos (pesos iguais não paga custo): viés contra a carteira",
         },
         "fonte": {
-            "precos": "os da aba (mensal ajustado do armazém local)",
+            **fonte_dos_precos_da_aba(precos),
             "fundamentos": f"aba de Criação de Portfólio B3 sobre {_fonte_efetiva_b3()}",
         },
         "fora_da_regra": [
