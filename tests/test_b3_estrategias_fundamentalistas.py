@@ -210,6 +210,34 @@ def test_medir_escolha_vazia_vira_caixa_e_mesma_regua(monkeypatch):
     assert len(chamadas["itens"]) == 2
 
 
+def test_medir_escolha_aceita_outra_cadeia_e_leva_os_extras(monkeypatch):
+    """§26: ``simular`` troca a cadeia; giro de venda e pesos seguem na tabela."""
+    import core.b3_oos_carteira as oos
+    import scripts.medir_nota_fatores_b3 as nf_script
+
+    monkeypatch.setattr("core.b3_safras.retorno_da_safra",
+                        lambda *a, **k: {"mensuravel": True, "retorno_selic": 0.10,
+                                         "retorno_equal_weight": 0.08})
+    monkeypatch.setattr(oos, "retornos_por_ticker", lambda *a, **k: {})
+    monkeypatch.setattr(oos, "simular_custos",
+                        lambda *a: pytest.fail("a cadeia padrão não pode rodar"))
+
+    def outra(itens, cost_cfg):
+        return [{"medida": True, "liquido": 0.10, "bruto": 0.10,
+                 "liquido_com_ir": 0.09, "giro": 0.0, "custo_pct": 0.0,
+                 "giro_venda": 0.25, "peso_maior": 0.6, "peso_menor": 0.4}
+                for _ in itens]
+
+    por_safra = [{"safra": a, "universo": ["A3", "B3"], "saidas": {}}
+                 for a in (2017, 2018, 2019)]
+    out = nf_script.medir_escolha(
+        por_safra, lambda p: ["A3", "B3"], precos=None, selic_macro={}, taxa=0.1,
+        selic_mensal={}, cost_cfg=None, comeca_em=2017, simular=outra)
+    assert out["safras"][1]["giro_venda"] == 0.25
+    assert out["safras"][1]["peso_maior"] == 0.6
+    assert out["giro_venda_medio_anual"] == pytest.approx(0.25)
+
+
 def test_selic_ate_e_point_in_time():
     from scripts.medir_estrategias_fundamentalistas_b3 import selic_ate
 
