@@ -24,8 +24,12 @@ def test_rodada_sem_piso_tem_pickle_proprio(tmp_path):
 
 
 def test_rodada_sem_piso_so_troca_o_valor_de_mercado():
-    from core.b3_portfolio_presets import PERSONALIZADO, PRESETS, RECOMENDADO, \
-        identificar_perfil
+    from core.b3_portfolio_presets import (
+        PERSONALIZADO,
+        PRESETS,
+        RECOMENDADO,
+        identificar_perfil,
+    )
     base = dict(PRESETS[RECOMENDADO].valores)
     valores = {**base, **me.VALORES_SEM_PISO}
     trocadas = {k for k in valores if valores[k] != base.get(k)}
