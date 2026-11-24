@@ -456,7 +456,7 @@ def _market_cap(tk: str) -> float | None:
             SELECT (metric_value)::numeric AS v
             FROM market.calculated_metric_vintages
             WHERE ticker = :t AND metric_name = 'marketCap' AND metric_value IS NOT NULL
-            ORDER BY year DESC, available_at DESC LIMIT 1
+            ORDER BY year DESC, available_at DESC, recorded_at DESC LIMIT 1
             """,
             t=tk,
         )
