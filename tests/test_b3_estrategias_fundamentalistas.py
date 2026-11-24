@@ -408,7 +408,6 @@ def test_dividendo_bazin_no_limite_de_6_entra():
 
 
 def test_regra_da_secao_23_registrada():
-    assert fe.VERSAO == "fundamentalistas-1.4.0"
     texto = fe.REGRA_DE_DECISAO_PEQUENAS_DIVIDENDO
     assert "(a)" in texto and "(b)" in texto and "(c)" in texto
     assert fe.DY_ALVO_BAZIN == 0.06 and fe.ANOS_DY_BAZIN == 3
@@ -458,3 +457,55 @@ def test_regra_da_secao_24_registrada():
     texto = fe.REGRA_DE_DECISAO_DIVIDENDO_OUTRA_JANELA
     assert "2013" in texto and "2016" in texto and "(c)" in texto
     assert (fe.PRIMEIRA_SAFRA_OUTRA_JANELA, fe.ULTIMA_SAFRA_OUTRA_JANELA) == (2013, 2016)
+
+
+# ── §25: o dividendo de 6% sobre a rota de valor ────────────────────────────
+def test_regra_da_secao_25_registrada():
+    assert fe.VERSAO == "fundamentalistas-1.5.0"
+    texto = fe.REGRA_DE_DECISAO_SOBREPOSICAO_ROTA
+    assert "(a)" in texto and "(b)" in texto and "LÍQUIDA" in texto
+
+
+def test_sobreposicao_conta_comuns_e_fracoes():
+    s = fe.sobreposicao(["A3", "B3", "C3", "D3"], ["c3", "D3", "E3"])
+    assert (s["n_rota"], s["n_dividendo"], s["n_comum"], s["n_uniao"]) == (4, 3, 2, 5)
+    assert s["fracao_do_dividendo_na_rota"] == 2 / 3
+    assert s["fracao_da_rota_no_dividendo"] == 0.5
+    assert s["jaccard"] == 2 / 5
+    assert s["comuns"] == ["C3", "D3"]
+
+
+def test_sobreposicao_com_carteira_vazia_nao_divide_por_zero():
+    s = fe.sobreposicao([], [])
+    assert s["n_comum"] == 0
+    assert s["fracao_do_dividendo_na_rota"] is None and s["jaccard"] is None
+    assert fe.sobreposicao(["A3"], [])["fracao_do_dividendo_na_rota"] is None
+
+
+def test_uniao_e_fora_da_rota():
+    assert fe.carteira_uniao(["B3", "A3"], ["a3", "C3"]) == ["A3", "B3", "C3"]
+    assert fe.carteira_fora_de(["A3", "C3", "D3"], ["c3", "B3"]) == ["A3", "D3"]
+    assert fe.carteira_fora_de(["A3"], ["A3"]) == []
+
+
+def _par(media, lo, hi, sem_melhor, n=9):
+    return {"media": media, "ic95": [lo, hi], "n_safras": n,
+            "media_sem_melhor_safra": sem_melhor}
+
+
+def test_sobreposicao_acrescenta_so_com_ic_acima_de_zero_e_sem_melhor_positiva():
+    assert fe.leitura_sobreposicao(_par(0.02, 0.005, 0.04, 0.01))["leitura"] == fe.ACRESCENTA
+    # IC acima de zero, mas puxado por uma safra só: não se distingue.
+    assert (fe.leitura_sobreposicao(_par(0.02, 0.001, 0.04, -0.001))["leitura"]
+            == fe.NAO_SE_DISTINGUE)
+
+
+def test_sobreposicao_tira_so_com_ic_abaixo_de_zero():
+    assert fe.leitura_sobreposicao(_par(-0.03, -0.05, -0.01, -0.02))["leitura"] == fe.TIRA
+    assert (fe.leitura_sobreposicao(_par(-0.03, -0.06, 0.01, -0.02))["leitura"]
+            == fe.NAO_SE_DISTINGUE)
+
+
+def test_sobreposicao_inconclusiva_com_pouca_amostra_ou_sem_resumo():
+    assert fe.leitura_sobreposicao(_par(0.05, 0.01, 0.09, 0.03, n=2))["leitura"] == fe.INCONCLUSIVA
+    assert fe.leitura_sobreposicao(None)["leitura"] == fe.INCONCLUSIVA

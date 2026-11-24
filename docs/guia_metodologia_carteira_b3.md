@@ -1479,3 +1479,70 @@ O que isto não diz:
   antes de 2017.
 
 Passar não muda a tela.
+
+## 25. O dividendo de 6% sobre a rota de valor (24/11/2026, desenho)
+
+### Que pergunta responde
+
+Nas safras 2017 a 2025, a rota de valor (§19) rendeu +9,9 pp por ano sobre
+pesos iguais e o dividendo de 6% (§23) rendeu +5,0 pp. As duas regras olham
+preço baixo e trava de solvência, então podem comprar as mesmas ações. Duas
+perguntas:
+
+1. **Quanto as duas carteiras se repetem?** Por safra: quantos nomes do
+   dividendo a rota já compra.
+2. **Somar o dividendo à rota rende mais que a rota sozinha?**
+
+### O que se mede
+
+Nenhuma regra muda. Os braços saem das duas carteiras já medidas, na mesma
+rodada, mesmo universo (o da carteira padrão), mesma régua (`medir_escolha`),
+mesmos custos e mesmos preços da §23:
+
+| Braço | Nomes | Papel |
+|---|---|---|
+| `rota_mais_dividendo` | a união dos nomes das duas carteiras, pesos iguais | **sob a regra** |
+| `dividendo_fora_da_rota` | os nomes do dividendo que a rota não tem | informativo |
+| meio a meio | média dos retornos líquidos das duas carteiras | informativo |
+
+A sobreposição de cada safra sai de `sobreposicao`: tamanho de cada carteira,
+nomes em comum, a fração do dividendo que a rota já tem e o índice de Jaccard
+(comuns sobre a união).
+
+### Regra de decisão (registrada antes de medir)
+
+`REGRA_DE_DECISAO_SOBREPOSICAO_ROTA`, versão `fundamentalistas-1.5.0`.
+Métrica: diferença pareada, safra a safra, **líquida do giro**, entre
+`rota_mais_dividendo` e a rota de valor sozinha. Leituras, aplicadas por
+`leitura_sobreposicao`:
+
+| Leitura | Quando |
+|---|---|
+| **acrescenta** | (a) média > 0 com IC 95% acima de zero **e** (b) média sem a melhor safra > 0 |
+| **tira** | média < 0 com IC 95% abaixo de zero |
+| **não se distingue** | os outros casos |
+| **inconclusiva** | menos de três safras medidas |
+
+Um braço só sob a regra: o "fora da rota" e o meio a meio respondem a
+perguntas vizinhas e ficam como informativos. A diferença com IR também é
+informativa.
+
+Passar não muda a tela.
+
+### Limites declarados antes
+
+- Nove safras: diferenças pequenas entre duas carteiras parecidas não se
+  separam do ruído.
+- A união dá peso maior a quem está nas duas regras? Não: pesos iguais entre
+  os nomes da união, cada nome uma vez.
+- O meio a meio é aproximado: a média dos retornos líquidos supõe que cada
+  metade volta a 50% em abril sem custo extra.
+- Safra em que o "fora da rota" não tem nenhum nome vira caixa à Selic.
+
+### Como rodar
+
+```bash
+python scripts/medir_estrategias_fundamentalistas_b3.py --cache-dir <pasta> --sobreposicao-rota
+```
+
+Grava `data/oos_sobreposicao_dividendo_rota_b3.json`.

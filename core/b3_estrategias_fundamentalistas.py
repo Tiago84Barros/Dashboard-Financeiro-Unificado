@@ -73,7 +73,7 @@ import pandas as pd
 
 from core.b3_value_route import OPORTUNIDADE, rank_value_opportunities
 
-VERSAO = "fundamentalistas-1.4.0"
+VERSAO = "fundamentalistas-1.5.0"
 
 ROTA_VALOR = "rota_valor"
 FORMULA_MAGICA = "formula_magica"
@@ -558,3 +558,88 @@ def carteira_dividendo_bazin(df_pit: pd.DataFrame | None, universo: Iterable[str
         if media is not None and media >= float(alvo):
             fica.append(tk)
     return fica
+
+
+# ── 7c. O dividendo de 6% sobre a rota de valor (24/11/2026, §25) ───────────
+#: Braços da §25. A união e o "fora da rota" saem das duas carteiras já
+#: medidas (§19 e §23), sem critério novo.
+ROTA_MAIS_DIVIDENDO = "rota_mais_dividendo"
+DIVIDENDO_FORA_DA_ROTA = "dividendo_fora_da_rota"
+
+#: Leituras possíveis da §25, fixadas antes de medir.
+ACRESCENTA = "acrescenta"
+NAO_SE_DISTINGUE = "nao_se_distingue"
+TIRA = "tira"
+
+#: Regra de decisão da §25, registrada antes de medir (24/11/2026).
+REGRA_DE_DECISAO_SOBREPOSICAO_ROTA = (
+    "pergunta: o dividendo de 6% acrescenta retorno à rota de valor? As duas "
+    "regras ficam como estão (§19 e §23). Métrica: diferença pareada, safra a "
+    "safra, LÍQUIDA do giro, entre 'rota + dividendo' (a união dos nomes das "
+    "duas carteiras, pesos iguais) e a rota de valor sozinha, nas safras em "
+    "que as duas mediram (2017 a 2025). Leituras: 'acrescenta' se (a) a média "
+    "> 0 com IC 95% acima de zero e (b) a média sem a melhor safra > 0; 'tira' "
+    "se a média < 0 com IC 95% abaixo de zero; 'não se distingue' nos outros "
+    "casos; 'inconclusiva' com menos de três safras. Só informativos: a "
+    "sobreposição por safra (quantos nomes do dividendo a rota já tem), o "
+    "'dividendo fora da rota' contra pesos iguais e contra a rota, o meio a "
+    "meio (média dos retornos líquidos das duas carteiras) contra a rota e a "
+    "diferença com IR. Passar não muda a tela.")
+
+
+def sobreposicao(rota: Iterable[str], dividendo: Iterable[str]) -> dict:
+    """Quantos nomes as duas carteiras da mesma safra têm em comum.
+
+    ``fracao_do_dividendo_na_rota`` é a parte do dividendo que a rota já
+    compra; ``jaccard`` é comum / união. Carteira vazia dá fração ``None``.
+    """
+    r = {str(t).upper() for t in rota}
+    d = {str(t).upper() for t in dividendo}
+    comum, uniao_ = r & d, r | d
+    return {
+        "n_rota": len(r), "n_dividendo": len(d), "n_comum": len(comum),
+        "n_uniao": len(uniao_),
+        "fracao_do_dividendo_na_rota": (len(comum) / len(d)) if d else None,
+        "fracao_da_rota_no_dividendo": (len(comum) / len(r)) if r else None,
+        "jaccard": (len(comum) / len(uniao_)) if uniao_ else None,
+        "comuns": sorted(comum),
+    }
+
+
+def carteira_uniao(*carteiras: Iterable[str]) -> list[str]:
+    """Os nomes de todas as carteiras, uma vez cada (pesos iguais depois)."""
+    return sorted({str(t).upper() for c in carteiras for t in c})
+
+
+def carteira_fora_de(carteira: Iterable[str], excluir: Iterable[str]) -> list[str]:
+    """Os nomes de ``carteira`` que ``excluir`` não tem."""
+    fora = {str(t).upper() for t in excluir}
+    return sorted({str(t).upper() for t in carteira} - fora)
+
+
+def leitura_sobreposicao(resumo: Mapping | None) -> dict:
+    """Os testes e a leitura da §25 sobre o resumo pareado (`oos.resumir`).
+
+    ``resumo`` é o da diferença "rota + dividendo" menos rota, líquida.
+    """
+    r = dict(resumo or {})
+    media = r.get("media")
+    lo, hi = (list(r.get("ic95") or [None, None]) + [None, None])[:2]
+    sem_melhor = r.get("media_sem_melhor_safra")
+    n = int(r.get("n_safras") or 0)
+    testes = {
+        "a_media_ic_acima_de_zero": bool(
+            media is not None and media > 0 and lo is not None and lo > 0),
+        "b_sem_melhor_safra_positiva": bool(sem_melhor is not None and sem_melhor > 0),
+        "media_ic_abaixo_de_zero": bool(
+            media is not None and media < 0 and hi is not None and hi < 0),
+    }
+    if n < 3 or media is None:
+        leitura = INCONCLUSIVA
+    elif testes["a_media_ic_acima_de_zero"] and testes["b_sem_melhor_safra_positiva"]:
+        leitura = ACRESCENTA
+    elif testes["media_ic_abaixo_de_zero"]:
+        leitura = TIRA
+    else:
+        leitura = NAO_SE_DISTINGUE
+    return {"testes": testes, "leitura": leitura, "n_safras": n}
