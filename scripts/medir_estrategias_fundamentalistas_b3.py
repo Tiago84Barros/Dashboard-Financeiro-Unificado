@@ -360,7 +360,7 @@ def medir_pequenas_dividendo(rc: dict, cache_dir: Path | None, *,
             "benchmarks": "brutos (pesos iguais não paga custo): viés contra a carteira",
         },
         "fonte": {
-            "precos": "os da aba (mensal ajustado do armazém local)",
+            **fonte_dos_precos_da_aba(rc["precos"]),
             "fundamentos": f"aba de Criação de Portfólio B3 sobre {_fonte_efetiva_b3()}",
         },
         "limites": [
@@ -465,6 +465,52 @@ def precos_sem_corte(precos_da_aba):
         if ambos.to_numpy().any() else None,
     }
     return pd.DataFrame(longo), conferencia
+
+
+TOLERANCIA_CONFERENCIA = 1e-9
+
+
+def exigir_precos_conferidos(conferencia: dict) -> dict:
+    """Para a medição se os preços da aba não são, ponto a ponto, os do armazém.
+
+    Recebe a ``conferencia`` de `precos_sem_corte` (que já exige que a releitura
+    venha de ``market.historical_prices``). Exige pontos comparados, nenhum
+    ponto da aba sem par na releitura e diferença relativa máxima dentro da
+    tolerância. Devolve a própria conferência para ir ao JSON.
+    """
+    dif = conferencia.get("maior_diferenca_relativa")
+    problemas = []
+    if conferencia.get("fonte_precos") != FONTE_DO_ARMAZEM:
+        problemas.append(f"releitura de {conferencia.get('fonte_precos')}")
+    if not conferencia.get("pontos_comparados"):
+        problemas.append("nenhum ponto comparado")
+    if conferencia.get("pontos_que_a_aba_tem_e_o_longo_nao"):
+        problemas.append(f"{conferencia['pontos_que_a_aba_tem_e_o_longo_nao']} "
+                         "pontos da aba sem par no armazém")
+    if dif is None or dif > TOLERANCIA_CONFERENCIA:
+        problemas.append(f"maior diferença relativa {dif}")
+    if problemas:
+        raise RuntimeError(
+            f"os preços da aba não conferem com {FONTE_DO_ARMAZEM} "
+            f"({'; '.join(problemas)}): a medição não publica rótulo de fonte sem prova")
+    return conferencia
+
+
+def fonte_dos_precos_da_aba(precos_da_aba) -> dict:
+    """O bloco de preços da ``fonte``, provado em vez de declarado (§25, #804).
+
+    A rodada da aba guardada em pickle perde ``attrs``: o rótulo que o
+    carregador põe quando cai no yfinance não chega aqui. Por isso relê as
+    mesmas colunas do armazém (`precos_sem_corte`) e exige que o trecho comum
+    seja idêntico (`exigir_precos_conferidos`). Vale para toda medição que
+    usa os preços da aba: §23, §25, rota enxuta e nota + fatores.
+    """
+    _longo, conferencia = precos_sem_corte(precos_da_aba)
+    return {
+        "precos": (f"mensal ajustado de {FONTE_DO_ARMAZEM}: os da aba, conferidos "
+                   "ponto a ponto contra uma releitura do armazém"),
+        "conferencia_dos_precos": exigir_precos_conferidos(conferencia),
+    }
 
 
 def medir_dividendo_outra_janela(rc: dict, *, dry_run: bool = False) -> int:
@@ -710,7 +756,7 @@ def medir_sobreposicao_rota(rc: dict, *, dry_run: bool = False) -> int:
             "benchmarks": "brutos (pesos iguais não paga custo): viés contra a carteira",
         },
         "fonte": {
-            "precos": "os da aba (mensal ajustado do armazém local)",
+            **fonte_dos_precos_da_aba(rc["precos"]),
             "fundamentos": f"aba de Criação de Portfólio B3 sobre {_fonte_efetiva_b3()}",
         },
         "limites": [
@@ -841,7 +887,7 @@ def main() -> int:
             "benchmarks": "brutos (pesos iguais não paga custo): viés contra a carteira",
         },
         "fonte": {
-            "precos": "os da aba (mensal ajustado do armazém local)",
+            **fonte_dos_precos_da_aba(rc["precos"]),
             "fundamentos": f"aba de Criação de Portfólio B3 sobre {_fonte_efetiva_b3()}",
         },
         "limites": [

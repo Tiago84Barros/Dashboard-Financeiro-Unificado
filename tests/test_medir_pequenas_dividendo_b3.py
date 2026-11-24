@@ -78,3 +78,43 @@ def test_meio_a_meio_e_a_media_so_nas_safras_em_comum():
     assert [t["safra"] for t in out] == [2020, 2021]
     assert abs(out[0]["dif"] - 0.06) < 1e-12
     assert abs(out[1]["dif"] - 0.01) < 1e-12
+
+
+def _conferencia(**muda):
+    base = {"fonte_precos": me.FONTE_DO_ARMAZEM, "fonte_precos_erro": None,
+            "pontos_comparados": 100, "pontos_que_a_aba_tem_e_o_longo_nao": 0,
+            "maior_diferenca_relativa": 0.0}
+    return {**base, **muda}
+
+
+def test_precos_conferidos_passam_e_vao_ao_json():
+    conf = _conferencia()
+    assert me.exigir_precos_conferidos(conf) is conf
+
+
+def test_precos_que_divergem_do_armazem_param_a_medicao():
+    # Achado do Codex no #804: o pickle perde attrs; só a releitura prova a fonte.
+    import pytest
+
+    for muda, motivo in (({"maior_diferenca_relativa": 0.02}, "diferença"),
+                         ({"maior_diferenca_relativa": None}, "diferença"),
+                         ({"pontos_comparados": 0}, "nenhum ponto"),
+                         ({"pontos_que_a_aba_tem_e_o_longo_nao": 3}, "sem par"),
+                         ({"fonte_precos": "yfinance"}, "releitura de yfinance")):
+        with pytest.raises(RuntimeError, match=motivo):
+            me.exigir_precos_conferidos(_conferencia(**muda))
+
+
+def test_fonte_dos_precos_da_aba_usa_a_releitura(monkeypatch):
+    import pytest
+
+    df = _df_com_fonte()
+    monkeypatch.setattr(me, "precos_sem_corte", lambda _df: (_df, _conferencia()))
+    out = me.fonte_dos_precos_da_aba(df)
+    assert out["conferencia_dos_precos"]["pontos_comparados"] == 100
+    assert me.FONTE_DO_ARMAZEM in out["precos"]
+
+    monkeypatch.setattr(me, "precos_sem_corte",
+                        lambda _df: (_df, _conferencia(maior_diferenca_relativa=0.5)))
+    with pytest.raises(RuntimeError, match="não conferem"):
+        me.fonte_dos_precos_da_aba(df)
