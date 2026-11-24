@@ -388,6 +388,28 @@ def medir_pequenas_dividendo(rc: dict, cache_dir: Path | None, *,
     return 0
 
 
+FONTE_DO_ARMAZEM = "market.historical_prices"
+
+
+def procedencia_dos_precos(df) -> dict:
+    """De onde vieram os preços, lido do próprio carregador (§24).
+
+    ``_batch_yf_precos_mensais`` cai no yfinance quando o armazém falha e
+    rotula a troca em ``attrs["fonte_precos"]``/``attrs["fonte_precos_erro"]``.
+    A §24 só vale sobre o armazém: o yfinance com ``period="max"`` é outra
+    fita, com outro ajuste. Fonte diferente ou ausente para a medição, em vez
+    de publicar uma confirmação com o rótulo errado.
+    """
+    attrs = getattr(df, "attrs", {}) or {}
+    fonte, erro = attrs.get("fonte_precos"), attrs.get("fonte_precos_erro")
+    if fonte != FONTE_DO_ARMAZEM:
+        raise RuntimeError(
+            f"preços sem corte vieram de {fonte or 'fonte não rotulada'}"
+            f"{f' ({erro})' if erro else ''}, não de {FONTE_DO_ARMAZEM}: "
+            "a §24 só mede sobre o armazém local")
+    return {"fonte_precos": fonte, "fonte_precos_erro": erro}
+
+
 def precos_sem_corte(precos_da_aba):
     """Os preços da aba sem o corte de 10 anos (§24).
 
@@ -410,10 +432,10 @@ def precos_sem_corte(precos_da_aba):
     _df, mapa = _troca.deduplicar_por_empresa(df_set)
     trocas = tuple(sorted(mapa.items()))
     colunas = [str(c) for c in precos_da_aba.columns]
-    longo = _troca.dobrar_colunas(
-        _batch_yf_precos_mensais(tuple(colunas) + tuple(sorted(mapa)),
-                                 period="max", trocas=trocas),
-        mapa)
+    bruto = _batch_yf_precos_mensais(tuple(colunas) + tuple(sorted(mapa)),
+                                     period="max", trocas=trocas)
+    procedencia = procedencia_dos_precos(bruto)
+    longo = _troca.dobrar_colunas(bruto, mapa)
     faltam = [c for c in colunas if c not in longo.columns]
     if faltam:
         p_s = _saidas.precos_mensais(_saidas.carregar())
@@ -428,6 +450,9 @@ def precos_sem_corte(precos_da_aba):
     ambos = a.notna() & b.notna()
     rel = ((b - a).abs() / a.abs().replace(0, np.nan)).where(ambos)
     conferencia = {
+        **procedencia,
+        "fonte_precos_da_aba": (getattr(precos_da_aba, "attrs", {}) or {}).get(
+            "fonte_precos"),
         "inicio_aba": str(precos_da_aba.index.min().date()),
         "inicio_sem_corte": str(longo.dropna(how="all").index.min().date()),
         "colunas": len(colunas),
@@ -534,8 +559,9 @@ def medir_dividendo_outra_janela(rc: dict, *, dry_run: bool = False) -> int:
             "benchmarks": "brutos (pesos iguais não paga custo): viés contra a carteira",
         },
         "fonte": {
-            "precos": ("mensal ajustado do armazém local, a mesma leitura da aba "
-                       "sem o corte de 10 anos"),
+            "precos": (f"mensal ajustado de {conferencia['fonte_precos']} (lido do "
+                       "carregador; outra fonte para a medição), a mesma leitura "
+                       "da aba sem o corte de 10 anos"),
             "conferencia_dos_precos": conferencia,
             "fundamentos": f"aba de Criação de Portfólio B3 sobre {_fonte_efetiva_b3()}",
         },

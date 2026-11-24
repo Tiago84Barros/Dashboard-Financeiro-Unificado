@@ -1463,7 +1463,10 @@ Informativos:
   difere 0,05 pp (+7,11 contra +7,07), como previsto: o giro de 2017 agora
   parte da carteira de 2016, não do caixa.
 - **Conferência dos preços:** 470 colunas, 47.356 pontos em comum com a aba,
-  diferença máxima 0,0. Os preços sem corte começam em 2000-01-31.
+  diferença máxima 0,0. Os preços sem corte começam em 2000-01-31 e vêm de
+  `market.historical_prices` (armazém local), lido do rótulo que o próprio
+  carregador grava (`procedencia_dos_precos`). Se o carregador cair no
+  yfinance, a medição para em vez de publicar com o rótulo errado.
 
 O que isto não diz:
 

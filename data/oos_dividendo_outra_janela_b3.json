@@ -2,7 +2,7 @@
   "versao_medicao": "fundamentalistas-1.4.0",
   "versao_metodologia": "2.33.0",
   "versao_presets": "b3-presets-1.0.0",
-  "medido_em": "2026-11-24T12:41:07",
+  "medido_em": "2026-11-24T13:12:08",
   "perfil": "Equilibrado (padrão)",
   "janela": "abril/2013 a março/2017",
   "safras_medidas": [
@@ -69,7 +69,7 @@
         "excesso_ew_bruto": 0.034221781061126916,
         "excesso_ew_com_ir": 0.0331602092667764,
         "giro": 0.9999999999999999,
-        "custo_pct": 0.0011052631578947366
+        "custo_pct": 0.0011052631578947363
       },
       {
         "safra": 2014,
@@ -83,7 +83,7 @@
         "excesso_ew_bruto": 0.040858913897963416,
         "excesso_ew_com_ir": 0.039785572002666865,
         "giro": 0.40514885658872385,
-        "custo_pct": 0.0010800579058797496
+        "custo_pct": 0.00108005790587975
       },
       {
         "safra": 2015,
@@ -97,7 +97,7 @@
         "excesso_ew_bruto": 0.0408449498325973,
         "excesso_ew_com_ir": 0.039989369692654264,
         "giro": 0.31886035488954523,
-        "custo_pct": 0.0008600320128739042
+        "custo_pct": 0.000860032012873904
       },
       {
         "safra": 2016,
@@ -111,7 +111,7 @@
         "excesso_ew_bruto": 0.07418668490638092,
         "excesso_ew_com_ir": 0.07296004748259088,
         "giro": 0.34878120199442475,
-        "custo_pct": 0.0008953899246584396
+        "custo_pct": 0.0008953899246584394
       }
     ]
   },
@@ -215,8 +215,11 @@
     "benchmarks": "brutos (pesos iguais não paga custo): viés contra a carteira"
   },
   "fonte": {
-    "precos": "mensal ajustado do armazém local, a mesma leitura da aba sem o corte de 10 anos",
+    "precos": "mensal ajustado de market.historical_prices (lido do carregador; outra fonte para a medição), a mesma leitura da aba sem o corte de 10 anos",
     "conferencia_dos_precos": {
+      "fonte_precos": "market.historical_prices",
+      "fonte_precos_erro": null,
+      "fonte_precos_da_aba": null,
       "inicio_aba": "2016-11-30",
       "inicio_sem_corte": "2000-01-31",
       "colunas": 470,

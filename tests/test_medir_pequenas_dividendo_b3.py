@@ -36,3 +36,33 @@ def test_rodada_sem_piso_so_troca_o_valor_de_mercado():
     assert trocadas == {"pb3_min_mcap"}
     assert valores["pb3_min_adtv"] == base["pb3_min_adtv"]
     assert identificar_perfil(valores) == PERSONALIZADO
+
+
+def _df_com_fonte(fonte=None, erro=None):
+    import pandas as pd
+
+    df = pd.DataFrame({"AAAA3": [1.0, 2.0]})
+    if fonte is not None:
+        df.attrs["fonte_precos"] = fonte
+    if erro is not None:
+        df.attrs["fonte_precos_erro"] = erro
+    return df
+
+
+def test_procedencia_do_armazem_e_registrada():
+    out = me.procedencia_dos_precos(_df_com_fonte(me.FONTE_DO_ARMAZEM))
+    assert out == {"fonte_precos": me.FONTE_DO_ARMAZEM, "fonte_precos_erro": None}
+
+
+def test_procedencia_recusa_o_fallback_do_yfinance():
+    import pytest
+
+    with pytest.raises(RuntimeError, match="yfinance.*OperationalError"):
+        me.procedencia_dos_precos(_df_com_fonte("yfinance", "OperationalError"))
+
+
+def test_procedencia_recusa_fonte_nao_rotulada():
+    import pytest
+
+    with pytest.raises(RuntimeError, match="não rotulada"):
+        me.procedencia_dos_precos(_df_com_fonte())
