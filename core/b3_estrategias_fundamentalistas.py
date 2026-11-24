@@ -81,7 +81,7 @@ import pandas as pd
 
 from core.b3_value_route import OPORTUNIDADE, rank_value_opportunities
 
-VERSAO = "fundamentalistas-1.6.0"
+VERSAO = "fundamentalistas-1.7.0"
 
 ROTA_VALOR = "rota_valor"
 FORMULA_MAGICA = "formula_magica"
@@ -852,3 +852,57 @@ def simular_aportes(safras: list[dict], cfg, *,
             item["caixa"] = True
         saida.append(item)
     return saida
+
+
+# ── 9. Solvência em dois anos seguidos (24/11/2026, §27) ────────────────────
+#: Braço da §27 e a variante informativa que também pede prejuízo em dois
+#: exercícios seguidos.
+DIVIDENDO_SEGURADO_DOIS_ANOS = "dividendo_segurado_dois_anos"
+DIVIDENDO_SEGURADO_DOIS_ANOS_COM_PREJUIZO = "dividendo_segurado_dois_anos_com_prejuizo"
+
+#: Motivos que só tiram o nome quando se repetem na safra anterior.
+PERSISTENTES_DOIS_ANOS = (FALHA_SOLVENCIA,)
+PERSISTENTES_COM_PREJUIZO = (FALHA_SOLVENCIA, PREJUIZO)
+
+#: Regra de decisão da §27, registrada antes de medir (24/11/2026).
+REGRA_DE_DECISAO_SOLVENCIA_DOIS_ANOS = (
+    "hipótese da §26 (24/11/2026): a trava de solvência responde por 40 das 52 "
+    "saídas do dividendo segurado, e 13 saídas voltaram depois; exigir a falha "
+    "em dois anos seguidos cortaria giro sem perder retorno. Tudo igual à §26 "
+    "(entrada do dividendo de 6% da §23; alvo 1/N; equilíbrio só pelo aporte "
+    "de 10% do patrimônio de abril; ninguém vendido por ter subido), menos uma "
+    "coisa: a falha da trava de solvência só tira o nome se ele também falhou "
+    "na trava na safra anterior (retrato de abril de N-1, mesmo universo de "
+    "N-1). Sem retrato na safra anterior, ou fora do universo dela, não há "
+    "falha anterior: dado ausente não é degradação. Sair do universo e ter "
+    "prejuízo no último exercício seguem tirando na hora. Candidata só se, "
+    "LÍQUIDA, passar nos três testes da §19: (a) excesso médio sobre pesos "
+    "iguais no universo > 0 com IC 95% acima de zero; (b) média sem a melhor "
+    "safra > 0; (c) diferença pareada contra a carteira padrão atual "
+    "(Equilibrado, sem portão) com média > 0. A hipótese do giro se confirma "
+    "se o giro de venda médio anual ficar abaixo do da §26 E a diferença "
+    "pareada contra a §26 não tiver IC 95% inteiro abaixo de zero. Um braço "
+    "sob a regra. Só informativos: a variante que também pede prejuízo em dois "
+    "exercícios seguidos; a §26 refeita na mesma rodada; a diferença pareada "
+    "contra o dividendo de 6% sem segurar; as voltas (nome que sai e volta em "
+    "safra posterior), os motivos de saída e o excesso com IR. Passar não muda "
+    "a tela; só abre a próxima etapa.")
+
+
+def motivos_persistentes(agora: Mapping[str, Iterable[str]],
+                         antes: Mapping[str, Iterable[str]],
+                         persistentes: Iterable[str] = PERSISTENTES_DOIS_ANOS
+                         ) -> dict[str, list[str]]:
+    """Motivos de saída da §27: os de ``persistentes`` só contam se repetidos.
+
+    ``agora`` e ``antes`` são `motivos_de_saida` da safra e da anterior. Um
+    motivo de ``persistentes`` fica só se o nome também o tinha em ``antes``;
+    os outros motivos passam como estão. Nome ausente de ``antes`` não tem
+    motivo anterior (dado ausente não é degradação).
+    """
+    conta = set(persistentes)
+    out: dict[str, list[str]] = {}
+    for tk, ms in agora.items():
+        prev = set((antes or {}).get(tk) or ())
+        out[str(tk).upper()] = [m for m in (ms or ()) if m not in conta or m in prev]
+    return out

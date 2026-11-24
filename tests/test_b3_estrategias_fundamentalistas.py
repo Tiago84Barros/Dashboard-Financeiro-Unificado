@@ -628,7 +628,38 @@ def test_quem_fica_ignora_dividendo_e_so_tira_por_degradacao():
 
 def test_regra_da_26_fixa_aporte_e_proibe_venda_para_rebalancear():
     regra = fe.REGRA_DE_DECISAO_DIVIDENDO_SEGURADO
-    assert fe.VERSAO == "fundamentalistas-1.6.0"
+    assert fe.VERSAO >= "fundamentalistas-1.6.0"
     assert fe.APORTE_DIVIDENDO_SEGURADO == pytest.approx(0.10)
     assert "ninguém é vendido para voltar ao alvo" in regra
     assert "refeitos em abril" not in regra
+
+
+def test_motivos_persistentes_so_tira_por_solvencia_repetida():
+    agora = {"AAA3": [fe.FALHA_SOLVENCIA], "BBB3": [fe.FALHA_SOLVENCIA],
+             "CCC3": [fe.PREJUIZO], "DDD3": [fe.SAIU_DO_UNIVERSO], "EEE3": []}
+    antes = {"AAA3": [fe.FALHA_SOLVENCIA], "BBB3": [], "CCC3": []}
+    out = fe.motivos_persistentes(agora, antes)
+    assert out["AAA3"] == [fe.FALHA_SOLVENCIA]  # falhou nos dois anos: sai
+    assert out["BBB3"] == []                     # falhou só agora: fica
+    assert out["CCC3"] == [fe.PREJUIZO]          # prejuízo segue tirando na hora
+    assert out["DDD3"] == [fe.SAIU_DO_UNIVERSO]
+    assert out["EEE3"] == []
+    assert fe.quem_fica(out) == ["BBB3", "EEE3"]
+
+
+def test_motivos_persistentes_sem_safra_anterior_nao_tira_por_solvencia():
+    out = fe.motivos_persistentes({"AAA3": [fe.FALHA_SOLVENCIA, fe.PREJUIZO]}, {})
+    assert out["AAA3"] == [fe.PREJUIZO]
+    out = fe.motivos_persistentes({"AAA3": [fe.PREJUIZO]}, {"AAA3": [fe.PREJUIZO]},
+                                  fe.PERSISTENTES_COM_PREJUIZO)
+    assert out["AAA3"] == [fe.PREJUIZO]
+    out = fe.motivos_persistentes({"AAA3": [fe.PREJUIZO]}, {"AAA3": []},
+                                  fe.PERSISTENTES_COM_PREJUIZO)
+    assert out["AAA3"] == []
+
+
+def test_regra_da_27_fixa_dois_anos_e_o_teste_do_giro():
+    regra = fe.REGRA_DE_DECISAO_SOLVENCIA_DOIS_ANOS
+    assert "dois anos seguidos" in regra and "giro de venda" in regra
+    assert fe.PERSISTENTES_DOIS_ANOS == (fe.FALHA_SOLVENCIA,)
+    assert fe.VERSAO >= "fundamentalistas-1.7.0"
