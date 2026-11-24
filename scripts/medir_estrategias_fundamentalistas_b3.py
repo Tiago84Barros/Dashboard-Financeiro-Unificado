@@ -52,6 +52,7 @@ CAMINHO_PEQUENAS_DIVIDENDO = ROOT / "data" / "oos_pequenas_dividendo_b3.json"
 CAMINHO_DIVIDENDO_OUTRA_JANELA = ROOT / "data" / "oos_dividendo_outra_janela_b3.json"
 CAMINHO_SOBREPOSICAO_ROTA = ROOT / "data" / "oos_sobreposicao_dividendo_rota_b3.json"
 CAMINHO_DIVIDENDO_SEGURADO = ROOT / "data" / "oos_dividendo_segurado_b3.json"
+CAMINHO_SOLVENCIA_DOIS_ANOS = ROOT / "data" / "oos_solvencia_dois_anos_b3.json"
 
 #: A rodada sem piso de tamanho (§23): o perfil padrão com só o valor de
 #: mercado mínimo trocado. A liquidez mínima (R$ 500 mil) fica.
@@ -777,6 +778,216 @@ def medir_sobreposicao_rota(rc: dict, *, dry_run: bool = False) -> int:
     return 0
 
 
+def _cadeia_do_dividendo_segurado(rc: dict):
+    """Entrada da §23 por safra e o `segurar` das §26 e §27.
+
+    ``segurar(considerar, persistentes=())`` devolve (carteiras por safra,
+    saídas por safra). Os motivos de ``persistentes`` só tiram o nome se ele
+    também os tinha na safra anterior (`fe.motivos_persistentes`, §27).
+    """
+    from core.b3_retrato_pit import series_pl_ate
+    from core.b3_vigencia import ano_base_do_score
+
+    fe = rc["fe"]
+    por_ano = {int(p["safra"]): p for p in rc["por_safra"]}
+    cadeia = [int(s) for s in rc["cadeia"]]
+    escolher_div = rc["escolhas"][fe.DIVIDENDO_6]
+    entrada = {s: sorted(str(t).upper() for t in escolher_div(por_ano[s])) for s in cadeia}
+
+    def motivos(s, lista):
+        p = por_ano.get(s)
+        if p is None:
+            return {}
+        ano_max = ano_base_do_score(s)
+        alvos = {str(t).upper() for t in lista}
+        pl = series_pl_ate({tk: v for tk, v in rc["series_pl"].items()
+                            if str(tk).upper() in alvos}, ano_max)
+        return fe.motivos_de_saida(lista, p["universo"], p["df_pit"], pl, ano_max)
+
+    def segurar(considerar, persistentes=()):
+        saidas: dict[int, dict[str, list[str]]] = {}
+
+        def manter(s, lista):
+            m = motivos(s, lista)
+            if persistentes:
+                m = fe.motivos_persistentes(m, motivos(s - 1, lista), persistentes)
+            saidas[s] = {tk: [x for x in ms if x in considerar]
+                         for tk, ms in m.items() if any(x in considerar for x in ms)}
+            return fe.quem_fica(m, considerar)
+
+        return fe.segurar_lideres(cadeia, entrada.__getitem__, manter), saidas
+
+    return entrada, segurar
+
+
+def voltas(carteiras: dict[int, list[str]], saidas: dict[int, dict]) -> int:
+    """Quantas saídas voltaram à carteira numa safra posterior."""
+    n = 0
+    for s, quem in saidas.items():
+        depois: set[str] = set()
+        for k, v in carteiras.items():
+            if k > s:
+                depois |= set(v)
+        n += sum(1 for tk in quem if tk in depois)
+    return n
+
+
+def medir_solvencia_dois_anos(rc: dict, *, dry_run: bool = False) -> int:
+    """§27: a §26 com a falha de solvência exigida em dois anos seguidos."""
+    from core.b3_methodology import SCORE_VERSION
+    from core.b3_portfolio_presets import VERSION as PRESETS_VERSION
+    from scripts.medir_vantagem_oos import _fonte_efetiva_b3
+
+    oos, fe = rc["oos"], rc["fe"]
+    cadeia = [int(s) for s in rc["cadeia"]]
+    escolher_div = rc["escolhas"][fe.DIVIDENDO_6]
+    entrada, segurar = _cadeia_do_dividendo_segurado(rc)
+    considerar = fe.MOTIVOS_DIVIDENDO_SEGURADO
+
+    c26, s26 = segurar(considerar)
+    c27, s27 = segurar(considerar, fe.PERSISTENTES_DOIS_ANOS)
+    cpj, spj = segurar(considerar, fe.PERSISTENTES_COM_PREJUIZO)
+
+    def aporte(itens, cfg):
+        return fe.simular_aportes(itens, cfg, aporte=fe.APORTE_DIVIDENDO_SEGURADO)
+
+    def da(carteiras):
+        return lambda p: carteiras.get(int(p["safra"]), [])
+
+    memo: dict = {}
+    medir = rc["medir"]
+    m27 = _avaliar(rc, medir(da(c27), memo, simular=aporte))
+    mpj = _avaliar(rc, medir(da(cpj), memo, simular=aporte))
+    m26 = _avaliar(rc, medir(da(c26), memo, simular=aporte))
+    mdiv = _avaliar(rc, medir(escolher_div, memo))
+
+    def pareada(controle, braco, chave="liquido"):
+        par = diferenca_pareada(controle["safras"], braco["safras"], chave)
+        return {**oos.resumir(par, "dif"), "safras": par}
+
+    def contagem(saidas):
+        out: dict[str, int] = {}
+        for v in saidas.values():
+            for ms in v.values():
+                for x in ms:
+                    out[x] = out.get(x, 0) + 1
+        return out
+
+    resumo_saidas = {
+        nome: {"saidas": sum(len(v) for v in sd.values()), "voltas": voltas(c, sd),
+               "motivos": contagem(sd),
+               "nomes_por_safra": {str(s): len(c.get(s, [])) for s in cadeia}}
+        for nome, c, sd in ((fe.DIVIDENDO_SEGURADO_DOIS_ANOS, c27, s27),
+                            (fe.DIVIDENDO_SEGURADO_DOIS_ANOS_COM_PREJUIZO, cpj, spj),
+                            (fe.DIVIDENDO_SEGURADO, c26, s26))}
+
+    rotulo = fe.DIVIDENDO_SEGURADO_DOIS_ANOS
+    for nome, m in ((rotulo, m27), ("com_prejuizo", mpj), ("secao_26", m26),
+                    (fe.DIVIDENDO_6, mdiv)):
+        r = m["vs_equal_weight"]
+        print(f"{nome}: media={r['media']} ic95={r['ic95']} n={r['n_safras']} "
+              f"sem_melhor={r['media_sem_melhor_safra']} giro={m['giro_medio_anual']} "
+              f"giro_venda={m.get('giro_venda_medio_anual')} "
+              f"vs_padrao={m['vs_carteira_padrao']['media']} "
+              f"candidata={m['decisao']['candidata']}", flush=True)
+    print(json.dumps(resumo_saidas, ensure_ascii=False), flush=True)
+
+    vs26 = pareada(m26, m27)
+    g27, g26 = m27.get("giro_venda_medio_anual"), m26.get("giro_venda_medio_anual")
+    hi = (vs26.get("ic95") or [None, None])[1]
+    hipotese = {
+        "giro_venda_abaixo_da_26": bool(g27 is not None and g26 is not None and g27 < g26),
+        "pareada_contra_26_nao_inteira_abaixo_de_zero": bool(hi is None or hi >= 0),
+    }
+    hipotese["confirma"] = all(hipotese.values())
+    print(f"hipotese={hipotese} vs26={vs26.get('media')} ic={vs26.get('ic95')}", flush=True)
+
+    def _curto(m):
+        return {k: m[k] for k in ("vs_equal_weight", "com_ir_vs_equal_weight",
+                                  "bruto_vs_equal_weight", "vs_carteira_padrao",
+                                  "decisao", "giro_medio_anual",
+                                  "giro_venda_medio_anual", "custo_medio_anual",
+                                  "safras") if k in m}
+
+    medidas = sorted(int(t["safra"]) for t in m27["safras"])
+    composicao = {}
+    anterior: list[str] = []
+    for s in cadeia:
+        atual = c27.get(s, [])
+        composicao[str(s)] = {
+            "n": len(atual), "carteira": atual,
+            "entraram": sorted(set(atual) - set(anterior)),
+            "sairam": s27.get(s, {}),
+            "a_mais_que_a_26": sorted(set(atual) - set(c26.get(s, []))),
+            "seguem_sem_passar_na_entrada": sorted(set(atual) - set(entrada[s])),
+        }
+        anterior = atual
+
+    saida = {
+        "versao_medicao": fe.VERSAO,
+        "versao_metodologia": SCORE_VERSION,
+        "versao_presets": PRESETS_VERSION,
+        "medido_em": datetime.now().isoformat(timespec="seconds"),
+        "perfil": rc["nome"],
+        "safras": medidas,
+        "janela": (f"abril/{min(medidas)} a março/{max(medidas) + 1}"
+                   if medidas else None),
+        "regra_de_decisao": fe.REGRA_DE_DECISAO_SOLVENCIA_DOIS_ANOS,
+        "sob_a_regra": [rotulo],
+        "metrica_principal": ("excesso médio LÍQUIDO sobre pesos iguais no universo, "
+                              "retorno ponderado pelo tempo (o aporte não conta como ganho)"),
+        "resultado": {
+            "excesso_sobre_equal_weight": m27["vs_equal_weight"],
+            "vs_carteira_padrao": m27["vs_carteira_padrao"],
+            "testes": m27["decisao"]["testes"],
+            "candidata": m27["decisao"]["candidata"],
+            "giro_medio_anual": m27["giro_medio_anual"],
+            "giro_venda_medio_anual": g27,
+            "hipotese_do_giro": hipotese,
+        },
+        "informativos": {
+            "dois_anos_menos_26": vs26,
+            "dois_anos_menos_dividendo_6": pareada(mdiv, m27),
+            "com_prejuizo_menos_dois_anos": pareada(m27, mpj),
+            "excesso_com_ir": m27["com_ir_vs_equal_weight"],
+            "saidas": resumo_saidas,
+        },
+        "composicao": composicao,
+        "estrategias": {
+            rotulo: _curto(m27),
+            fe.DIVIDENDO_SEGURADO_DOIS_ANOS_COM_PREJUIZO: _curto(mpj),
+            fe.DIVIDENDO_SEGURADO: _curto(m26),
+            fe.DIVIDENDO_6: _curto(mdiv),
+        },
+        "custos": {
+            "modelo": "CostConfig.brasil_pf_default()",
+            "benchmarks": ("brutos e sem aporte (pesos iguais não paga custo e "
+                           "volta a 1/N todo abril): viés contra a carteira"),
+        },
+        "fonte": {
+            **fonte_dos_precos_da_aba(rc["precos"]),
+            "fundamentos": f"aba de Criação de Portfólio B3 sobre {_fonte_efetiva_b3()}",
+        },
+        "limites": [
+            "nove safras: diferenças pequenas não se separam do ruído",
+            ("a hipótese nasceu da §26 medida nas mesmas safras: o teste do giro "
+             "não é fora da amostra"),
+            ("o dividendo é reinvestido no próprio nome (preço ajustado), não vai "
+             "para os que estão abaixo do alvo"),
+            ("muitos braços medidos da §19 à §27 no mesmo período: um falso positivo "
+             "fica mais provável do que o IC sugere"),
+            "as §1 a §22 do guia ainda usam a leitura antiga dos fundamentos",
+        ],
+    }
+    texto = json.dumps(saida, indent=2, ensure_ascii=False, default=str)
+    if dry_run:
+        print(texto)
+    else:
+        CAMINHO_SOLVENCIA_DOIS_ANOS.write_text(texto + "\n", encoding="utf-8")
+        print(f"gravado em {CAMINHO_SOLVENCIA_DOIS_ANOS}")
+    return 0
+
+
 def medir_dividendo_segurado(rc: dict, *, dry_run: bool = False) -> int:
     """§26: o dividendo de 6% segurado, com equilíbrio pelo aporte.
 
@@ -787,34 +998,12 @@ def medir_dividendo_segurado(rc: dict, *, dry_run: bool = False) -> int:
     """
     from core.b3_methodology import SCORE_VERSION
     from core.b3_portfolio_presets import VERSION as PRESETS_VERSION
-    from core.b3_retrato_pit import series_pl_ate
-    from core.b3_vigencia import ano_base_do_score
     from scripts.medir_vantagem_oos import _fonte_efetiva_b3
 
     oos, fe = rc["oos"], rc["fe"]
-    por_ano = {int(p["safra"]): p for p in rc["por_safra"]}
     cadeia = [int(s) for s in rc["cadeia"]]
     escolher_div = rc["escolhas"][fe.DIVIDENDO_6]
-    entrada = {s: sorted(str(t).upper() for t in escolher_div(por_ano[s])) for s in cadeia}
-
-    def motivos(s, lista):
-        p = por_ano[s]
-        ano_max = ano_base_do_score(s)
-        alvos = {str(t).upper() for t in lista}
-        pl = series_pl_ate({tk: v for tk, v in rc["series_pl"].items()
-                            if str(tk).upper() in alvos}, ano_max)
-        return fe.motivos_de_saida(lista, p["universo"], p["df_pit"], pl, ano_max)
-
-    def segurar(considerar):
-        saidas: dict[int, dict[str, list[str]]] = {}
-
-        def manter(s, lista):
-            m = motivos(s, lista)
-            saidas[s] = {tk: [x for x in ms if x in considerar]
-                         for tk, ms in m.items() if any(x in considerar for x in ms)}
-            return fe.quem_fica(m, considerar)
-
-        return fe.segurar_lideres(cadeia, entrada.__getitem__, manter), saidas
+    entrada, segurar = _cadeia_do_dividendo_segurado(rc)
 
     segurada, saidas = segurar(fe.MOTIVOS_DIVIDENDO_SEGURADO)
     so_solvencia, saidas_solvencia = segurar(fe.MOTIVOS_SO_SOLVENCIA)
@@ -981,9 +1170,14 @@ def main() -> int:
     ap.add_argument("--dividendo-segurado", action="store_true",
                     help="mede o dividendo de 6%% segurado, com equilíbrio pelo "
                          "aporte, da §26 (grava data/oos_dividendo_segurado_b3.json)")
+    ap.add_argument("--solvencia-dois-anos", action="store_true",
+                    help="mede a §27: a §26 com a falha de solvência exigida em dois "
+                         "anos seguidos (grava data/oos_solvencia_dois_anos_b3.json)")
     args = ap.parse_args()
 
     rc = montar_recorte(args.cache_dir)
+    if args.solvencia_dois_anos:
+        return medir_solvencia_dois_anos(rc, dry_run=args.dry_run)
     if args.dividendo_segurado:
         return medir_dividendo_segurado(rc, dry_run=args.dry_run)
     if args.pequenas_dividendo:
