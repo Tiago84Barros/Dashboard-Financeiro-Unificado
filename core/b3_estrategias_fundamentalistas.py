@@ -49,6 +49,10 @@ regra de decisão própria, ``REGRA_DE_DECISAO_PEQUENAS_DIVIDENDO``):
    todos presentes) de pelo menos 6%, sem falha da trava de solvência.
    Universo da carteira padrão. Pesos iguais.
 
+O ``dividendo_6`` também é medido em outra janela, as safras 2013 a 2016 que
+a §23 não viu (§24, regra própria fixada antes de medir em 24/11/2026:
+``REGRA_DE_DECISAO_DIVIDENDO_OUTRA_JANELA`` e ``leitura_outra_janela``).
+
 Todas leem só o que se sabia em abril/N: o retrato e o histórico da safra
 (exercícios até N-1, pela regra de vintage do motor), os múltiplos com o preço
 de fim do exercício (``data_pipeline.market.ingest``, histórico anual) e a
@@ -69,7 +73,7 @@ import pandas as pd
 
 from core.b3_value_route import OPORTUNIDADE, rank_value_opportunities
 
-VERSAO = "fundamentalistas-1.3.0"
+VERSAO = "fundamentalistas-1.4.0"
 
 ROTA_VALOR = "rota_valor"
 FORMULA_MAGICA = "formula_magica"
@@ -424,6 +428,59 @@ REGRA_DE_DECISAO_PEQUENAS_DIVIDENDO = (
     "positivo fica perto de 1 em 10. A rota de valor sem piso de tamanho e o "
     "excesso das pequenas sobre os pesos iguais do universo com piso são só "
     "informativos. Passar não muda a tela; só abre a próxima etapa.")
+
+
+# ── 7b. O dividendo de 6% em outra janela (24/11/2026, §24) ─────────────────
+#: As safras que a §23 não viu: abril/2013 a março/2017. A §23 começou em 2017
+#: porque a aba carrega só 10 anos de preço; o armazém tem preço desde 2000.
+PRIMEIRA_SAFRA_OUTRA_JANELA = 2013
+ULTIMA_SAFRA_OUTRA_JANELA = 2016
+
+#: Leituras possíveis da §24, fixadas antes de medir.
+CONFIRMA = "confirma"
+NAO_CONTRADIZ = "nao_contradiz"
+CONTRADIZ = "contradiz"
+INCONCLUSIVA = "inconclusiva"
+
+#: Regra de decisão da §24, registrada antes de medir (24/11/2026).
+REGRA_DE_DECISAO_DIVIDENDO_OUTRA_JANELA = (
+    "o dividendo de 6% (mesma regra da §23, sem mudar nada) é medido nas safras "
+    "2013 a 2016, que a §23 não viu. Métrica: excesso por safra, LÍQUIDO do "
+    "giro, sobre pesos iguais no universo da carteira padrão. Leituras: "
+    "'confirma' se (a) a média > 0 com IC 95% acima de zero e (b) a média sem "
+    "a melhor safra > 0; 'não contradiz' se a média > 0 e (b) > 0, mas o IC "
+    "cruza o zero; 'contradiz' se a média <= 0 ou (b) <= 0; 'inconclusiva' "
+    "com menos de três safras medidas. O teste (c) da §23 não se aplica: a "
+    "carteira padrão não tem carteira antes de 2017. A janela inteira "
+    "2013-2025, o excesso com IR e a conferência de 2017-2025 contra a §23 "
+    "são só informativos. Passar não muda a tela.")
+
+
+def leitura_outra_janela(resumo: Mapping | None) -> dict:
+    """Os testes e a leitura da §24 sobre o resumo de `oos.resumir`.
+
+    Com menos de três safras não há "média sem a melhor safra" e a leitura é
+    ``inconclusiva`` -- nunca "contradiz" por falta de amostra.
+    """
+    r = dict(resumo or {})
+    media = r.get("media")
+    lo = (r.get("ic95") or [None, None])[0]
+    sem_melhor = r.get("media_sem_melhor_safra")
+    n = int(r.get("n_safras") or 0)
+    testes = {
+        "a_excesso_ew_ic_acima_de_zero": bool(
+            media is not None and media > 0 and lo is not None and lo > 0),
+        "b_sem_melhor_safra_positiva": bool(sem_melhor is not None and sem_melhor > 0),
+    }
+    if n < 3 or media is None or sem_melhor is None:
+        leitura = INCONCLUSIVA
+    elif media <= 0 or sem_melhor <= 0:
+        leitura = CONTRADIZ
+    elif testes["a_excesso_ew_ic_acima_de_zero"]:
+        leitura = CONFIRMA
+    else:
+        leitura = NAO_CONTRADIZ
+    return {"testes": testes, "leitura": leitura, "n_safras": n}
 
 
 def pequenas(universo_sem_piso: Iterable[str],

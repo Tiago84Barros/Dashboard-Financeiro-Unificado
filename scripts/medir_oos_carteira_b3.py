@@ -224,7 +224,8 @@ def _portoes_da_safra(view, decisao: dict, universo: list[str], safra: int,
     return df_pit, guarda
 
 
-def _segmentos_por_safra(resultados, precos, params, decisao, cost_cfg, hoje):
+def _segmentos_por_safra(resultados, precos, params, decisao, cost_cfg, hoje, *,
+                         primeira: int | None = None):
     """Aprovação PIT e seleção de cada segmento, safra a safra.
 
     Devolve ``(contexto, safras)``: o contexto da rodada (cap e Selic que a tela
@@ -233,6 +234,10 @@ def _segmentos_por_safra(resultados, precos, params, decisao, cost_cfg, hoje):
     LLM medido (`core.b3_portao_pit`) lê o mesmo: os nomes que a carteira
     mediria são os que o LLM avalia. Cada safra leva também a guarda de
     entrada da época (``exclui``) e o que o piso fez (2.32.0).
+
+    ``primeira``: a primeira safra, no lugar de ``ano_inicio`` + a janela de
+    validação. Só a medição do dividendo em outra janela (§24 do guia) a
+    antecipa; o score de cada safra continua o da rodada.
     """
     import pandas as pd
 
@@ -250,7 +255,8 @@ def _segmentos_por_safra(resultados, precos, params, decisao, cost_cfg, hoje):
         "taxa_selic_aa": float(ctx0["taxa_selic_aa"]),
         "n_resultados": len(resultados),
     }
-    primeira = int(ctx0["ano_inicio"]) + int(params["janela_val_anos"])
+    if primeira is None:
+        primeira = int(ctx0["ano_inicio"]) + int(params["janela_val_anos"])
     anos = sorted({int(a) for r in resultados for a in (r.get("lids_por_ano") or {})})
     safras = [s for s in anos if s >= primeira and safra_completa(s, hoje=hoje)]
 

@@ -1358,3 +1358,124 @@ Leitura com cautela:
   usuário quiser: medir o dividendo de 6% em outra janela de safras e com o
   IR no lugar do líquido simples, e ver quanto ele se sobrepõe à rota de
   valor.
+
+## 24. O dividendo de 6% em outra janela: safras 2013 a 2016 (24/11/2026, medido: confirma)
+
+### Que pergunta responde
+
+A §23 mediu o dividendo de 6% (Bazin) em nove safras, de 2017 a 2025, e ele
+passou nos três testes com folga pequena. Nove safras não separam regra de
+sorte com segurança. A pergunta: **a mesma regra, sem mudar nada, também bate
+pesos iguais em safras que ninguém olhou?**
+
+### Por que 2013 a 2016
+
+A §23 começa em 2017 porque a aba carrega só 10 anos de preço
+(`period="10y"` na leitura dos preços mensais de `views/portfolio_b3.py`). O
+score da rodada cobre 2013 a 2025, e o armazém local tem preço desde 2000.
+Então as safras de abril/2013 a março/2017 têm universo, retrato da época e
+preço, mas nunca foram medidas. São as únicas safras "novas" que dá para
+medir sem inventar dado.
+
+### O que muda e o que não muda
+
+- **Não muda:** a regra (`carteira_dividendo_bazin`), o universo de cada
+  safra, o retrato PIT, o histórico cortado pela vintage, o custo do giro e a
+  régua (`medir_escolha`). A rodada da aba é a mesma do pickle da §23.
+- **Muda:** a primeira safra (`_segmentos_por_safra(..., primeira=2013)`) e
+  os preços, que perdem o corte de 10 anos (`precos_sem_corte`: a mesma
+  leitura da aba, mesmas trocas de código e mesmas empresas que saíram da
+  bolsa). O script confere que, no trecho comum, os preços são iguais aos da
+  aba. A cadeia de custos começa em 2013.
+
+### Regra de decisão (registrada antes de medir)
+
+`REGRA_DE_DECISAO_DIVIDENDO_OUTRA_JANELA`, versão `fundamentalistas-1.4.0`.
+Métrica: excesso por safra, **líquido do giro**, sobre pesos iguais no
+universo da carteira padrão. Leituras, aplicadas por `leitura_outra_janela`:
+
+| Leitura | Quando |
+|---|---|
+| **confirma** | (a) média > 0 com IC 95% acima de zero **e** (b) média sem a melhor safra > 0 |
+| **não contradiz** | média > 0 e (b) > 0, mas o IC cruza o zero |
+| **contradiz** | média ≤ 0 **ou** (b) ≤ 0 |
+| **inconclusiva** | menos de três safras medidas |
+
+Com quatro safras o IC quase nunca fica acima de zero; por isso "não
+contradiz" foi separado de "contradiz" antes de medir. O teste (c) da §23,
+contra a carteira padrão, não se aplica: a padrão não tem carteira antes de
+2017.
+
+Só informativos: a janela inteira 2013–2025 (13 safras), o excesso com IR e
+a conferência das safras 2017–2025 contra a §23 (devem bater, salvo o giro de
+2017, que agora vem da carteira de 2016).
+
+Passar não muda a tela.
+
+### Limites declarados antes
+
+- Só quatro safras.
+- O universo antigo usa o piso nominal de R$ 1 bi da aba, sem correção pela
+  inflação: em 2013 ele corta proporcionalmente mais empresas.
+- O DY da safra 2013 precisa dos exercícios 2010 a 2012; quem não tem os três
+  fica fora.
+- Safra sem nenhum nome vira caixa à Selic.
+
+### Como rodar
+
+```bash
+python scripts/medir_estrategias_fundamentalistas_b3.py --cache-dir <pasta> --dividendo-outra-janela
+```
+
+Grava `data/oos_dividendo_outra_janela_b3.json`.
+
+### Resultado (24/11/2026): confirma
+
+`data/oos_dividendo_outra_janela_b3.json`. Excesso por safra sobre pesos
+iguais no universo da padrão, líquido do giro:
+
+| Safra | Universo | Na carteira | Carteira | Pesos iguais | Excesso |
+|---|---|---|---|---|---|
+| 2013 | 165 | 38 | −4,1% | −7,4% | +3,3 pp |
+| 2014 | 161 | 36 | −0,7% | −4,7% | +4,0 pp |
+| 2015 | 159 | 35 | −0,6% | −4,6% | +4,0 pp |
+| 2016 | 142 | 37 | +36,9% | +29,6% | +7,3 pp |
+
+- **(a)** média **+4,6 pp** ao ano, IC 95% **[+3,5; +6,5]**: acima de zero.
+- **(b)** sem a melhor safra (2016): **+3,8 pp**.
+- Nenhuma safra negativa. **Leitura: confirma.**
+
+O que torna o resultado mais forte do que o número sozinho: nas três safras de
+queda (2013 a 2015) a carteira perdeu menos que pesos iguais, e na de alta
+(2016) ganhou mais. Na §23 o padrão era misto: perdeu menos nas quedas de
+2022 e 2024, mas perdeu mais na de 2019.
+
+Informativos:
+
+- **Com IR:** igual ao líquido nas quatro safras. As perdas de 2013 a 2015
+  ficam como prejuízo a compensar e cobrem o ganho realizado em 2016.
+- **Bruto (sem custo de giro):** +4,8 pp. O giro custa ~0,1 pp ao ano.
+- **Janela inteira 2013–2025 (13 safras):** +4,9 pp, IC [+2,4; +7,3], sem a
+  melhor safra +4,3; com IR +3,7 pp, IC [+1,0; +6,0]. Negativas só 2018 e
+  2019. Com 13 safras o piso do IC com IR sai do zero, o que a §23 sozinha
+  não mostrava (−0,06).
+- **Conferência com a §23:** 2018 a 2025 batem até a 15ª casa decimal. 2017
+  difere 0,05 pp (+7,11 contra +7,07), como previsto: o giro de 2017 agora
+  parte da carteira de 2016, não do caixa.
+- **Conferência dos preços:** 470 colunas, 47.356 pontos em comum com a aba,
+  diferença máxima 0,0. Os preços sem corte começam em 2000-01-31 e vêm de
+  `market.historical_prices` (armazém local), lido do rótulo que o próprio
+  carregador grava (`procedencia_dos_precos`). Se o carregador cair no
+  yfinance, a medição para em vez de publicar com o rótulo errado.
+
+O que isto não diz:
+
+- Quatro safras ainda são poucas; o IC estreito vem de quatro números
+  parecidos, não de muitos.
+- Três das quatro safras foram de queda (recessão de 2014 a 2016). A
+  janela nova é um tipo de mercado só; não prova que a regra vai bem em
+  qualquer mercado.
+- Não compara com a rota de valor (+9,9 pp na §23), que não tem carteira
+  antes de 2017.
+
+Passar não muda a tela.
