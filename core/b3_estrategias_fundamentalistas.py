@@ -395,19 +395,28 @@ def manter_lideres(lista: Iterable[str], universo: Iterable[str],
                                                  ano_max).items() if not m)
 
 
-def segurar_lideres(safras: list[int], lideres_de, manter) -> dict[int, list[str]]:
+def segurar_lideres(safras: list[int], lideres_de, manter, *,
+                    barrar_reentrada: bool = False) -> dict[int, list[str]]:
     """Lista de cada safra quando o líder só sai se degradar.
 
     ``lideres_de(safra)`` devolve os líderes da safra (a carteira padrão);
     ``manter(safra, lista)`` devolve quem da carteira anterior continua. A
     carteira da safra é a união dos dois: o líder novo entra, o antigo fica
     enquanto não degradar.
+
+    ``barrar_reentrada`` (§26 e §27): quem a saída tirou na safra não volta
+    pela entrada da mesma safra. Sem isso, um nome com prejuízo que ainda
+    passa na regra de entrada sairia e voltaria no mesmo abril. A §19 fica
+    sem a trava: lá a entrada é a própria carteira padrão.
     """
     out: dict[int, list[str]] = {}
     atual: list[str] = []
     for s in sorted(int(x) for x in safras):
         ficam = set(manter(s, atual)) if atual else set()
-        atual = sorted(ficam | {str(t).upper() for t in lideres_de(s)})
+        novos = {str(t).upper() for t in lideres_de(s)}
+        if barrar_reentrada:
+            novos -= {str(t).upper() for t in atual} - ficam
+        atual = sorted(ficam | novos)
         out[s] = list(atual)
     return out
 

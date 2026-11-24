@@ -1935,4 +1935,12 @@ Com IR, o excesso fica em +0,6 pp, IC [−7,0; +6,0].
   dividendo de 6%, a de maior média é a que refaz a carteira todo abril, e
   nenhuma passa.
 
+**Trava contra a volta no mesmo abril (revisão do PR #807).** Na §26 e na §27,
+quem a regra de saída tira numa safra não volta pela regra de entrada da mesma
+safra (`fe.segurar_lideres(..., barrar_reentrada=True)`). Antes da trava, um
+nome com prejuízo que ainda pagasse 6% sairia e voltaria no mesmo abril. A
+medição refeita com a trava dá os mesmos números: o caso não aconteceu em
+nenhuma safra. O líder segurado da §19 fica sem a trava, porque lá a entrada é
+a própria carteira padrão: quem a padrão escolhe está nela de qualquer jeito.
+
 Nada muda na tela.

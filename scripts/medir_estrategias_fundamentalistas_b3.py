@@ -815,7 +815,8 @@ def _cadeia_do_dividendo_segurado(rc: dict):
                          for tk, ms in m.items() if any(x in considerar for x in ms)}
             return fe.quem_fica(m, considerar)
 
-        return fe.segurar_lideres(cadeia, entrada.__getitem__, manter), saidas
+        return (fe.segurar_lideres(cadeia, entrada.__getitem__, manter,
+                                   barrar_reentrada=True), saidas)
 
     return entrada, segurar
 

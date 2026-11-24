@@ -663,3 +663,19 @@ def test_regra_da_27_fixa_dois_anos_e_o_teste_do_giro():
     assert "dois anos seguidos" in regra and "giro de venda" in regra
     assert fe.PERSISTENTES_DOIS_ANOS == (fe.FALHA_SOLVENCIA,)
     assert fe.VERSAO >= "fundamentalistas-1.7.0"
+
+
+def test_segurar_lideres_barra_reentrada_no_mesmo_ano():
+    """Quem a saída tira não volta pela entrada da mesma safra (§26/§27)."""
+    entrada = {2020: ["AAAA3", "BBBB3"], 2021: ["AAAA3", "CCCC3"]}
+
+    def manter(s, lista):
+        return [t for t in lista if t != "AAAA3"]  # AAAA3 teve prejuízo em 2021
+
+    sem = fe.segurar_lideres([2020, 2021], entrada.__getitem__, manter)
+    com = fe.segurar_lideres([2020, 2021], entrada.__getitem__, manter,
+                             barrar_reentrada=True)
+    assert sem[2021] == ["AAAA3", "BBBB3", "CCCC3"]
+    assert com[2021] == ["BBBB3", "CCCC3"]
+    # nome novo que nunca esteve na carteira entra normalmente
+    assert com[2020] == ["AAAA3", "BBBB3"]
