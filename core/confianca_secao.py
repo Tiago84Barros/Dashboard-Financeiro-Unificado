@@ -1014,6 +1014,7 @@ def confianca_controle_financeiro(engine=None) -> ConfiancaSecao:
                                 f"nao medido: {type(exc).__name__}"))
     comps.extend(_componente_saldo_conferido(engine, notas))
     comps.extend(_componente_previstos_em_dia(engine, notas))
+    comps.extend(_componente_ipca_grupos(notas))
     return ConfiancaSecao("Controle Financeiro", tuple(comps),
                           notas=tuple(notas))
 
@@ -1062,6 +1063,26 @@ def _componente_previstos_em_dia(engine, notas: list[str]) -> list[Componente]:
     return [Componente(
         "Previstos em dia", 100.0 * (total - atrasados) / total, 0.10,
         f"{total - atrasados} de {total} previstos sem atraso de baixa")]
+
+
+def _componente_ipca_grupos(notas: list[str]) -> list[Componente]:
+    """A aba IPCA Pessoal afirma a inflação do usuário com a série do IBGE
+    publicada em ``data/public/ipca_grupos.json.gz``.
+
+    Arquivo ausente ou ilegível é defeito (``pct=0.0``): a aba não calcula.
+    O IBGE publica o mês M por volta do dia 10 de M+1, então o último mês tem
+    ~40 a ~70 dias numa série em dia: 75 dias é fresco, 150 é velho.
+    """
+    from core.ipca_grupos import ler_ipca_grupos_publicado
+
+    ultimo = ler_ipca_grupos_publicado().ultimo_mes()
+    if ultimo is None:
+        notas.append("serie do IPCA por grupo ausente: a aba IPCA Pessoal nao calcula")
+        return [Componente("Série do IPCA por grupo", 0.0, 0.05,
+                           "arquivo ipca_grupos.json.gz ausente ou ilegivel")]
+    dias = _dias_desde(ultimo)
+    return [Componente("Série do IPCA por grupo", _frescor_pct(dias, 75, 150), 0.05,
+                       f"ultimo mes publicado {ultimo:%m/%Y}; ha {dias} dias")]
 
 
 # ── Controle CNPJ ────────────────────────────────────────────────────────────
