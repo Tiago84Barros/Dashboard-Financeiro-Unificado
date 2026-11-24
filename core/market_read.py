@@ -428,6 +428,51 @@ def load_demonstracoes_batch(tickers: tuple[str, ...]) -> dict[str, pd.DataFrame
     return out
 
 
+#: Qual safra de ``market.calculated_metric_vintages`` vale para cada
+#: (ticker, ano, trimestre, métrica) no histórico anual.
+#:
+#: 1. Safra com data de disponibilidade real antes do ``migration_baseline``.
+#: 2. A PRIMEIRA publicação (``available_at`` mais antigo): uma reapresentação
+#:    posterior não reescreve o que o mercado sabia na data da primeira.
+#: 3. Dentro da mesma publicação, o cálculo MAIS NOVO (``recorded_at`` mais
+#:    recente).
+#:
+#: Até 24/11/2026 o passo 3 era ``recorded_at ASC``: ficava com o cálculo
+#: gravado primeiro. Todo ``recorded_at`` é de 2026 -- é a data em que o NOSSO
+#: pipeline rodou, não a data em que o mercado soube do número. "Primeiro
+#: gravado" era, portanto, "calculado pelo código mais velho". O reprocess de
+#: 12/11/2026 (#721) gravou safras corrigidas com o MESMO ``available_at`` das
+#: antigas, e a leitura nunca as pegou: WEGE3 DY 2014 seguia 15,7% (corrigido:
+#: 2,4%). No armazém, a regra antiga divergia de ``market.calculated_metrics``
+#: em 16.924 de 65.829 chaves; esta, em 2 -- as duas são reapresentações, que o
+#: passo 2 segura de propósito.
+ORDEM_DA_SAFRA_VIGENTE = (
+    "(availability_quality = 'migration_baseline') ASC, "
+    "available_at ASC NULLS LAST, "
+    "recorded_at DESC"
+)
+
+
+def sql_safra_vigente(fonte: str) -> str:
+    """SELECT que escolhe a safra vigente de cada métrica anual em ``fonte``.
+
+    ``fonte`` é a tabela de safras (ou um CTE com as mesmas colunas, nos
+    testes). Para o ``migration_baseline`` o ``available_at`` sai nulo: é o
+    carimbo da ingestão, não a disponibilidade histórica.
+    """
+    return f"""
+        SELECT DISTINCT ON (ticker, year, quarter, metric_name)
+               ticker, year, quarter, metric_name, metric_value,
+               CASE WHEN availability_quality = 'migration_baseline'
+                    THEN NULL ELSE available_at END AS available_at,
+               availability_quality
+        FROM {fonte}
+        WHERE period = 'annual'
+          AND (confidence_score IS NULL OR confidence_score >= 80)
+        ORDER BY ticker, year, quarter, metric_name, {ORDEM_DA_SAFRA_VIGENTE}
+    """
+
+
 def _annual_long(where_sql: str, params: dict) -> pd.DataFrame:
     # Fix auditoria 2026-07 (ponto-no-tempo): linhas 'annual' criadas apenas
     # por dividendos do ano corrente (sem DRE anual publicada) continham DY
@@ -452,17 +497,7 @@ def _annual_long(where_sql: str, params: dict) -> pd.DataFrame:
         # point-in-time medida é zero.
         return _q_b3(f"""
             WITH first_vintage AS (
-                SELECT DISTINCT ON (ticker, year, quarter, metric_name)
-                       ticker, year, quarter, metric_name, metric_value,
-                       CASE WHEN availability_quality = 'migration_baseline'
-                            THEN NULL ELSE available_at END AS available_at,
-                       availability_quality
-                FROM market.calculated_metric_vintages
-                WHERE period = 'annual'
-                  AND (confidence_score IS NULL OR confidence_score >= 80)
-                ORDER BY ticker, year, quarter, metric_name,
-                         (availability_quality = 'migration_baseline') ASC,
-                         recorded_at ASC
+                {sql_safra_vigente("market.calculated_metric_vintages")}
             ),
             stmt AS (
                 SELECT ticker, MAX(year) AS ymax

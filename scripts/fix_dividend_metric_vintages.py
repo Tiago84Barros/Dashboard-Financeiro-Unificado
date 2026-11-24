@@ -11,6 +11,12 @@ inflado NO SCORE E NO BACKTEST mesmo depois de market.calculated_metrics ter
 sido corrigida (o reprocess só acrescenta vintages novas, que esse caminho
 ignora de propósito).
 
+Desde 24/11/2026 o leitor fica com a primeira PUBLICAÇÃO (``available_at``
+mais antigo), mas com o cálculo MAIS NOVO dela (``recorded_at`` mais recente)
+-- ver ``core.market_read.ORDEM_DA_SAFRA_VIGENTE``. Um reprocess que regrava a
+mesma publicação já chega à leitura sem este scrub; o script fica para o
+histórico e para o caso de a safra corrigida ganhar outra data.
+
 A poluição não é uma observação legítima de mercado — é bug de ingestão
 nosso; a vintage nunca representou o que "se sabia na época". Por isso este
 script CORRIGE o valor no lugar (exceção documentada à imutabilidade da
