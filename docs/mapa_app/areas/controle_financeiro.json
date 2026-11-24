@@ -8,7 +8,7 @@
     {
       "nome": "Período de análise",
       "resumo": "Escolha do mês que vale para a tela",
-      "explicacao": "Faixa no alto, logo abaixo do título da tela, para escolher o mês. O mês escolhido vale para os números e gráficos das abas Dashboard e Análises, para o aviso de lançamentos em dobro e como ponto de partida do filtro do Cartão; a consulta da aba Tabelas tem filtros próprios. Ao lado aparece um selo 'Dados reais' (ou outro selo quando são dados de exemplo) e, se o mês não tem lançamentos, um aviso de que os números ficarão zerados.",
+      "explicacao": "Faixa no alto, logo abaixo do título da tela, para escolher o mês. O mês escolhido vale para os números e gráficos das abas Dashboard e Análises, como fim da janela de 12 meses da aba IPCA Pessoal, para o aviso de lançamentos em dobro e como ponto de partida do filtro do Cartão; a consulta da aba Tabelas tem filtros próprios. Ao lado aparece um selo 'Dados reais' (ou outro selo quando são dados de exemplo) e, se o mês não tem lançamentos, um aviso de que os números ficarão zerados.",
       "so_admin": false,
       "fonte": "views/controle_financeiro.py:3688",
       "filhos": [

@@ -1275,6 +1275,11 @@ def _ipca_pessoal_para_chat(ano: int, mes: int):
         from core.ipca_pessoal_dados import ipca_pessoal_do_mes
         return ipca_pessoal_do_mes(ano, mes)
     except Exception:  # noqa: BLE001
+        # O chat segue sem o bloco, mas a causa fica no log: um defeito da
+        # conta não pode passar por simples falha de leitura.
+        import logging
+
+        logging.getLogger(__name__).exception("IPCA Pessoal para o chat falhou")
         return None
 
 
