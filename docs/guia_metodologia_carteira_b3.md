@@ -1236,3 +1236,125 @@ carteiras de regra não explica a posição delas.
   e sem correção para isso, e pesos iguais e Ibovespa sem custo (viés contra
   as carteiras). Um percentil de 98–100% em nove safras não prova que a
   vantagem continua.
+
+## 23. Pequenas baratas e dividendo de 6% (24/11/2026, medido: o dividendo passa, as pequenas não)
+
+### Que pergunta responde
+
+A literatura que o usuário estuda aponta duas rotas que o app não testava:
+
+1. **Pequenas e baratas.** O prêmio de tamanho e valor costuma morar nas
+   empresas menores, e o perfil Equilibrado corta tudo abaixo de R$ 1 bi de
+   valor de mercado. A pergunta: **as baratas que o piso corta batem pesos
+   iguais?**
+2. **Dividendo de 6% (Bazin).** Comprar quem paga pelo menos 6% ao ano de
+   forma constante. A pergunta: **essa regra, sozinha e com trava de
+   solvência, bate pesos iguais?**
+
+### As regras (`core.b3_estrategias_fundamentalistas`, versão 1.3.0)
+
+Fixadas antes de ver qualquer número, sem parâmetro para ajustar:
+
+- **`pequenas_baratas`:** roda a aba com o perfil Equilibrado trocando só o
+  piso de valor de mercado para "Sem filtro" (a liquidez mínima de R$ 500 mil
+  fica). "Pequena" é quem está no universo sem piso e fora do universo com
+  piso, na mesma safra. Entre elas, ficam as que a rota de valor classifica
+  como `oportunidade`. Pesos iguais.
+- **`dividendo_6`:** universo da carteira padrão. Fica quem tem DY médio de
+  **pelo menos 6%** nos três últimos exercícios conhecidos em abril (N-3 a
+  N-1), **os três presentes**, e nenhuma falha da trava de solvência da §19.
+  DY fora de 0% a 100% conta como ausente (não é crível). Ano com duas
+  linhas vale a mais nova. Pesos iguais.
+- Mesma régua da §19: 9 safras, formação em abril, custos de pessoa física,
+  safra vazia vira caixa a Selic, só o que se sabia em abril (vintage).
+
+Medição: `python scripts/medir_estrategias_fundamentalistas_b3.py
+--pequenas-dividendo --cache-dir <pasta>` (grava
+`data/oos_pequenas_dividendo_b3.json`). A rodada sem piso tem cache próprio
+(`Equilibrado|pb3_min_mcap=Sem filtro`), para não se misturar com a rodada
+padrão nem com outro perfil personalizado.
+
+### Regra de decisão, registrada antes de medir
+
+Texto em `REGRA_DE_DECISAO_PEQUENAS_DIVIDENDO`. Cada carteira só é candidata
+se, líquida do giro, passar nos três testes da §19:
+
+- (a) excesso médio sobre pesos iguais **no próprio universo** > 0, com piso
+  do IC 95% > 0;
+- (b) média sem a melhor safra > 0;
+- (c) diferença pareada contra a carteira padrão atual (Equilibrado, sem
+  portão) com média > 0.
+
+Regras adicionais:
+
+- **Dois braços** elevam a chance de falso positivo para perto de 1 em 10.
+  Isso fica dito no resultado.
+- **Só informativos, não aprovam nem reprovam:** a rota de valor sem piso
+  (grandes e pequenas juntas) e o excesso das pequenas sobre os pesos iguais
+  do universo **com** piso.
+- Passar não muda a tela nem a carteira padrão. Só abre a próxima etapa.
+
+### Limites já conhecidos
+
+- Nove safras não separam sorte de regra com folga; (b) existe por isso.
+- "Pequena" inclui quem não tem valor de mercado no retrato (o piso corta
+  quem não tem o número). E uma empresa grande pode cair nas "pequenas" se o
+  segmento dela só existe na rodada sem piso.
+- Pequenas têm spread e impacto de preço maiores que o custo de pessoa física
+  da régua: o resultado líquido tende a ser otimista para elas.
+- O DY vem do histórico anual (preço de fim do exercício). Dividendo
+  extraordinário de um ano entra na média; a exigência de três anos reduz,
+  mas não remove, esse efeito.
+- O armazém tem viés de sobrevivência parcial (§19): quem saiu da bolsa entra
+  pela lista de saídas, mas nem toda saída tem preço até o fim.
+
+### Resultado (medido em 24/11/2026, armazém local, perfil Equilibrado, 9 safras)
+
+A regra acima foi aplicada sem mudança. A carteira padrão reproduziu a §22
+(+2,9 pp sobre pesos iguais), o que confirma a mesma base de dados. A rota de
+valor completa da §19 entra na tabela só como referência.
+
+| Carteira | Ações | (a) excesso | piso do IC 95% | (b) sem a melhor safra | (c) contra a padrão | Giro/ano | Veredito |
+|---|---|---|---|---|---|---|---|
+| Dividendo de 6% | 34–55 | +5,0 pp | +1,4 pp | +4,1 pp | +2,1 pp | 39% | **candidata** |
+| Pequenas baratas | 2–9 | +18,1 pp | −3,5 pp | +6,9 pp | +16,0 pp | 66% | fora (a) |
+| Rota de valor sem piso (informativa) | 22–61 | +9,7 pp | +3,9 pp | +6,9 pp | +7,6 pp | 48% | — |
+| Rota de valor completa (§19, referência) | ~39 | +9,9 pp | +3,6 pp | +6,3 pp | +7,0 pp | 48% | candidata |
+
+Tamanho dos universos: o piso de R$ 1 bi corta de 15 a 25 empresas por safra
+(de 2017 a 2025). Entre elas, só 2 a 9 são `oportunidade` para a rota de
+valor.
+
+Leitura com cautela:
+
+- **O dividendo de 6% passa nos três testes.** Bateu pesos iguais em sete das
+  nove safras (perdeu em 2018 e 2019) e a média não depende de um ano só.
+  Pela regra pré-registrada, é candidata.
+- **Mas ganha pouco da carteira padrão.** A diferença pareada é +2,1 pp, com
+  IC 95% de −4,9 a +9,3 pp; sem a melhor safra (2017) fica em −0,6 pp. A
+  regra (c) só pede média > 0, e isso foi cumprido, mas não há certeza de
+  que o dividendo supere a padrão.
+- **Com o imposto de renda, o piso do IC do dividendo encosta no zero**
+  (−0,06 pp). O resultado depende do custo tributário de quem investe.
+- **O dividendo fica atrás da rota de valor.** Ganha uns 5 pp a menos por
+  ano sobre pesos iguais, com giro um pouco menor (39% contra 48%). Não é uma rota melhor; é uma
+  segunda rota que também passa.
+- **As pequenas baratas não passam em (a).** A média de +18,1 pp vem de uma
+  carteira de 2 a 9 ações, e uma safra (2020: +108 pp sobre pesos iguais)
+  carrega quase tudo. Sem ela a média cai para +6,9 pp. Em quatro das nove
+  safras perderam para pesos iguais. Com tão poucos nomes, a incerteza é
+  grande demais para separar regra de sorte.
+- **Tirar o piso não melhora a rota de valor.** A rota sem piso (+9,7 pp)
+  fica igual à rota completa da §19 (+9,9 pp). As pequenas acrescentam
+  poucos nomes e muita variação, não excesso.
+- Contra os pesos iguais **do universo com piso** (informativo), as pequenas
+  ficam em +18,9 pp com IC de −4,7 a +49,9 pp: a mesma conclusão.
+- **Dois braços:** a chance de um falso positivo entre os dois fica perto de
+  1 em 10. A candidatura do dividendo é para a próxima etapa, não uma prova.
+- Os limites acima continuam. O custo das pequenas na régua é o de pessoa
+  física, menor que o spread real delas; isso favorece as pequenas, e mesmo
+  assim elas não passam.
+- **Nada muda na tela nem na carteira padrão.** Próximo passo possível, se o
+  usuário quiser: medir o dividendo de 6% em outra janela de safras e com o
+  IR no lugar do líquido simples, e ver quanto ele se sobrepõe à rota de
+  valor.

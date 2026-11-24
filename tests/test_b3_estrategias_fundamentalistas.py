@@ -331,3 +331,84 @@ def test_topn_sem_retrato_ou_n_invalido_e_vazio():
     assert fe.carteira_rota_valor_topn(None, ["X3"], 10) == []
     assert fe.carteira_rota_valor_topn(_oportunidades(3), ["O003"], 0) == []
     assert fe.rotulo_rota_topn(15) == "rota_valor_top15"
+
+
+# ── 6. Pequenas baratas ─────────────────────────────────────────────────────
+def test_pequenas_sao_as_que_o_piso_corta():
+    assert fe.pequenas(["a3", "B3X", "C3"], ["B3X"]) == ["A3", "C3"]
+    assert fe.pequenas(["A3"], ["A3"]) == []
+
+
+def test_pequenas_baratas_so_compra_oportunidade_entre_as_pequenas():
+    barata = {"P/L": 5.0, "P/VP": 0.8, "DY": 0.09}
+    df = pd.DataFrame([
+        _empresa("PEQB3", **barata),          # pequena e barata: entra
+        _empresa("PEQC3"),                    # pequena e cara: fora
+        _empresa("GRDB3", **barata),          # barata, mas grande: fora
+    ])
+    sem_piso = ["PEQB3", "PEQC3", "GRDB3"]
+    com_piso = ["GRDB3"]
+    assert fe.carteira_pequenas_baratas(df, sem_piso, com_piso) == ["PEQB3"]
+    # A rota sem piso (informativa) pega as duas baratas.
+    assert fe.carteira_rota_valor(df, sem_piso) == ["GRDB3", "PEQB3"]
+
+
+def test_pequenas_baratas_sem_retrato_e_vazia():
+    assert fe.carteira_pequenas_baratas(None, ["A3"], []) == []
+
+
+# ── 7. Dividendo de 6% (Bazin) ──────────────────────────────────────────────
+def _hist_dy(dys: dict[int, float]) -> pd.DataFrame:
+    return pd.DataFrame({"Data": [pd.Timestamp(a, 12, 31) for a in dys],
+                         "DY": list(dys.values())})
+
+
+def test_dy_medio_exige_os_tres_anos():
+    assert fe.dy_medio(_hist_dy({2021: 0.05, 2022: 0.06, 2023: 0.07}), 2023) == \
+        pytest.approx(0.06)
+    assert fe.dy_medio(_hist_dy({2022: 0.06, 2023: 0.07}), 2023) is None
+    # Ano posterior a ano_max não entra na janela.
+    assert fe.dy_medio(_hist_dy({2020: 0.1, 2021: 0.1, 2022: 0.1, 2023: 0.0}),
+                       2022) == pytest.approx(0.1)
+
+
+def test_dy_incrivel_conta_como_ausente():
+    assert fe.dy_medio(_hist_dy({2021: 0.07, 2022: 5.0, 2023: 0.07}), 2023) is None
+    assert fe.dy_medio(_hist_dy({2021: 0.07, 2022: -0.01, 2023: 0.07}), 2023) is None
+
+
+def test_dy_com_duas_linhas_no_ano_vale_a_mais_nova():
+    h = pd.DataFrame({"Data": [pd.Timestamp(2023, 12, 31), pd.Timestamp(2023, 6, 30),
+                               pd.Timestamp(2022, 12, 31), pd.Timestamp(2021, 12, 31)],
+                      "DY": [0.09, 0.01, 0.06, 0.06]})
+    assert fe.dy_medio(h, 2023) == pytest.approx(0.07)
+
+
+def test_dividendo_bazin_corta_por_media_e_por_solvencia():
+    df = pd.DataFrame([
+        _empresa("PAGA3"),
+        _empresa("POUCO3"),
+        _empresa("QUEBR3", **{"P_FCO": -3.0}),
+        _empresa("SEMH3"),
+    ])
+    hist = {
+        "paga3": _hist_dy({2021: 0.06, 2022: 0.05, 2023: 0.08}),   # média 6,3%
+        "POUCO3": _hist_dy({2021: 0.06, 2022: 0.05, 2023: 0.06}),  # média 5,7%
+        "QUEBR3": _hist_dy({2021: 0.10, 2022: 0.10, 2023: 0.10}),
+    }
+    universo = ["PAGA3", "POUCO3", "QUEBR3", "SEMH3"]
+    falhas = fe.falhas_de_solvencia(df, universo)
+    assert falhas["QUEBR3"] and not falhas["PAGA3"]
+    assert fe.carteira_dividendo_bazin(df, universo, hist, 2023) == ["PAGA3"]
+
+
+def test_dividendo_bazin_no_limite_de_6_entra():
+    hist = {"X3": _hist_dy({2021: 0.06, 2022: 0.06, 2023: 0.06})}
+    assert fe.carteira_dividendo_bazin(None, ["X3"], hist, 2023) == ["X3"]
+
+
+def test_regra_da_secao_23_registrada():
+    assert fe.VERSAO == "fundamentalistas-1.3.0"
+    texto = fe.REGRA_DE_DECISAO_PEQUENAS_DIVIDENDO
+    assert "(a)" in texto and "(b)" in texto and "(c)" in texto
+    assert fe.DY_ALVO_BAZIN == 0.06 and fe.ANOS_DY_BAZIN == 3

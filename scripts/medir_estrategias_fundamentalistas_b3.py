@@ -46,6 +46,12 @@ if str(ROOT) not in sys.path:
 
 CAMINHO = ROOT / "data" / "oos_estrategias_fundamentalistas_b3.json"
 CAMINHO_ENXUTA = ROOT / "data" / "oos_rota_valor_enxuta_b3.json"
+CAMINHO_PEQUENAS_DIVIDENDO = ROOT / "data" / "oos_pequenas_dividendo_b3.json"
+
+#: A rodada sem piso de tamanho (§23): o perfil padrão com só o valor de
+#: mercado mínimo trocado. A liquidez mínima (R$ 500 mil) fica.
+VALORES_SEM_PISO = {"pb3_min_mcap": "Sem filtro"}
+CHAVE_CACHE_SEM_PISO = "Equilibrado|pb3_min_mcap=Sem filtro"
 
 
 def selic_ate(selic_por_ano: dict, ano: int) -> float | None:
@@ -186,6 +192,17 @@ def montar_recorte(cache_dir: Path | None) -> dict:
             lambda p, n=n: fe.carteira_rota_valor_topn(
                 p["df_pit"], p["universo"], n, selic=selic_da_safra(p["safra"])))
 
+    def dividendo(p):
+        # Bazin (§23): DY dos três exercícios até N-1, cortado pela vintage.
+        safra = p["safra"]
+        ano_max = ano_base_do_score(safra)
+        alvos = set(p["universo"])
+        hist = historico_ate({tk: df for tk, df in hist_batch.items() if tk in alvos},
+                             ano_max, M._aceita_da_safra(safra))
+        return fe.carteira_dividendo_bazin(p["df_pit"], p["universo"], hist, ano_max)
+
+    escolhas[fe.DIVIDENDO_6] = dividendo
+
     def medir(escolha, memo=None):
         return medir_escolha(por_safra, escolha, precos=precos, selic_macro=selic_macro,
                              taxa=taxa, selic_mensal=selic_mensal, cost_cfg=cost_cfg,
@@ -196,9 +213,177 @@ def montar_recorte(cache_dir: Path | None) -> dict:
         "ibov": ibov, "precos": precos, "padrao": padrao, "comeca_em": comeca_em,
         "por_safra": por_safra, "cadeia": cadeia, "escolhas": escolhas,
         "medir": medir, "lideres_padrao": lideres_padrao,
+        "selic_da_safra": selic_da_safra,
         "lideres_por_safra": lideres_por_safra, "lider_segurado": lider_segurado,
         "saidas_lider": saidas_lider,
     }
+
+
+def recorte_sem_piso(rc: dict, cache_dir: Path | None) -> dict:
+    """A rodada da aba sem piso de tamanho e a régua presa a ela (§23).
+
+    Mesmo perfil padrão, só ``pb3_min_mcap`` trocado: a tela lê
+    "Personalizado", e o pickle tem chave própria. A cadeia de custos começa
+    na MESMA safra da medição padrão (``comeca_em``), para o pareamento.
+    """
+    from core.b3_portfolio_presets import PERSONALIZADO, PRESETS
+    from scripts.medir_nota_fatores_b3 import medir_escolha, rodada_da_aba
+
+    prep, M, fe = rc["prep"], rc["M"], rc["fe"]
+    valores = {**dict(PRESETS[prep["perfil"]].valores), **VALORES_SEM_PISO}
+    resultados, precos, params, decisao = rodada_da_aba(
+        M, prep["view"], PERSONALIZADO, valores, cache_dir,
+        chave_cache=CHAVE_CACHE_SEM_PISO)
+    contexto, por_safra = M._segmentos_por_safra(resultados, precos, params, decisao,
+                                                 prep["cost_cfg"], prep["hoje"])
+    selic_macro, taxa = contexto["selic_macro"], contexto["taxa_selic_aa"]
+    selic_mensal = M._selic_mensal()
+    com_piso = {p["safra"]: p["universo"] for p in rc["por_safra"]}
+    selic_da_safra = rc["selic_da_safra"]
+
+    def pequenas_baratas(p):
+        # Safra sem universo com piso: não há como dizer quem é pequena.
+        if p["safra"] not in com_piso:
+            return []
+        return fe.carteira_pequenas_baratas(
+            p["df_pit"], p["universo"], com_piso[p["safra"]],
+            selic=selic_da_safra(p["safra"]))
+
+    escolhas = {
+        fe.PEQUENAS_BARATAS: pequenas_baratas,
+        fe.ROTA_VALOR_SEM_PISO: lambda p: fe.carteira_rota_valor(
+            p["df_pit"], p["universo"], selic=selic_da_safra(p["safra"])),
+    }
+
+    def medir(escolha, memo=None):
+        return medir_escolha(por_safra, escolha, precos=precos, selic_macro=selic_macro,
+                             taxa=taxa, selic_mensal=selic_mensal,
+                             cost_cfg=prep["cost_cfg"], comeca_em=rc["comeca_em"],
+                             memo=memo)
+
+    tamanhos = {p["safra"]: {
+        "universo_sem_piso": len(p["universo"]),
+        "universo_com_piso": len(com_piso.get(p["safra"], [])),
+        "pequenas": len(fe.pequenas(p["universo"], com_piso.get(p["safra"], [])))
+        if p["safra"] in com_piso else None,
+    } for p in por_safra}
+    return {"por_safra": por_safra, "escolhas": escolhas, "medir": medir,
+            "tamanhos": tamanhos}
+
+
+def _avaliar(rc: dict, m: dict) -> dict:
+    """Pareada contra a carteira padrão (líquido) e os três testes."""
+    oos, padrao = rc["oos"], rc["padrao"]
+    par = diferenca_pareada(padrao["safras"], m["safras"], "liquido")
+    resumo_par = oos.resumir(par, "dif")
+    m["vs_carteira_padrao"] = {**resumo_par, "safras": par}
+    m["decisao"] = decidir(m, resumo_par)
+    return m
+
+
+def excesso_sobre_outro_ew(braco: list[dict], referencia: list[dict]) -> list[dict]:
+    """Líquido do braço menos os pesos iguais de OUTRO universo, safra a safra.
+
+    Informativo da §23: as pequenas contra os pesos iguais do universo com
+    piso (o que a carteira padrão usa como régua).
+    """
+    ew = {int(t["safra"]): t["equal_weight"] for t in referencia
+          if t.get("equal_weight") is not None}
+    return [{"safra": int(t["safra"]), "dif": float(t["liquido"]) - float(ew[int(t["safra"])])}
+            for t in braco if t.get("liquido") is not None and int(t["safra"]) in ew]
+
+
+def medir_pequenas_dividendo(rc: dict, cache_dir: Path | None, *,
+                             dry_run: bool = False) -> int:
+    """Os braços da §23: dividendo de 6%, pequenas baratas e a rota sem piso."""
+    from core.b3_methodology import SCORE_VERSION
+    from core.b3_portfolio_presets import VERSION as PRESETS_VERSION
+    from scripts.medir_vantagem_oos import _fonte_efetiva_b3
+
+    oos, fe = rc["oos"], rc["fe"]
+    sp = recorte_sem_piso(rc, cache_dir)
+
+    bracos = {}
+    bracos[fe.DIVIDENDO_6] = _avaliar(rc, rc["medir"](rc["escolhas"][fe.DIVIDENDO_6]))
+    for rotulo in (fe.PEQUENAS_BARATAS, fe.ROTA_VALOR_SEM_PISO):
+        m = _avaliar(rc, sp["medir"](sp["escolhas"][rotulo]))
+        ref = excesso_sobre_outro_ew(m["safras"], bracos[fe.DIVIDENDO_6]["safras"])
+        m["vs_equal_weight_com_piso"] = {**oos.resumir(ref, "dif"), "safras": ref}
+        bracos[rotulo] = m
+    for rotulo, m in bracos.items():
+        r = m["vs_equal_weight"]
+        print(f"{rotulo}: media={r['media']} ic95={r['ic95']} n={r['n_safras']} "
+              f"sem_melhor={r['media_sem_melhor_safra']} "
+              f"vs_padrao={m['vs_carteira_padrao']['media']} "
+              f"candidata={m['decisao']['candidata']}", flush=True)
+
+    sob_regra = (fe.PEQUENAS_BARATAS, fe.DIVIDENDO_6)
+    safras_medidas = sorted({t["safra"] for m in bracos.values() for t in m["safras"]})
+    saida = {
+        "versao_medicao": fe.VERSAO,
+        "versao_metodologia": SCORE_VERSION,
+        "versao_presets": PRESETS_VERSION,
+        "medido_em": datetime.now().isoformat(timespec="seconds"),
+        "perfil": rc["nome"],
+        "perfil_sem_piso": {"valores_trocados": VALORES_SEM_PISO,
+                            "chave_cache": CHAVE_CACHE_SEM_PISO},
+        "safras": safras_medidas,
+        "janela": (f"abril/{min(safras_medidas)} a março/{max(safras_medidas) + 1}"
+                   if safras_medidas else None),
+        "regra_de_decisao": fe.REGRA_DE_DECISAO_PEQUENAS_DIVIDENDO,
+        "sob_a_regra": list(sob_regra),
+        "informativos": [fe.ROTA_VALOR_SEM_PISO],
+        "regras": {
+            fe.PEQUENAS_BARATAS: (
+                "nomes no universo da rodada sem piso de valor de mercado e fora "
+                "do universo com piso (R$ 1 bi), mesma liquidez mínima (R$ 500 mil), "
+                "que a rota de valor classifica como 'oportunidade' (Selic de N-1)"),
+            fe.DIVIDENDO_6: (
+                f"DY médio dos {fe.ANOS_DY_BAZIN} exercícios até N-1 (todos presentes, "
+                f"DY entre 0 e {fe.DY_MAXIMO_CRIVEL:.0%}) >= {fe.DY_ALVO_BAZIN:.0%}; "
+                "sem falha da trava de solvência; universo da carteira padrão"),
+            fe.ROTA_VALOR_SEM_PISO: (
+                "informativo: a rota de valor em todo o universo sem piso de tamanho"),
+            "pesos": "iguais entre os escolhidos",
+            "formacao": "em abril (início da vigência)",
+        },
+        "metrica_principal": (
+            "excesso por safra (abril/N a março/N+1), LÍQUIDO do giro, sobre "
+            "pesos iguais no universo da própria carteira (sem piso para as "
+            "pequenas e a rota sem piso; com piso para o dividendo)"),
+        "custos": {
+            "modelo": "CostConfig.brasil_pf_default()",
+            "benchmarks": "brutos (pesos iguais não paga custo): viés contra a carteira",
+        },
+        "fonte": {
+            "precos": "os da aba (mensal ajustado do armazém local)",
+            "fundamentos": f"aba de Criação de Portfólio B3 sobre {_fonte_efetiva_b3()}",
+        },
+        "limites": [
+            "DY e múltiplos anuais com o preço de fim de cada exercício, não o de abril/N",
+            "'pequena' inclui quem não tem valor de mercado medido: o piso também o corta",
+            ("pequena é quem sai do universo sem o piso; uma empresa grande cujo "
+             "segmento só existe sem o piso também entraria"),
+            "safra sem nenhum nome vira caixa à Selic",
+            "nove safras não separam sorte de regra com folga; o teste (b) existe por isso",
+            "a liquidez mínima de R$ 500 mil continua valendo nas duas rodadas",
+            "custo do giro igual ao das grandes: o spread maior das pequenas não entra",
+        ],
+        "estrategias": bracos,
+        "carteira_padrao": {
+            "vs_equal_weight": rc["padrao"]["vs_equal_weight"],
+            "fonte": "scripts/medir_oos_carteira_b3.py, mesma rodada, sem portão",
+        },
+        "tamanho_dos_universos": {str(k): v for k, v in sorted(sp["tamanhos"].items())},
+        "candidatas": [k for k in sob_regra if bracos[k]["decisao"]["candidata"]],
+    }
+    texto = json.dumps(saida, indent=2, ensure_ascii=False, default=str)
+    if dry_run:
+        print(texto)
+    else:
+        CAMINHO_PEQUENAS_DIVIDENDO.write_text(texto + "\n", encoding="utf-8")
+        print(f"gravado em {CAMINHO_PEQUENAS_DIVIDENDO}")
+    return 0
 
 
 def main() -> int:
@@ -210,9 +395,14 @@ def main() -> int:
     ap.add_argument("--enxuta", action="store_true",
                     help="mede só a rota de valor completa e os braços top-10/15/20 "
                          "(grava data/oos_rota_valor_enxuta_b3.json)")
+    ap.add_argument("--pequenas-dividendo", action="store_true",
+                    help="mede as pequenas baratas e o dividendo de 6%% da §23 "
+                         "(grava data/oos_pequenas_dividendo_b3.json)")
     args = ap.parse_args()
 
     rc = montar_recorte(args.cache_dir)
+    if args.pequenas_dividendo:
+        return medir_pequenas_dividendo(rc, args.cache_dir, dry_run=args.dry_run)
     oos, fe, nome, padrao = rc["oos"], rc["fe"], rc["nome"], rc["padrao"]
     medir, cadeia = rc["medir"], rc["cadeia"]
     lideres_por_safra, lider_segurado = rc["lideres_por_safra"], rc["lider_segurado"]
