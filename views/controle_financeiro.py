@@ -1268,6 +1268,16 @@ def _previstos_para_chat() -> list | None:
         return None
 
 
+def _ipca_pessoal_para_chat(ano: int, mes: int):
+    """IPCA Pessoal para o contexto do chat; ``None`` quando a leitura falha,
+    para o contexto dizer que não calculou em vez de calar."""
+    try:
+        from core.ipca_pessoal_dados import ipca_pessoal_do_mes
+        return ipca_pessoal_do_mes(ano, mes)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _render_chat_financeiro(
     d: dict, historico: list, hist_anual: dict, gastos_cartao: dict,
     investido_mes: float, evolucao: dict, ano_ref: int, mes_ref: int,
@@ -1384,6 +1394,7 @@ def _render_chat_financeiro(
                     ano_ref=ano_ref,
                     mes_ref=mes_ref,
                     previstos=_previstos_para_chat(),
+                    ipca_pessoal=_ipca_pessoal_para_chat(ano_ref, mes_ref),
                 )
                 # Premissa do app: macro e noticiário geral acompanham toda
                 # conversa — juro e inflação mudam a leitura do orçamento.
