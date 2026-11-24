@@ -1358,3 +1358,73 @@ Leitura com cautela:
   usuário quiser: medir o dividendo de 6% em outra janela de safras e com o
   IR no lugar do líquido simples, e ver quanto ele se sobrepõe à rota de
   valor.
+
+## 24. O dividendo de 6% em outra janela: safras 2013 a 2016 (24/11/2026, desenho)
+
+### Que pergunta responde
+
+A §23 mediu o dividendo de 6% (Bazin) em nove safras, de 2017 a 2025, e ele
+passou nos três testes com folga pequena. Nove safras não separam regra de
+sorte com segurança. A pergunta: **a mesma regra, sem mudar nada, também bate
+pesos iguais em safras que ninguém olhou?**
+
+### Por que 2013 a 2016
+
+A §23 começa em 2017 porque a aba carrega só 10 anos de preço
+(`period="10y"` na leitura dos preços mensais de `views/portfolio_b3.py`). O
+score da rodada cobre 2013 a 2025, e o armazém local tem preço desde 2000.
+Então as safras de abril/2013 a março/2017 têm universo, retrato da época e
+preço, mas nunca foram medidas. São as únicas safras "novas" que dá para
+medir sem inventar dado.
+
+### O que muda e o que não muda
+
+- **Não muda:** a regra (`carteira_dividendo_bazin`), o universo de cada
+  safra, o retrato PIT, o histórico cortado pela vintage, o custo do giro e a
+  régua (`medir_escolha`). A rodada da aba é a mesma do pickle da §23.
+- **Muda:** a primeira safra (`_segmentos_por_safra(..., primeira=2013)`) e
+  os preços, que perdem o corte de 10 anos (`precos_sem_corte`: a mesma
+  leitura da aba, mesmas trocas de código e mesmas empresas que saíram da
+  bolsa). O script confere que, no trecho comum, os preços são iguais aos da
+  aba. A cadeia de custos começa em 2013.
+
+### Regra de decisão (registrada antes de medir)
+
+`REGRA_DE_DECISAO_DIVIDENDO_OUTRA_JANELA`, versão `fundamentalistas-1.4.0`.
+Métrica: excesso por safra, **líquido do giro**, sobre pesos iguais no
+universo da carteira padrão. Leituras, aplicadas por `leitura_outra_janela`:
+
+| Leitura | Quando |
+|---|---|
+| **confirma** | (a) média > 0 com IC 95% acima de zero **e** (b) média sem a melhor safra > 0 |
+| **não contradiz** | média > 0 e (b) > 0, mas o IC cruza o zero |
+| **contradiz** | média ≤ 0 **ou** (b) ≤ 0 |
+| **inconclusiva** | menos de três safras medidas |
+
+Com quatro safras o IC quase nunca fica acima de zero; por isso "não
+contradiz" foi separado de "contradiz" antes de medir. O teste (c) da §23,
+contra a carteira padrão, não se aplica: a padrão não tem carteira antes de
+2017.
+
+Só informativos: a janela inteira 2013–2025 (13 safras), o excesso com IR e
+a conferência das safras 2017–2025 contra a §23 (devem bater, salvo o giro de
+2017, que agora vem da carteira de 2016).
+
+Passar não muda a tela.
+
+### Limites declarados antes
+
+- Só quatro safras.
+- O universo antigo usa o piso nominal de R$ 1 bi da aba, sem correção pela
+  inflação: em 2013 ele corta proporcionalmente mais empresas.
+- O DY da safra 2013 precisa dos exercícios 2010 a 2012; quem não tem os três
+  fica fora.
+- Safra sem nenhum nome vira caixa à Selic.
+
+### Como rodar
+
+```bash
+python scripts/medir_estrategias_fundamentalistas_b3.py --cache-dir <pasta> --dividendo-outra-janela
+```
+
+Grava `data/oos_dividendo_outra_janela_b3.json`.

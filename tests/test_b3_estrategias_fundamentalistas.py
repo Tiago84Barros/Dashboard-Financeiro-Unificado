@@ -408,7 +408,53 @@ def test_dividendo_bazin_no_limite_de_6_entra():
 
 
 def test_regra_da_secao_23_registrada():
-    assert fe.VERSAO == "fundamentalistas-1.3.0"
+    assert fe.VERSAO == "fundamentalistas-1.4.0"
     texto = fe.REGRA_DE_DECISAO_PEQUENAS_DIVIDENDO
     assert "(a)" in texto and "(b)" in texto and "(c)" in texto
     assert fe.DY_ALVO_BAZIN == 0.06 and fe.ANOS_DY_BAZIN == 3
+
+
+# ── §24: o dividendo de 6% em outra janela ──────────────────────────────────
+def _resumo(media, lo, sem_melhor, n=4):
+    return {"media": media, "ic95": [lo, 0.5], "n_safras": n,
+            "media_sem_melhor_safra": sem_melhor}
+
+
+def test_outra_janela_confirma_com_ic_acima_de_zero_e_sem_melhor_positiva():
+    r = fe.leitura_outra_janela(_resumo(0.05, 0.01, 0.03))
+    assert r["leitura"] == fe.CONFIRMA
+    assert all(r["testes"].values())
+
+
+def test_outra_janela_nao_contradiz_quando_so_o_ic_cruza_o_zero():
+    r = fe.leitura_outra_janela(_resumo(0.05, -0.02, 0.03))
+    assert r["leitura"] == fe.NAO_CONTRADIZ
+    assert not r["testes"]["a_excesso_ew_ic_acima_de_zero"]
+    assert r["testes"]["b_sem_melhor_safra_positiva"]
+
+
+def test_outra_janela_contradiz_com_media_ou_sem_melhor_negativa():
+    assert fe.leitura_outra_janela(_resumo(-0.01, -0.05, -0.02))["leitura"] == fe.CONTRADIZ
+    # Média positiva puxada por uma safra só: contradiz.
+    assert fe.leitura_outra_janela(_resumo(0.04, -0.03, -0.01))["leitura"] == fe.CONTRADIZ
+    # Média zero não é "acima de zero".
+    assert fe.leitura_outra_janela(_resumo(0.0, -0.01, 0.01))["leitura"] == fe.CONTRADIZ
+
+
+def test_outra_janela_poucas_safras_e_inconclusiva_nao_contradiz():
+    assert fe.leitura_outra_janela(_resumo(-0.05, None, None, n=2))["leitura"] == fe.INCONCLUSIVA
+    assert fe.leitura_outra_janela(None)["leitura"] == fe.INCONCLUSIVA
+
+
+def test_outra_janela_le_o_resumo_de_verdade():
+    import core.b3_oos_carteira as oos
+    linhas = [{"safra": s, "excesso_ew": v}
+              for s, v in zip(range(2013, 2017), (0.04, 0.06, 0.05, 0.03))]
+    r = fe.leitura_outra_janela(oos.resumir(linhas, "excesso_ew"))
+    assert r["n_safras"] == 4 and r["leitura"] == fe.CONFIRMA
+
+
+def test_regra_da_secao_24_registrada():
+    texto = fe.REGRA_DE_DECISAO_DIVIDENDO_OUTRA_JANELA
+    assert "2013" in texto and "2016" in texto and "(c)" in texto
+    assert (fe.PRIMEIRA_SAFRA_OUTRA_JANELA, fe.ULTIMA_SAFRA_OUTRA_JANELA) == (2013, 2016)

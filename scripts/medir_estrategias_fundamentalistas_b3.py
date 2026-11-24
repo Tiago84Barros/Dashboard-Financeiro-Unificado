@@ -26,6 +26,7 @@ Uso::
 
     python scripts/medir_estrategias_fundamentalistas_b3.py --cache-dir <pasta>
     python scripts/medir_estrategias_fundamentalistas_b3.py --dry-run
+    python scripts/medir_estrategias_fundamentalistas_b3.py --cache-dir <pasta> \n        --dividendo-outra-janela   # §24: safras 2013 a 2016
 
 O armazém local precisa estar de pé. Grava
 `data/oos_estrategias_fundamentalistas_b3.json`; nada vai para banco nenhum.
@@ -47,6 +48,7 @@ if str(ROOT) not in sys.path:
 CAMINHO = ROOT / "data" / "oos_estrategias_fundamentalistas_b3.json"
 CAMINHO_ENXUTA = ROOT / "data" / "oos_rota_valor_enxuta_b3.json"
 CAMINHO_PEQUENAS_DIVIDENDO = ROOT / "data" / "oos_pequenas_dividendo_b3.json"
+CAMINHO_DIVIDENDO_OUTRA_JANELA = ROOT / "data" / "oos_dividendo_outra_janela_b3.json"
 
 #: A rodada sem piso de tamanho (§23): o perfil padrão com só o valor de
 #: mercado mínimo trocado. A liquidez mínima (R$ 500 mil) fica.
@@ -386,6 +388,175 @@ def medir_pequenas_dividendo(rc: dict, cache_dir: Path | None, *,
     return 0
 
 
+def precos_sem_corte(precos_da_aba):
+    """Os preços da aba sem o corte de 10 anos (§24).
+
+    A aba lê ``period="10y"`` (views/portfolio_b3.py, "Carregando preços
+    mensais ajustados"), e por isso a primeira safra com carteira é 2017. Aqui
+    a MESMA leitura, com as mesmas trocas de código e as mesmas empresas que
+    saíram da bolsa, sem o corte. Só as colunas da aba: o universo não muda.
+    Devolve ``(precos, conferencia)``: ``conferencia`` mede quanto o trecho
+    comum difere dos preços da aba (tem de dar zero).
+    """
+    import numpy as np
+    import pandas as pd
+
+    import core.b3_saidas as _saidas
+    import core.b3_troca_codigo as _troca
+    import views.portfolio_b3 as view
+    from views.empresas_b3 import _batch_yf_precos_mensais
+
+    df_set = view._so_acoes(view._db.load_setores())
+    _df, mapa = _troca.deduplicar_por_empresa(df_set)
+    trocas = tuple(sorted(mapa.items()))
+    colunas = [str(c) for c in precos_da_aba.columns]
+    longo = _troca.dobrar_colunas(
+        _batch_yf_precos_mensais(tuple(colunas) + tuple(sorted(mapa)),
+                                 period="max", trocas=trocas),
+        mapa)
+    faltam = [c for c in colunas if c not in longo.columns]
+    if faltam:
+        p_s = _saidas.precos_mensais(_saidas.carregar())
+        p_s = p_s[[c for c in faltam if c in p_s.columns]]
+        if not p_s.empty:
+            longo = longo.join(p_s, how="outer").sort_index()
+    longo = longo.reindex(columns=colunas)
+
+    comum = precos_da_aba.index.intersection(longo.index)
+    a = precos_da_aba.loc[comum, colunas].astype(float)
+    b = longo.loc[comum, colunas].astype(float)
+    ambos = a.notna() & b.notna()
+    rel = ((b - a).abs() / a.abs().replace(0, np.nan)).where(ambos)
+    conferencia = {
+        "inicio_aba": str(precos_da_aba.index.min().date()),
+        "inicio_sem_corte": str(longo.dropna(how="all").index.min().date()),
+        "colunas": len(colunas),
+        "colunas_sem_preco_sem_corte": int(longo.notna().sum().eq(0).sum()),
+        "pontos_comparados": int(ambos.to_numpy().sum()),
+        "pontos_que_a_aba_tem_e_o_longo_nao": int((a.notna() & b.isna()).to_numpy().sum()),
+        "maior_diferenca_relativa": float(np.nanmax(rel.to_numpy()))
+        if ambos.to_numpy().any() else None,
+    }
+    return pd.DataFrame(longo), conferencia
+
+
+def medir_dividendo_outra_janela(rc: dict, *, dry_run: bool = False) -> int:
+    """O dividendo de 6% nas safras 2013 a 2016 (§24), mesma régua da §23.
+
+    O universo, o retrato PIT e o histórico de cada safra saem da MESMA rodada
+    da aba (``primeira`` antecipada em `_segmentos_por_safra`); só os preços
+    perdem o corte de 10 anos. A cadeia de custos começa em 2013.
+    """
+    from core.b3_methodology import SCORE_VERSION
+    from core.b3_portfolio_presets import VERSION as PRESETS_VERSION
+    from scripts.medir_nota_fatores_b3 import medir_escolha
+    from scripts.medir_vantagem_oos import _fonte_efetiva_b3
+
+    prep, M, oos, fe = rc["prep"], rc["M"], rc["oos"], rc["fe"]
+    resultados, precos_aba, params, decisao = prep["rodada"]
+    precos, conferencia = precos_sem_corte(precos_aba)
+    print(f"precos sem corte: {conferencia}", flush=True)
+
+    contexto, por_safra = M._segmentos_por_safra(
+        resultados, precos_aba, params, decisao, prep["cost_cfg"], prep["hoje"],
+        primeira=fe.PRIMEIRA_SAFRA_OUTRA_JANELA)
+    m = medir_escolha(por_safra, rc["escolhas"][fe.DIVIDENDO_6], precos=precos,
+                      selic_macro=contexto["selic_macro"],
+                      taxa=contexto["taxa_selic_aa"], selic_mensal=M._selic_mensal(),
+                      cost_cfg=prep["cost_cfg"],
+                      comeca_em=fe.PRIMEIRA_SAFRA_OUTRA_JANELA)
+
+    def recorte(linhas, ate=None, desde=None):
+        return [t for t in linhas if (ate is None or t["safra"] <= ate)
+                and (desde is None or t["safra"] >= desde)]
+
+    janela = recorte(m["safras"], ate=fe.ULTIMA_SAFRA_OUTRA_JANELA)
+    resumo = oos.resumir(janela, "excesso_ew")
+    decisao_24 = fe.leitura_outra_janela(resumo)
+
+    secao_23 = {}
+    if CAMINHO_PEQUENAS_DIVIDENDO.exists():
+        doc = json.loads(CAMINHO_PEQUENAS_DIVIDENDO.read_text(encoding="utf-8"))
+        secao_23 = {int(t["safra"]): t["excesso_ew"] for t in
+                    doc["estrategias"][fe.DIVIDENDO_6]["safras"]}
+    depois = recorte(m["safras"], desde=fe.ULTIMA_SAFRA_OUTRA_JANELA + 1)
+    conferencia_23 = [{"safra": t["safra"], "excesso_aqui": t["excesso_ew"],
+                       "excesso_secao_23": secao_23.get(t["safra"]),
+                       "dif": (t["excesso_ew"] - secao_23[t["safra"]])
+                       if t["safra"] in secao_23 else None}
+                      for t in depois]
+
+    print(f"{fe.DIVIDENDO_6} 2013-2016: media={resumo['media']} ic95={resumo['ic95']} "
+          f"n={resumo['n_safras']} sem_melhor={resumo['media_sem_melhor_safra']} "
+          f"leitura={decisao_24['leitura']}", flush=True)
+
+    saida = {
+        "versao_medicao": fe.VERSAO,
+        "versao_metodologia": SCORE_VERSION,
+        "versao_presets": PRESETS_VERSION,
+        "medido_em": datetime.now().isoformat(timespec="seconds"),
+        "perfil": rc["nome"],
+        "janela": (f"abril/{fe.PRIMEIRA_SAFRA_OUTRA_JANELA} a "
+                   f"março/{fe.ULTIMA_SAFRA_OUTRA_JANELA + 1}"),
+        "safras_medidas": [t["safra"] for t in janela],
+        "regra_de_decisao": fe.REGRA_DE_DECISAO_DIVIDENDO_OUTRA_JANELA,
+        "regra": (
+            f"DY médio dos {fe.ANOS_DY_BAZIN} exercícios até N-1 (todos presentes, "
+            f"DY entre 0 e {fe.DY_MAXIMO_CRIVEL:.0%}) >= {fe.DY_ALVO_BAZIN:.0%}; "
+            "sem falha da trava de solvência; universo da carteira padrão; "
+            "pesos iguais; formada em abril"),
+        "metrica_principal": (
+            "excesso por safra (abril/N a março/N+1), LÍQUIDO do giro, sobre "
+            "pesos iguais no universo da carteira padrão"),
+        "resultado": {
+            "vs_equal_weight": resumo,
+            "com_ir_vs_equal_weight": oos.resumir(janela, "excesso_ew_com_ir"),
+            "bruto_vs_equal_weight": oos.resumir(janela, "excesso_ew_bruto"),
+            "leitura": decisao_24["leitura"],
+            "testes": decisao_24["testes"],
+            "safras": janela,
+        },
+        "informativos": {
+            "janela_inteira_2013_2025": {
+                "vs_equal_weight": m["vs_equal_weight"],
+                "com_ir_vs_equal_weight": m["com_ir_vs_equal_weight"],
+                "giro_medio_anual": m["giro_medio_anual"],
+                "custo_medio_anual": m["custo_medio_anual"],
+            },
+            "conferencia_com_a_secao_23": {
+                "nota": ("2017-2025 com os preços sem corte; a cadeia de custos "
+                         "começa em 2013, então 2017 paga um giro diferente"),
+                "safras": conferencia_23,
+            },
+        },
+        "custos": {
+            "modelo": "CostConfig.brasil_pf_default()",
+            "benchmarks": "brutos (pesos iguais não paga custo): viés contra a carteira",
+        },
+        "fonte": {
+            "precos": ("mensal ajustado do armazém local, a mesma leitura da aba "
+                       "sem o corte de 10 anos"),
+            "conferencia_dos_precos": conferencia,
+            "fundamentos": f"aba de Criação de Portfólio B3 sobre {_fonte_efetiva_b3()}",
+        },
+        "limites": [
+            "só quatro safras: o IC 95% raramente fica acima de zero com tão pouco",
+            "o universo antigo usa o piso nominal de R$ 1 bi da aba, sem correção pela inflação",
+            "o DY de 2013 precisa dos exercícios 2010 a 2012; quem não tem os três fica fora",
+            "DY e múltiplos anuais com o preço de fim de cada exercício, não o de abril/N",
+            "safra sem nenhum nome vira caixa à Selic",
+            "sem o teste (c): a carteira padrão não tem carteira antes de 2017",
+        ],
+    }
+    texto = json.dumps(saida, indent=2, ensure_ascii=False, default=str)
+    if dry_run:
+        print(texto)
+    else:
+        CAMINHO_DIVIDENDO_OUTRA_JANELA.write_text(texto + "\n", encoding="utf-8")
+        print(f"gravado em {CAMINHO_DIVIDENDO_OUTRA_JANELA}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dry-run", action="store_true", help="mede e imprime sem gravar")
@@ -398,11 +569,16 @@ def main() -> int:
     ap.add_argument("--pequenas-dividendo", action="store_true",
                     help="mede as pequenas baratas e o dividendo de 6%% da §23 "
                          "(grava data/oos_pequenas_dividendo_b3.json)")
+    ap.add_argument("--dividendo-outra-janela", action="store_true",
+                    help="mede o dividendo de 6%% nas safras 2013 a 2016 da §24 "
+                         "(grava data/oos_dividendo_outra_janela_b3.json)")
     args = ap.parse_args()
 
     rc = montar_recorte(args.cache_dir)
     if args.pequenas_dividendo:
         return medir_pequenas_dividendo(rc, args.cache_dir, dry_run=args.dry_run)
+    if args.dividendo_outra_janela:
+        return medir_dividendo_outra_janela(rc, dry_run=args.dry_run)
     oos, fe, nome, padrao = rc["oos"], rc["fe"], rc["nome"], rc["padrao"]
     medir, cadeia = rc["medir"], rc["cadeia"]
     lideres_por_safra, lider_segurado = rc["lideres_por_safra"], rc["lider_segurado"]
