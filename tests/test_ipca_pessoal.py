@@ -94,7 +94,7 @@ def test_filtro_mantem_so_consumo():
         _gasto(m, 20, "", "sem categoria"),
     ]
     saida = ip.filtrar_consumo(lancs)
-    assert [(l.categoria, l.valor) for l in saida] == [
+    assert [(lanc.categoria, lanc.valor) for lanc in saida] == [
         ("Alimentação", 100.0), (ip.SEM_CATEGORIA, 20.0)]
 
 
@@ -106,7 +106,7 @@ def test_pagamento_de_fatura_so_entra_sem_o_detalhe_do_cartao():
         _gasto(outubro, 80, "Alimentação", "IFOOD", conta="credit_card", fonte="csv"),
     ]
     saida = ip.filtrar_consumo(lancs)
-    assert [(l.data.month, l.categoria, l.valor) for l in saida] == [
+    assert [(lanc.data.month, lanc.categoria, lanc.valor) for lanc in saida] == [
         (9, ip.CARTAO_SEM_DETALHE, 1000.0),
         (10, "Alimentação", 80.0),
     ]
@@ -342,7 +342,7 @@ def test_gemeos_do_pagamento_de_fatura_seguem_a_mesma_regra(nome):
         _gasto(outubro, 30, nome, "Anuidade", conta="credit_card", fonte="csv"),
     ]
     saida = ip.filtrar_consumo(lancs)
-    assert [(l.data.month, l.categoria, l.valor) for l in saida] == [
+    assert [(lanc.data.month, lanc.categoria, lanc.valor) for lanc in saida] == [
         (9, ip.CARTAO_SEM_DETALHE, 1000.0),
         (10, "Alimentação", 80.0),
         (10, nome, 30.0),

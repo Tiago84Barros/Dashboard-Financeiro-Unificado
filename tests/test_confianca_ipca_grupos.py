@@ -11,7 +11,7 @@ from datetime import date, timedelta
 from core import confianca_secao as cs
 from core import ipca_grupos
 from core.ipca_grupos import INDICE_GERAL, SerieIpcaGrupos
-from tests.test_confianca_conciliacao import _Conn, _Engine, _comp
+from tests.test_confianca_conciliacao import _comp, _Conn, _Engine
 
 
 def _serie_ate(mes):

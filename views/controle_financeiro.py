@@ -77,8 +77,8 @@ from design.componentes import (
 )
 from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 from design.tema_canvas import no_claro
-from views.controle_previstos import render_previstos
 from views.controle_ipca_pessoal import render_ipca_pessoal
+from views.controle_previstos import render_previstos
 
 # Chat "Analista Financeiro Pessoal" (aba Análises) — importado localmente na
 # função de render para não pesar no carregamento das demais abas/reruns.

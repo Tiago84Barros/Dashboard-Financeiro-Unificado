@@ -173,24 +173,24 @@ def filtrar_consumo(lancamentos: list[Lancamento]) -> list[Lancamento]:
     fatura do outro (o gasto dele some). Está dito na explicação da tela.
     """
     meses_com_fatura_csv = {
-        _mes(l.data) for l in lancamentos
-        if l.conta_tipo == "credit_card" and l.fonte == "csv" and l.valor < 0
+        _mes(lanc.data) for lanc in lancamentos
+        if lanc.conta_tipo == "credit_card" and lanc.fonte == "csv" and lanc.valor < 0
     }
     saida: list[Lancamento] = []
-    for l in lancamentos:
-        if l.valor >= 0:
+    for lanc in lancamentos:
+        if lanc.valor >= 0:
             continue
-        if canonical_transaction_type(l.tipo, l.categoria, l.valor) != "expense":
+        if canonical_transaction_type(lanc.tipo, lanc.categoria, lanc.valor) != "expense":
             continue
-        normalizada = normalizar(l.categoria)
+        normalizada = normalizar(lanc.categoria)
         if normalizada in CATEGORIAS_FORA:
             continue
-        categoria = (l.categoria or "").strip() or SEM_CATEGORIA
-        if normalizada in CATEGORIAS_PAGAMENTO_CARTAO and l.conta_tipo != "credit_card":
-            if _mes(l.data) in meses_com_fatura_csv:
+        categoria = (lanc.categoria or "").strip() or SEM_CATEGORIA
+        if normalizada in CATEGORIAS_PAGAMENTO_CARTAO and lanc.conta_tipo != "credit_card":
+            if _mes(lanc.data) in meses_com_fatura_csv:
                 continue
             categoria = CARTAO_SEM_DETALHE
-        saida.append(replace(l, valor=-l.valor, categoria=categoria))
+        saida.append(replace(lanc, valor=-lanc.valor, categoria=categoria))
     return saida
 
 
@@ -207,16 +207,16 @@ def _variacao_por_itens(linhas: list[Lancamento], categoria: str, base: date,
     meses_validos = {base, *janela}
     janela_set = set(janela)
     por_item: dict[str, dict[date, float]] = defaultdict(lambda: defaultdict(float))
-    for l in linhas:
-        if l.parcela_total > 1:
+    for lanc in linhas:
+        if lanc.parcela_total > 1:
             continue
-        item = normalizar_descricao(l.descricao)
-        mes = _mes(l.data)
+        item = normalizar_descricao(lanc.descricao)
+        mes = _mes(lanc.data)
         if item and mes in meses_validos:
-            por_item[item][mes] += l.valor
+            por_item[item][mes] += lanc.valor
     recorrentes = {i: v for i, v in por_item.items() if len(v) >= MIN_MESES_RECORRENTE}
 
-    gasto_categoria = sum(l.valor for l in linhas if _mes(l.data) in janela_set)
+    gasto_categoria = sum(lanc.valor for lanc in linhas if _mes(lanc.data) in janela_set)
     gasto_recorrente = sum(v for valores in recorrentes.values()
                            for m, v in valores.items() if m in janela_set)
     cobertura = gasto_recorrente / gasto_categoria if gasto_categoria > 0 else 0.0
@@ -266,8 +266,8 @@ def calcular_ipca_pessoal(lancamentos: list[Lancamento], serie: SerieIpcaGrupos,
     janela = [somar_meses(base, k) for k in range(1, MESES_JANELA + 1)]
     janela_set = set(janela)
 
-    consumo_ate_fim = [l for l in filtrar_consumo(lancamentos) if _mes(l.data) <= fim]
-    primeiro = min((_mes(l.data) for l in consumo_ate_fim), default=None)
+    consumo_ate_fim = [lanc for lanc in filtrar_consumo(lancamentos) if _mes(lanc.data) <= fim]
+    primeiro = min((_mes(lanc.data) for lanc in consumo_ate_fim), default=None)
     if primeiro is None or primeiro > base:
         ha = 0 if primeiro is None else _distancia_meses(primeiro, fim) + 1
         falta = MESES_JANELA + 1 - ha
@@ -275,8 +275,8 @@ def calcular_ipca_pessoal(lancamentos: list[Lancamento], serie: SerieIpcaGrupos,
             f"São precisos {MESES_JANELA + 1} meses de gastos ({base:%m/%Y} a "
             f"{fim:%m/%Y}); há {ha} meses e falta{'m' if falta > 1 else ''} {falta}.",
             avisos)
-    consumo = [l for l in consumo_ate_fim if _mes(l.data) >= base]
-    com_gasto = {_mes(l.data) for l in consumo}
+    consumo = [lanc for lanc in consumo_ate_fim if _mes(lanc.data) >= base]
+    com_gasto = {_mes(lanc.data) for lanc in consumo}
     vazios = [m for m in (base, *janela) if m not in com_gasto]
     if vazios:
         avisos.append(
@@ -287,9 +287,9 @@ def calcular_ipca_pessoal(lancamentos: list[Lancamento], serie: SerieIpcaGrupos,
         avisos[-1] += ": o peso e a variação usam só os outros meses (lançamentos ausentes?)."
 
     gasto: dict[str, float] = defaultdict(float)
-    for l in consumo:
-        if _mes(l.data) in janela_set:
-            gasto[l.categoria] += l.valor
+    for lanc in consumo:
+        if _mes(lanc.data) in janela_set:
+            gasto[lanc.categoria] += lanc.valor
     total = sum(gasto.values())
     if total <= 0:
         return _falha(f"Não há gasto de consumo entre {janela[0]:%m/%Y} e {fim:%m/%Y}.",
@@ -304,8 +304,8 @@ def calcular_ipca_pessoal(lancamentos: list[Lancamento], serie: SerieIpcaGrupos,
         oficial[t] = v / 100
 
     linhas_por_categoria: dict[str, list[Lancamento]] = defaultdict(list)
-    for l in consumo:
-        linhas_por_categoria[l.categoria].append(l)
+    for lanc in consumo:
+        linhas_por_categoria[lanc.categoria].append(lanc)
 
     r_cat: dict[str, dict[date, float]] = {}
     info: dict[str, tuple] = {}
