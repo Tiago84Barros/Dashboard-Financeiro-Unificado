@@ -27,6 +27,7 @@ Uso::
     python scripts/medir_estrategias_fundamentalistas_b3.py --cache-dir <pasta>
     python scripts/medir_estrategias_fundamentalistas_b3.py --dry-run
     python scripts/medir_estrategias_fundamentalistas_b3.py --cache-dir <pasta> \n        --dividendo-outra-janela   # §24: safras 2013 a 2016
+    python scripts/medir_estrategias_fundamentalistas_b3.py --cache-dir <pasta> \n        --sobreposicao-rota       # §25: dividendo de 6% sobre a rota de valor
 
 O armazém local precisa estar de pé. Grava
 `data/oos_estrategias_fundamentalistas_b3.json`; nada vai para banco nenhum.
@@ -49,6 +50,7 @@ CAMINHO = ROOT / "data" / "oos_estrategias_fundamentalistas_b3.json"
 CAMINHO_ENXUTA = ROOT / "data" / "oos_rota_valor_enxuta_b3.json"
 CAMINHO_PEQUENAS_DIVIDENDO = ROOT / "data" / "oos_pequenas_dividendo_b3.json"
 CAMINHO_DIVIDENDO_OUTRA_JANELA = ROOT / "data" / "oos_dividendo_outra_janela_b3.json"
+CAMINHO_SOBREPOSICAO_ROTA = ROOT / "data" / "oos_sobreposicao_dividendo_rota_b3.json"
 
 #: A rodada sem piso de tamanho (§23): o perfil padrão com só o valor de
 #: mercado mínimo trocado. A liquidez mínima (R$ 500 mil) fica.
@@ -583,6 +585,151 @@ def medir_dividendo_outra_janela(rc: dict, *, dry_run: bool = False) -> int:
     return 0
 
 
+def meio_a_meio(a: list[dict], b: list[dict], chave: str) -> list[dict]:
+    """Média safra a safra de ``chave`` nas duas carteiras (só onde as duas mediram).
+
+    Informativo da §25: aproxima metade do dinheiro em cada carteira,
+    rebalanceada a 50% em abril sem custo extra.
+    """
+    base = {int(t["safra"]): t for t in a if t.get(chave) is not None}
+    return [{"safra": int(t["safra"]),
+             "dif": 0.5 * (float(t[chave]) + float(base[int(t["safra"])][chave]))}
+            for t in b if t.get(chave) is not None and int(t["safra"]) in base]
+
+
+def medir_sobreposicao_rota(rc: dict, *, dry_run: bool = False) -> int:
+    """§25: o dividendo de 6% repete a rota de valor? Somar os dois rende mais?"""
+    from core.b3_methodology import SCORE_VERSION
+    from core.b3_portfolio_presets import VERSION as PRESETS_VERSION
+    from scripts.medir_vantagem_oos import _fonte_efetiva_b3
+
+    oos, fe = rc["oos"], rc["fe"]
+    escolher_rota = rc["escolhas"][fe.ROTA_VALOR]
+    escolher_div = rc["escolhas"][fe.DIVIDENDO_6]
+    guardado: dict[int, tuple[list[str], list[str]]] = {}
+
+    def duas(p):
+        # Cada carteira é montada uma vez por safra; os braços só combinam.
+        s = int(p["safra"])
+        if s not in guardado:
+            guardado[s] = (list(escolher_rota(p)), list(escolher_div(p)))
+        return guardado[s]
+
+    memo: dict = {}
+    m_rota = rc["medir"](lambda p: duas(p)[0], memo)
+    m_div = rc["medir"](lambda p: duas(p)[1], memo)
+    m_uniao = rc["medir"](lambda p: fe.carteira_uniao(*duas(p)), memo)
+    m_fora = rc["medir"](lambda p: fe.carteira_fora_de(duas(p)[1], duas(p)[0]), memo)
+
+    par = diferenca_pareada(m_rota["safras"], m_uniao["safras"], "liquido")
+    resumo = oos.resumir(par, "dif")
+    decisao = fe.leitura_sobreposicao(resumo)
+    par_ir = diferenca_pareada(m_rota["safras"], m_uniao["safras"], "liquido_com_ir")
+    fora_vs_rota = diferenca_pareada(m_rota["safras"], m_fora["safras"], "liquido")
+    div_vs_rota = diferenca_pareada(m_rota["safras"], m_div["safras"], "liquido")
+    meio_ew = meio_a_meio(m_rota["safras"], m_div["safras"], "excesso_ew")
+    meio_vs_rota = [{"safra": t["safra"], "dif": 0.5 * t["dif"]} for t in div_vs_rota]
+
+    medidas = {int(t["safra"]) for t in m_rota["safras"]}
+    por_safra_sob = {}
+    for p in rc["por_safra"]:
+        s = int(p["safra"])
+        if s in medidas:
+            rota, div = duas(p)
+            por_safra_sob[str(s)] = fe.sobreposicao(rota, div)
+    fracoes = [v["fracao_do_dividendo_na_rota"] for v in por_safra_sob.values()
+               if v["fracao_do_dividendo_na_rota"] is not None]
+    jaccards = [v["jaccard"] for v in por_safra_sob.values() if v["jaccard"] is not None]
+
+    def _curto(m):
+        return {k: m[k] for k in ("vs_equal_weight", "com_ir_vs_equal_weight",
+                                  "bruto_vs_equal_weight", "giro_medio_anual",
+                                  "custo_medio_anual", "safras") if k in m}
+
+    for rotulo, m in ((fe.ROTA_VALOR, m_rota), (fe.DIVIDENDO_6, m_div),
+                      (fe.ROTA_MAIS_DIVIDENDO, m_uniao),
+                      (fe.DIVIDENDO_FORA_DA_ROTA, m_fora)):
+        r = m["vs_equal_weight"]
+        print(f"{rotulo}: media={r['media']} ic95={r['ic95']} n={r['n_safras']} "
+              f"sem_melhor={r['media_sem_melhor_safra']}", flush=True)
+    print(f"uniao - rota: media={resumo['media']} ic95={resumo['ic95']} "
+          f"sem_melhor={resumo['media_sem_melhor_safra']} leitura={decisao['leitura']}",
+          flush=True)
+
+    safras_medidas = sorted(medidas)
+    saida = {
+        "versao_medicao": fe.VERSAO,
+        "versao_metodologia": SCORE_VERSION,
+        "versao_presets": PRESETS_VERSION,
+        "medido_em": datetime.now().isoformat(timespec="seconds"),
+        "perfil": rc["nome"],
+        "safras": safras_medidas,
+        "janela": (f"abril/{min(safras_medidas)} a março/{max(safras_medidas) + 1}"
+                   if safras_medidas else None),
+        "regra_de_decisao": fe.REGRA_DE_DECISAO_SOBREPOSICAO_ROTA,
+        "sob_a_regra": [fe.ROTA_MAIS_DIVIDENDO],
+        "regras": {
+            fe.ROTA_VALOR: "a da §19, sem mudança",
+            fe.DIVIDENDO_6: "a da §23, sem mudança",
+            fe.ROTA_MAIS_DIVIDENDO: "a união dos nomes das duas, cada nome uma vez",
+            fe.DIVIDENDO_FORA_DA_ROTA: "os nomes do dividendo que a rota não tem",
+            "pesos": "iguais entre os escolhidos",
+            "formacao": "em abril (início da vigência)",
+        },
+        "metrica_principal": (
+            "diferença pareada, safra a safra, LÍQUIDA do giro: rota + dividendo "
+            "menos a rota de valor sozinha"),
+        "resultado": {
+            "uniao_menos_rota": {**resumo, "safras": par},
+            "leitura": decisao["leitura"],
+            "testes": decisao["testes"],
+        },
+        "sobreposicao": {
+            "por_safra": por_safra_sob,
+            "fracao_media_do_dividendo_na_rota": (
+                sum(fracoes) / len(fracoes) if fracoes else None),
+            "jaccard_medio": sum(jaccards) / len(jaccards) if jaccards else None,
+        },
+        "informativos": {
+            "uniao_menos_rota_com_ir": {**oos.resumir(par_ir, "dif"), "safras": par_ir},
+            "dividendo_fora_da_rota_menos_rota": {
+                **oos.resumir(fora_vs_rota, "dif"), "safras": fora_vs_rota},
+            "dividendo_menos_rota": {**oos.resumir(div_vs_rota, "dif"), "safras": div_vs_rota},
+            "meio_a_meio_vs_equal_weight": {**oos.resumir(meio_ew, "dif"), "safras": meio_ew},
+            "meio_a_meio_menos_rota": {
+                **oos.resumir(meio_vs_rota, "dif"), "safras": meio_vs_rota},
+        },
+        "estrategias": {
+            fe.ROTA_VALOR: _curto(m_rota),
+            fe.DIVIDENDO_6: _curto(m_div),
+            fe.ROTA_MAIS_DIVIDENDO: _curto(m_uniao),
+            fe.DIVIDENDO_FORA_DA_ROTA: _curto(m_fora),
+        },
+        "custos": {
+            "modelo": "CostConfig.brasil_pf_default()",
+            "benchmarks": "brutos (pesos iguais não paga custo): viés contra a carteira",
+        },
+        "fonte": {
+            "precos": "os da aba (mensal ajustado do armazém local)",
+            "fundamentos": f"aba de Criação de Portfólio B3 sobre {_fonte_efetiva_b3()}",
+        },
+        "limites": [
+            "nove safras: diferenças pequenas entre carteiras parecidas não se separam do ruído",
+            "a união dá peso igual a cada nome, uma vez só, esteja em uma ou nas duas regras",
+            ("o meio a meio é aproximado: média dos retornos líquidos, cada metade "
+             "volta a 50% em abril sem custo extra"),
+            "safra em que o 'fora da rota' não tem nome vira caixa à Selic",
+        ],
+    }
+    texto = json.dumps(saida, indent=2, ensure_ascii=False, default=str)
+    if dry_run:
+        print(texto)
+    else:
+        CAMINHO_SOBREPOSICAO_ROTA.write_text(texto + "\n", encoding="utf-8")
+        print(f"gravado em {CAMINHO_SOBREPOSICAO_ROTA}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dry-run", action="store_true", help="mede e imprime sem gravar")
@@ -598,6 +745,10 @@ def main() -> int:
     ap.add_argument("--dividendo-outra-janela", action="store_true",
                     help="mede o dividendo de 6%% nas safras 2013 a 2016 da §24 "
                          "(grava data/oos_dividendo_outra_janela_b3.json)")
+    ap.add_argument("--sobreposicao-rota", action="store_true",
+                    help="mede a sobreposição do dividendo de 6%% com a rota de "
+                         "valor da §25 (grava "
+                         "data/oos_sobreposicao_dividendo_rota_b3.json)")
     args = ap.parse_args()
 
     rc = montar_recorte(args.cache_dir)
@@ -605,6 +756,8 @@ def main() -> int:
         return medir_pequenas_dividendo(rc, args.cache_dir, dry_run=args.dry_run)
     if args.dividendo_outra_janela:
         return medir_dividendo_outra_janela(rc, dry_run=args.dry_run)
+    if args.sobreposicao_rota:
+        return medir_sobreposicao_rota(rc, dry_run=args.dry_run)
     oos, fe, nome, padrao = rc["oos"], rc["fe"], rc["nome"], rc["padrao"]
     medir, cadeia = rc["medir"], rc["cadeia"]
     lideres_por_safra, lider_segurado = rc["lideres_por_safra"], rc["lider_segurado"]

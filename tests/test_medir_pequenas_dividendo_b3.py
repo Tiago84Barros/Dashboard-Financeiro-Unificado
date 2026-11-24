@@ -66,3 +66,15 @@ def test_procedencia_recusa_fonte_nao_rotulada():
 
     with pytest.raises(RuntimeError, match="não rotulada"):
         me.procedencia_dos_precos(_df_com_fonte())
+
+
+def test_meio_a_meio_e_a_media_so_nas_safras_em_comum():
+    # §25: metade em cada carteira; safra que só uma mediu fica fora.
+    a = [{"safra": 2020, "excesso_ew": 0.10}, {"safra": 2021, "excesso_ew": -0.04},
+         {"safra": 2022, "excesso_ew": None}]
+    b = [{"safra": 2020, "excesso_ew": 0.02}, {"safra": 2021, "excesso_ew": 0.06},
+         {"safra": 2022, "excesso_ew": 0.03}, {"safra": 2023, "excesso_ew": 0.01}]
+    out = me.meio_a_meio(a, b, "excesso_ew")
+    assert [t["safra"] for t in out] == [2020, 2021]
+    assert abs(out[0]["dif"] - 0.06) < 1e-12
+    assert abs(out[1]["dif"] - 0.01) < 1e-12

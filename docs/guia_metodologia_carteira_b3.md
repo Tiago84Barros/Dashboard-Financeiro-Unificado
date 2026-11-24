@@ -1480,7 +1480,7 @@ O que isto não diz:
 
 Passar não muda a tela.
 
-## 25. O dividendo de 6% sobre a rota de valor (24/11/2026, desenho)
+## 25. O dividendo de 6% sobre a rota de valor (24/11/2026, medido: não se distingue)
 
 ### Que pergunta responde
 
@@ -1546,3 +1546,67 @@ python scripts/medir_estrategias_fundamentalistas_b3.py --cache-dir <pasta> --so
 ```
 
 Grava `data/oos_sobreposicao_dividendo_rota_b3.json`.
+
+### Resultado (24/11/2026): não se distingue
+
+Nove safras, 2017 a 2025 (abril/2017 a março/2026). A rota e o dividendo
+repetem os números da §23, então a rodada usa a mesma régua.
+
+**Quanto se repetem.** Em média, 55% dos nomes do dividendo já estão na rota
+(de 34% em 2018 a 71% em 2023). O índice de Jaccard médio é 0,42: menos da
+metade da união está nas duas.
+
+| Safra | Rota | Dividendo | Em comum | Fração do dividendo na rota |
+|---|---:|---:|---:|---:|
+| 2017 | 31 | 47 | 24 | 51% |
+| 2018 | 20 | 41 | 14 | 34% |
+| 2019 | 41 | 35 | 22 | 63% |
+| 2020 | 30 | 34 | 17 | 50% |
+| 2021 | 39 | 48 | 24 | 50% |
+| 2022 | 57 | 50 | 35 | 70% |
+| 2023 | 52 | 55 | 39 | 71% |
+| 2024 | 35 | 50 | 24 | 48% |
+| 2025 | 44 | 43 | 26 | 60% |
+
+**Excesso sobre pesos iguais, líquido do giro:**
+
+| Braço | Média | IC 95% | Sem a melhor safra | Giro anual |
+|---|---:|---|---:|---:|
+| rota de valor | +9,9 pp | [+3,6; +18,4] | +6,3 | 48% |
+| dividendo de 6% | +5,0 pp | [+1,4; +8,4] | +4,1 | 39% |
+| **rota + dividendo** | +7,5 pp | [+3,1; +12,1] | +5,8 | 38% |
+| dividendo fora da rota | +3,5 pp | [−1,2; +7,5] | +2,8 | 55% |
+| meio a meio (informativo) | +7,5 pp | [+2,9; +12,6] | +5,5 | — |
+
+**Sob a regra — rota + dividendo menos a rota sozinha:** −2,4 pp por ano,
+IC 95% [−6,6; +0,5], sem a melhor safra −3,2. Sete das nove safras ficaram
+negativas (só 2019 e 2024 positivas). O IC encosta no zero, mas cruza:
+**não se distingue**.
+
+Informativos, todos contra a rota sozinha:
+
+| Diferença | Média | IC 95% |
+|---|---:|---|
+| rota + dividendo, com IR | −2,3 pp | [−6,7; +0,9] |
+| dividendo fora da rota | −6,4 pp | [−18,0; +1,5] |
+| dividendo inteiro | −4,9 pp | [−12,3; +0,5] |
+| meio a meio | −2,4 pp | [−6,2; +0,3] |
+
+### Leitura
+
+- **Somar o dividendo à rota não rendeu mais.** O sinal é contra: a união
+  ficou atrás da rota em sete de nove safras, cerca de 2,4 pp por ano. Nove
+  safras não bastam para afirmar que tira, e a regra não diz que tira.
+- **O que o dividendo traz de novo é o que rende menos.** Os nomes do
+  dividendo que a rota não tem renderam +3,5 pp sobre pesos iguais, com IC
+  cruzando o zero, e 6,4 pp por ano abaixo da rota. Em 2020 ficaram 48 pp
+  atrás.
+- **O que a união tem a favor é depender menos de uma safra.** O IC da
+  união é mais estreito que o da rota ([+3,1; +12,1] contra [+3,6; +18,4]) e
+  o giro é menor (38% contra 48%). Isso é dispersão entre safras, não risco
+  medido mês a mês, e não foi critério da regra.
+- Para quem já segue a rota de valor, o dividendo de 6% não é um acréscimo
+  de retorno medido. Para quem quer só uma das duas, a §23 continua valendo:
+  o dividendo passa sozinho, a rota passa com folga maior.
+
+Nada muda na tela.
