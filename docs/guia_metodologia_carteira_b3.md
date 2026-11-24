@@ -1237,7 +1237,7 @@ carteiras de regra não explica a posição delas.
   as carteiras). Um percentil de 98–100% em nove safras não prova que a
   vantagem continua.
 
-## 23. Pequenas baratas e dividendo de 6% (24/11/2026, desenho registrado antes de medir)
+## 23. Pequenas baratas e dividendo de 6% (24/11/2026, medido: o dividendo passa, as pequenas não)
 
 ### Que pergunta responde
 
@@ -1307,3 +1307,54 @@ Regras adicionais:
   mas não remove, esse efeito.
 - O armazém tem viés de sobrevivência parcial (§19): quem saiu da bolsa entra
   pela lista de saídas, mas nem toda saída tem preço até o fim.
+
+### Resultado (medido em 24/11/2026, armazém local, perfil Equilibrado, 9 safras)
+
+A regra acima foi aplicada sem mudança. A carteira padrão reproduziu a §22
+(+2,9 pp sobre pesos iguais), o que confirma a mesma base de dados. A rota de
+valor completa da §19 entra na tabela só como referência.
+
+| Carteira | Ações | (a) excesso | piso do IC 95% | (b) sem a melhor safra | (c) contra a padrão | Giro/ano | Veredito |
+|---|---|---|---|---|---|---|---|
+| Dividendo de 6% | 34–55 | +5,0 pp | +1,4 pp | +4,1 pp | +2,1 pp | 39% | **candidata** |
+| Pequenas baratas | 2–9 | +18,1 pp | −3,5 pp | +6,9 pp | +16,0 pp | 66% | fora (a) |
+| Rota de valor sem piso (informativa) | 22–61 | +9,7 pp | +3,9 pp | +6,9 pp | +7,6 pp | 48% | — |
+| Rota de valor completa (§19, referência) | ~39 | +9,9 pp | +3,6 pp | +6,3 pp | +7,0 pp | 48% | candidata |
+
+Tamanho dos universos: o piso de R$ 1 bi corta de 15 a 25 empresas por safra
+(de 2017 a 2025). Entre elas, só 2 a 9 são `oportunidade` para a rota de
+valor.
+
+Leitura com cautela:
+
+- **O dividendo de 6% passa nos três testes.** Bateu pesos iguais em sete das
+  nove safras (perdeu em 2018 e 2019) e a média não depende de um ano só.
+  Pela regra pré-registrada, é candidata.
+- **Mas ganha pouco da carteira padrão.** A diferença pareada é +2,1 pp, com
+  IC 95% de −4,9 a +9,3 pp; sem a melhor safra (2017) fica em −0,6 pp. A
+  regra (c) só pede média > 0, e isso foi cumprido, mas não há certeza de
+  que o dividendo supere a padrão.
+- **Com o imposto de renda, o piso do IC do dividendo encosta no zero**
+  (−0,06 pp). O resultado depende do custo tributário de quem investe.
+- **O dividendo fica atrás da rota de valor.** Ganha uns 5 pp a menos por
+  ano sobre pesos iguais, com giro um pouco menor (39% contra 48%). Não é uma rota melhor; é uma
+  segunda rota que também passa.
+- **As pequenas baratas não passam em (a).** A média de +18,1 pp vem de uma
+  carteira de 2 a 9 ações, e uma safra (2020: +108 pp sobre pesos iguais)
+  carrega quase tudo. Sem ela a média cai para +6,9 pp. Em quatro das nove
+  safras perderam para pesos iguais. Com tão poucos nomes, a incerteza é
+  grande demais para separar regra de sorte.
+- **Tirar o piso não melhora a rota de valor.** A rota sem piso (+9,7 pp)
+  fica igual à rota completa da §19 (+9,9 pp). As pequenas acrescentam
+  poucos nomes e muita variação, não excesso.
+- Contra os pesos iguais **do universo com piso** (informativo), as pequenas
+  ficam em +18,9 pp com IC de −4,7 a +49,9 pp: a mesma conclusão.
+- **Dois braços:** a chance de um falso positivo entre os dois fica perto de
+  1 em 10. A candidatura do dividendo é para a próxima etapa, não uma prova.
+- Os limites acima continuam. O custo das pequenas na régua é o de pessoa
+  física, menor que o spread real delas; isso favorece as pequenas, e mesmo
+  assim elas não passam.
+- **Nada muda na tela nem na carteira padrão.** Próximo passo possível, se o
+  usuário quiser: medir o dividendo de 6% em outra janela de safras e com o
+  IR no lugar do líquido simples, e ver quanto ele se sobrepõe à rota de
+  valor.
