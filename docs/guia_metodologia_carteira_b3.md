@@ -1236,3 +1236,74 @@ carteiras de regra não explica a posição delas.
   e sem correção para isso, e pesos iguais e Ibovespa sem custo (viés contra
   as carteiras). Um percentil de 98–100% em nove safras não prova que a
   vantagem continua.
+
+## 23. Pequenas baratas e dividendo de 6% (24/11/2026, desenho registrado antes de medir)
+
+### Que pergunta responde
+
+A literatura que o usuário estuda aponta duas rotas que o app não testava:
+
+1. **Pequenas e baratas.** O prêmio de tamanho e valor costuma morar nas
+   empresas menores, e o perfil Equilibrado corta tudo abaixo de R$ 1 bi de
+   valor de mercado. A pergunta: **as baratas que o piso corta batem pesos
+   iguais?**
+2. **Dividendo de 6% (Bazin).** Comprar quem paga pelo menos 6% ao ano de
+   forma constante. A pergunta: **essa regra, sozinha e com trava de
+   solvência, bate pesos iguais?**
+
+### As regras (`core.b3_estrategias_fundamentalistas`, versão 1.3.0)
+
+Fixadas antes de ver qualquer número, sem parâmetro para ajustar:
+
+- **`pequenas_baratas`:** roda a aba com o perfil Equilibrado trocando só o
+  piso de valor de mercado para "Sem filtro" (a liquidez mínima de R$ 500 mil
+  fica). "Pequena" é quem está no universo sem piso e fora do universo com
+  piso, na mesma safra. Entre elas, ficam as que a rota de valor classifica
+  como `oportunidade`. Pesos iguais.
+- **`dividendo_6`:** universo da carteira padrão. Fica quem tem DY médio de
+  **pelo menos 6%** nos três últimos exercícios conhecidos em abril (N-3 a
+  N-1), **os três presentes**, e nenhuma falha da trava de solvência da §19.
+  DY fora de 0% a 100% conta como ausente (não é crível). Ano com duas
+  linhas vale a mais nova. Pesos iguais.
+- Mesma régua da §19: 9 safras, formação em abril, custos de pessoa física,
+  safra vazia vira caixa a Selic, só o que se sabia em abril (vintage).
+
+Medição: `python scripts/medir_estrategias_fundamentalistas_b3.py
+--pequenas-dividendo --cache-dir <pasta>` (grava
+`data/oos_pequenas_dividendo_b3.json`). A rodada sem piso tem cache próprio
+(`Equilibrado|pb3_min_mcap=Sem filtro`), para não se misturar com a rodada
+padrão nem com outro perfil personalizado.
+
+### Regra de decisão, registrada antes de medir
+
+Texto em `REGRA_DE_DECISAO_PEQUENAS_DIVIDENDO`. Cada carteira só é candidata
+se, líquida do giro, passar nos três testes da §19:
+
+- (a) excesso médio sobre pesos iguais **no próprio universo** > 0, com piso
+  do IC 95% > 0;
+- (b) média sem a melhor safra > 0;
+- (c) diferença pareada contra a carteira padrão atual (Equilibrado, sem
+  portão) com média > 0.
+
+Regras adicionais:
+
+- **Dois braços** elevam a chance de falso positivo para perto de 1 em 10.
+  Isso fica dito no resultado.
+- **Só informativos, não aprovam nem reprovam:** a rota de valor sem piso
+  (grandes e pequenas juntas) e o excesso das pequenas sobre os pesos iguais
+  do universo **com** piso.
+- Passar não muda a tela nem a carteira padrão. Só abre a próxima etapa.
+
+### Limites já conhecidos
+
+- Nove safras não separam sorte de regra com folga; (b) existe por isso.
+- "Pequena" inclui quem não tem valor de mercado no retrato (o piso corta
+  quem não tem o número). E uma empresa grande pode cair nas "pequenas" se o
+  segmento dela só existe na rodada sem piso.
+- Pequenas têm spread e impacto de preço maiores que o custo de pessoa física
+  da régua: o resultado líquido tende a ser otimista para elas.
+- O DY vem do histórico anual (preço de fim do exercício). Dividendo
+  extraordinário de um ano entra na média; a exigência de três anos reduz,
+  mas não remove, esse efeito.
+- O armazém tem viés de sobrevivência parcial (§19): quem saiu da bolsa entra
+  pela lista de saídas, mas nem toda saída tem preço até o fim.
