@@ -40,9 +40,11 @@ def test_orcamento_nao_esta_mais_na_navegacao():
 
 def test_a_navegacao_mantem_as_demais_secoes_na_ordem():
     secoes = _secoes()
-    # "A pagar e receber" entrou em 02/11/2026 (lançamentos previstos).
+    # "A pagar e receber" entrou em 02/11/2026 (lançamentos previstos);
+    # "IPCA Pessoal" entrou em 23/11/2026.
     assert [s.split("  ", 1)[-1] for s in secoes] == [
         "Dashboard", "Análises", "Tabelas", "A pagar e receber", "Cartão de Crédito",
+        "IPCA Pessoal",
     ]
 
 

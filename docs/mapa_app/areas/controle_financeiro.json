@@ -1,14 +1,14 @@
 {
   "nome": "Controle Financeiro",
   "resumo": "Lançar, conferir e analisar receitas, despesas e cartão",
-  "explicacao": "Tela do dia a dia do dinheiro: você escolhe o mês, lança entradas e saídas pela barra lateral e navega por cinco abas (Dashboard, Análises, Tabelas, A pagar e receber e Cartão de Crédito). Dá para corrigir lançamentos, conferir extratos importados, categorizar compras do cartão e conversar com um assistente de IA. A importação do extrato do banco e da fatura do cartão não fica aqui: é feita em Configurações → Atualização de dados → Controle Financeiro.",
+  "explicacao": "Tela do dia a dia do dinheiro: você escolhe o mês, lança entradas e saídas pela barra lateral e navega por seis abas (Dashboard, Análises, Tabelas, A pagar e receber, Cartão de Crédito e IPCA Pessoal). Dá para corrigir lançamentos, conferir extratos importados, categorizar compras do cartão e conversar com um assistente de IA. A importação do extrato do banco e da fatura do cartão não fica aqui: é feita em Configurações → Atualização de dados → Controle Financeiro.",
   "so_admin": false,
   "fonte": "views/controle_financeiro.py:3673",
   "filhos": [
     {
       "nome": "Período de análise",
       "resumo": "Escolha do mês que vale para a tela",
-      "explicacao": "Faixa no alto, logo abaixo do título da tela, para escolher o mês. O mês escolhido vale para os números e gráficos das abas Dashboard e Análises, para o aviso de lançamentos em dobro e como ponto de partida do filtro do Cartão; a consulta da aba Tabelas tem filtros próprios. Ao lado aparece um selo 'Dados reais' (ou outro selo quando são dados de exemplo) e, se o mês não tem lançamentos, um aviso de que os números ficarão zerados.",
+      "explicacao": "Faixa no alto, logo abaixo do título da tela, para escolher o mês. O mês escolhido vale para os números e gráficos das abas Dashboard e Análises, como fim da janela de 12 meses da aba IPCA Pessoal, para o aviso de lançamentos em dobro e como ponto de partida do filtro do Cartão; a consulta da aba Tabelas tem filtros próprios. Ao lado aparece um selo 'Dados reais' (ou outro selo quando são dados de exemplo) e, se o mês não tem lançamentos, um aviso de que os números ficarão zerados.",
       "so_admin": false,
       "fonte": "views/controle_financeiro.py:3688",
       "filhos": [
@@ -482,6 +482,14 @@
           ]
         }
       ]
+    },
+    {
+      "nome": "IPCA Pessoal",
+      "resumo": "Sua inflação × IPCA oficial em 12 meses",
+      "explicacao": "Calcula a inflação da sua cesta de consumo nos últimos 12 meses e põe ao lado do IPCA oficial do IBGE. O peso de cada categoria vem do seu gasto; a variação de preço vem dos seus gastos repetidos (como condomínio e conta de luz) ou, na falta deles, do grupo equivalente do IPCA. Mostra a contribuição de cada categoria, a comparação dos seus pesos com os do IBGE e uma explicação da conta.",
+      "so_admin": false,
+      "fonte": "views/controle_ipca_pessoal.py:101",
+      "filhos": []
     }
   ]
 }

@@ -279,6 +279,7 @@ CARIMBO = {
     "macro_insumos": ("arquivo", "data/public/macro_insumos.json.gz"),
     "cdi_diario": ("arquivo", "data/public/cdi_diario.json.gz"),
     "macro_brasil": ("arquivo", "data/public/macro_brasil.json.gz"),
+    "ipca_grupos": ("arquivo", "data/public/ipca_grupos.json.gz"),
     "valuation_historico": ("arquivo", "data/public/valuation_historico.json.gz"),
     "cenarios_analogos": ("arquivo", "data/public/cenarios_analogos.json.gz"),
     "informacoes_recentes": ("arquivo", "data/public/informacoes_recentes.json.gz"),

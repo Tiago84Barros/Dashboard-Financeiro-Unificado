@@ -22,6 +22,7 @@ import unicodedata
 from datetime import date as _date
 
 from core.controle_indicadores import indicadores_caixa
+from core.ipca_pessoal import linhas_contexto_ipca
 
 _MESES_PT = {
     1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr", 5: "Mai", 6: "Jun",
@@ -47,6 +48,11 @@ _NAO_ESSENCIAL_TERMOS = (
     "viagem", "presente", "hobby", "jogo", "delivery", "ifood", "shopping",
     "roupa", "beleza", "estetica",
 )
+
+
+# Padrão de ``ipca_pessoal``: chamador que não calculou o IPCA Pessoal não ganha
+# o bloco. ``None`` é diferente: a leitura falhou, e o bloco diz isso.
+SEM_IPCA_PESSOAL = object()
 
 
 def _norm(value: object) -> str:
@@ -89,6 +95,7 @@ def build_financas_chat_context(
     ano_ref: int,
     mes_ref: int,
     previstos: list | None = None,
+    ipca_pessoal=SEM_IPCA_PESSOAL,
 ) -> tuple[str, dict]:
     """
     Constrói (contexto_texto, chart_meta) a partir dos dados REAIS já carregados
@@ -316,6 +323,8 @@ def build_financas_chat_context(
                  f"mercado {_brl(ult.get('valor_mercado', 0))}")
 
     L.extend(_bloco_previstos(previstos))
+    if ipca_pessoal is not SEM_IPCA_PESSOAL:
+        L.extend(linhas_contexto_ipca(ipca_pessoal))
 
     L.append("")
     L.append("DEFINIÇÕES IMPORTANTES:")

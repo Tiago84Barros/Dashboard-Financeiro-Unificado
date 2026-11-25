@@ -77,6 +77,7 @@ from design.componentes import (
 )
 from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 from design.tema_canvas import no_claro
+from views.controle_ipca_pessoal import render_ipca_pessoal
 from views.controle_previstos import render_previstos
 
 # Chat "Analista Financeiro Pessoal" (aba Análises) — importado localmente na
@@ -1267,6 +1268,21 @@ def _previstos_para_chat() -> list | None:
         return None
 
 
+def _ipca_pessoal_para_chat(ano: int, mes: int):
+    """IPCA Pessoal para o contexto do chat; ``None`` quando a leitura falha,
+    para o contexto dizer que não calculou em vez de calar."""
+    try:
+        from core.ipca_pessoal_dados import ipca_pessoal_do_mes
+        return ipca_pessoal_do_mes(ano, mes)
+    except Exception:  # noqa: BLE001
+        # O chat segue sem o bloco, mas a causa fica no log: um defeito da
+        # conta não pode passar por simples falha de leitura.
+        import logging
+
+        logging.getLogger(__name__).exception("IPCA Pessoal para o chat falhou")
+        return None
+
+
 def _render_chat_financeiro(
     d: dict, historico: list, hist_anual: dict, gastos_cartao: dict,
     investido_mes: float, evolucao: dict, ano_ref: int, mes_ref: int,
@@ -1383,6 +1399,7 @@ def _render_chat_financeiro(
                     ano_ref=ano_ref,
                     mes_ref=mes_ref,
                     previstos=_previstos_para_chat(),
+                    ipca_pessoal=_ipca_pessoal_para_chat(ano_ref, mes_ref),
                 )
                 # Premissa do app: macro e noticiário geral acompanham toda
                 # conversa — juro e inflação mudam a leitura do orçamento.
@@ -3884,7 +3901,8 @@ def render() -> None:
     # não foi desligado: `core.alertas` (R1) e o Dashboard Geral seguem lendo
     # os limites, editados em Configurações → Geral desde 31/10/2026.
     _SECOES = ["📊  Dashboard", "📈  Análises", "🧾  Tabelas",
-               "📅  A pagar e receber", "💳  Cartão de Crédito"]
+               "📅  A pagar e receber", "💳  Cartão de Crédito",
+               "🧮  IPCA Pessoal"]
     secao = abas_secao(_SECOES, key="cf_secao_ativa", default=_SECOES[0])
 
     if secao == _SECOES[1]:
@@ -3897,5 +3915,7 @@ def render() -> None:
         render_previstos()
     elif secao == _SECOES[4]:
         _tab_cartao(d, sel["ano"], sel["mes"])
+    elif secao == _SECOES[5]:
+        render_ipca_pessoal(sel["ano"], sel["mes"])
     else:
         _tab_dashboard(d, historico, fluxo_inv, investido_mes)

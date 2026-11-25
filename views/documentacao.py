@@ -925,12 +925,13 @@ FLOW_CONTROLE_FINANCEIRO = FlowSpec(
         "fatura futura do cartão (fluxo a vencer) — naturezas que nunca se misturam."
     ),
     tela="Controle Financeiro",
-    abas=("Dashboard", "Análises", "Tabelas", "A pagar e receber", "Cartão de Crédito"),
+    abas=("Dashboard", "Análises", "Tabelas", "A pagar e receber", "Cartão de Crédito",
+          "IPCA Pessoal"),
     rows=(
         ("Entrada", ("lanc_manual", "extrato", "fatura_cc")),
         ("Classificação", ("conta", "categoria")),
         ("Natureza do fluxo", ("fluxo_caixa", "previstos", "fluxo_futuro")),
-        ("Visualização", ("abas", "graficos")),
+        ("Visualização", ("abas", "graficos", "ipca_pessoal")),
     ),
     default="lanc_manual",
     nodes={
@@ -1041,7 +1042,8 @@ FLOW_CONTROLE_FINANCEIRO = FlowSpec(
         ),
         "abas": _node(
             "abas", "Abas e filtros", "Visualização",
-            "Navegação: Dashboard, Análises, Tabelas, A pagar e receber e Cartão de Crédito, "
+            "Navegação: Dashboard, Análises, Tabelas, A pagar e receber, Cartão de Crédito "
+            "e IPCA Pessoal, "
             "com filtros e edição.",
             (
                 "KPIs do mês (renda, despesa, saldo)",
@@ -1059,6 +1061,21 @@ FLOW_CONTROLE_FINANCEIRO = FlowSpec(
                 "Pagamento de cartão mensal (exclui fatura CSV)",
             ),
             "Analisar tendências sem misturar fluxo de caixa com a fatura futura do cartão.",
+        ),
+        "ipca_pessoal": _node(
+            "ipca_pessoal", "IPCA Pessoal", "Visualização",
+            "A inflação da sua cesta nos últimos 12 meses ao lado do IPCA oficial: o "
+            "peso de cada categoria vem do seu gasto; a variação de preço, dos seus "
+            "gastos repetidos ou do grupo equivalente do IPCA.",
+            (
+                "IPCA Pessoal × IPCA oficial (12 meses) e a diferença",
+                "Gráfico dos dois acumulados mês a mês",
+                "Tabela por categoria: peso, variação, origem, contribuição",
+                "Seus pesos × pesos do IBGE por grupo",
+                "Série do IBGE (SIDRA 7060) lida de arquivo publicado",
+            ),
+            "Mostrar quanto a inflação pesa no seu bolso, e não na família média, "
+            "dizendo de onde veio cada número.",
         ),
     },
     notes=(
