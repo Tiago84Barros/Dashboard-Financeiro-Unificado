@@ -57,8 +57,13 @@ def _tirar_piores_pela_nota(universo, scores, corte):
     return [t for t in universo if t not in set(saem)]
 
 
+#: Chaves que uma cadeia alternativa (``simular``) pode devolver a mais.
+_EXTRAS_DA_CADEIA = ("giro_venda", "peso_maior", "peso_menor")
+
+
 def medir_escolha(por_safra, escolha, *, precos, selic_macro, taxa, selic_mensal,
-                  cost_cfg, comeca_em, memo: dict | None = None) -> dict:
+                  cost_cfg, comeca_em, memo: dict | None = None,
+                  simular=None) -> dict:
     """Carteira de pesos iguais em ``escolha(safra)``, medida contra pesos iguais.
 
     Ponto único da régua das carteiras "de regra" da B3 (nota + fatores, o
@@ -74,6 +79,11 @@ def medir_escolha(por_safra, escolha, *, precos, selic_macro, taxa, selic_mensal
     universo). Serve a quem mede milhares de escolhas no mesmo recorte, como
     `scripts/medir_carteiras_aleatorias_b3.py`; o resultado é o mesmo de sem
     ``memo`` (o script confere com ``--conferir``).
+
+    ``simular`` (opcional): troca a cadeia de `oos.simular_custos` (volta aos
+    pesos-alvo todo abril) por outra de mesma assinatura ``(itens, cfg)``, como
+    `core.b3_estrategias_fundamentalistas.simular_aportes` da §26. As chaves a
+    mais que ela devolver (``_EXTRAS_DA_CADEIA``) seguem para a tabela.
     """
     import core.b3_oos_carteira as oos
     from core.b3_safras import SafraCarteira, retorno_da_safra
@@ -112,8 +122,8 @@ def medir_escolha(por_safra, escolha, *, precos, selic_macro, taxa, selic_mensal
                        "inviavel_no_cap": False, "mensuravel": bool(base["mensuravel"]),
                        "selic": base["retorno_selic"], "ew": base["retorno_equal_weight"],
                        "n_universo": len(universo), "n_carteira": len(pesos)})
-    cadeia = oos.simular_custos(oos.itens_da_cadeia(linhas, comeca_em=comeca_em),
-                                cost_cfg)
+    cadeia = (simular or oos.simular_custos)(
+        oos.itens_da_cadeia(linhas, comeca_em=comeca_em), cost_cfg)
     tabela = []
     for r, c in zip(linhas, cadeia):
         if c.get("medida") and r["ew"] is not None:
@@ -127,10 +137,14 @@ def medir_escolha(por_safra, escolha, *, precos, selic_macro, taxa, selic_mensal
                 "excesso_ew_bruto": c["bruto"] - r["ew"],
                 "excesso_ew_com_ir": c["liquido_com_ir"] - r["ew"],
                 "giro": c["giro"], "custo_pct": c["custo_pct"],
+                **{k: c[k] for k in _EXTRAS_DA_CADEIA if k in c},
             })
     resumo = oos.resumir(tabela, "excesso_ew")
     giros = [t["giro"] for t in tabela[1:]]
+    vendas = [t["giro_venda"] for t in tabela[1:] if "giro_venda" in t]
+    extras = {"giro_venda_medio_anual": sum(vendas) / len(vendas)} if vendas else {}
     return {
+        **extras,
         "vs_equal_weight": resumo,
         "bruto_vs_equal_weight": oos.resumir(tabela, "excesso_ew_bruto"),
         "com_ir_vs_equal_weight": oos.resumir(tabela, "excesso_ew_com_ir"),

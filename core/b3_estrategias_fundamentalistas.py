@@ -53,6 +53,14 @@ O ``dividendo_6`` também é medido em outra janela, as safras 2013 a 2016 que
 a §23 não viu (§24, regra própria fixada antes de medir em 24/11/2026:
 ``REGRA_DE_DECISAO_DIVIDENDO_OUTRA_JANELA`` e ``leitura_outra_janela``).
 
+8. ``dividendo_segurado`` (§26, regra fixada antes de medir em 24/11/2026,
+   ``REGRA_DE_DECISAO_DIVIDENDO_SEGURADO``) — a premissa do usuário: entra
+   quem passa no ``dividendo_6``; quem já está só sai se a saúde financeira
+   degradar (os mesmos motivos do ``lider_segurado``), por mais que o
+   dividendo caia. Alvo de peso igual (1/N); o equilíbrio vem do aporte
+   anual, que compra primeiro quem está mais abaixo do alvo
+   (`simular_aportes`), sem vender quem subiu.
+
 Todas leem só o que se sabia em abril/N: o retrato e o histórico da safra
 (exercícios até N-1, pela regra de vintage do motor), os múltiplos com o preço
 de fim do exercício (``data_pipeline.market.ingest``, histórico anual) e a
@@ -73,7 +81,7 @@ import pandas as pd
 
 from core.b3_value_route import OPORTUNIDADE, rank_value_opportunities
 
-VERSAO = "fundamentalistas-1.5.0"
+VERSAO = "fundamentalistas-1.7.0"
 
 ROTA_VALOR = "rota_valor"
 FORMULA_MAGICA = "formula_magica"
@@ -387,19 +395,28 @@ def manter_lideres(lista: Iterable[str], universo: Iterable[str],
                                                  ano_max).items() if not m)
 
 
-def segurar_lideres(safras: list[int], lideres_de, manter) -> dict[int, list[str]]:
+def segurar_lideres(safras: list[int], lideres_de, manter, *,
+                    barrar_reentrada: bool = False) -> dict[int, list[str]]:
     """Lista de cada safra quando o líder só sai se degradar.
 
     ``lideres_de(safra)`` devolve os líderes da safra (a carteira padrão);
     ``manter(safra, lista)`` devolve quem da carteira anterior continua. A
     carteira da safra é a união dos dois: o líder novo entra, o antigo fica
     enquanto não degradar.
+
+    ``barrar_reentrada`` (§26 e §27): quem a saída tirou na safra não volta
+    pela entrada da mesma safra. Sem isso, um nome com prejuízo que ainda
+    passa na regra de entrada sairia e voltaria no mesmo abril. A §19 fica
+    sem a trava: lá a entrada é a própria carteira padrão.
     """
     out: dict[int, list[str]] = {}
     atual: list[str] = []
     for s in sorted(int(x) for x in safras):
         ficam = set(manter(s, atual)) if atual else set()
-        atual = sorted(ficam | {str(t).upper() for t in lideres_de(s)})
+        novos = {str(t).upper() for t in lideres_de(s)}
+        if barrar_reentrada:
+            novos -= {str(t).upper() for t in atual} - ficam
+        atual = sorted(ficam | novos)
         out[s] = list(atual)
     return out
 
@@ -643,3 +660,258 @@ def leitura_sobreposicao(resumo: Mapping | None) -> dict:
     else:
         leitura = NAO_SE_DISTINGUE
     return {"testes": testes, "leitura": leitura, "n_safras": n}
+
+
+# ── 8. Dividendo segurado (24/11/2026, §26) ─────────────────────────────────
+#: Braço da §26 e a variante informativa que não vende por prejuízo.
+DIVIDENDO_SEGURADO = "dividendo_segurado"
+DIVIDENDO_SEGURADO_SO_SOLVENCIA = "dividendo_segurado_so_solvencia"
+
+#: Motivos de saída de cada braço da §26. O principal usa os três do líder
+#: segurado (regra 5); a variante ignora o prejuízo de um exercício só.
+MOTIVOS_DIVIDENDO_SEGURADO = (SAIU_DO_UNIVERSO, FALHA_SOLVENCIA, PREJUIZO)
+MOTIVOS_SO_SOLVENCIA = (SAIU_DO_UNIVERSO, FALHA_SOLVENCIA)
+
+#: Aporte anual da §26, em fração do patrimônio de abril. O principal é
+#: ``APORTE_DIVIDENDO_SEGURADO``; os outros são sensibilidade.
+APORTE_DIVIDENDO_SEGURADO = 0.10
+APORTES_SENSIBILIDADE = (0.05, 0.20)
+
+#: Regra de decisão da §26, registrada antes de medir (24/11/2026).
+REGRA_DE_DECISAO_DIVIDENDO_SEGURADO = (
+    "premissa do usuário (24/11/2026): comprar boas empresas boas pagadoras "
+    "de dividendo e só vender quando a saúde financeira as tornar perigosas, "
+    "por mais que o dividendo caia; o equilíbrio entre as empresas vem do "
+    "aporte, não da venda das que subiram. Entrada, a cada abril: a regra do "
+    "dividendo de 6% da §23, sem mudança (DY médio de N-3 a N-1 >= 6%, os três "
+    "anos presentes, sem falha da trava de solvência). Saída: a do líder "
+    "segurado da §19, sem mudança -- deixar o universo, falhar na trava de "
+    "solvência da rota de valor ou ter prejuízo no último exercício (lucro de "
+    "N-1 <= 0); dado ausente não é degradação; DY abaixo de 6% não tira "
+    "ninguém. Pesos: o alvo é igual (1/N) entre todos os nomes da carteira. "
+    "Na primeira safra o capital entra em 1/N. Depois, em cada abril, ninguém "
+    "é vendido para voltar ao alvo: o aporte (10% do patrimônio de abril) "
+    "mais o que sobrar das saídas compra as empresas mais abaixo do alvo, de "
+    "baixo para cima, até o dinheiro acabar; quem está acima do alvo fica como "
+    "está. Retorno da safra = valor em março/N+1 sobre (patrimônio de abril + "
+    "aporte), líquido de custo de compra e de venda. Candidata só se, LÍQUIDA, "
+    "passar nos três testes da §19: (a) excesso médio sobre pesos iguais no "
+    "universo > 0 com IC 95% acima de zero; (b) média sem a melhor safra > 0; "
+    "(c) diferença pareada contra a carteira padrão atual (Equilibrado, sem "
+    "portão) com média > 0. Um braço sob a regra. Só informativos: aporte de "
+    "5% e de 20%; a mesma carteira com a régua da §19 (volta a 1/N vendendo o "
+    "excesso); a variante que só vende por solvência ou saída do universo; a "
+    "diferença pareada contra o dividendo de 6% sem segurar; o giro de venda, "
+    "os motivos de saída e o peso maior e menor por safra; o excesso com IR. "
+    "Passar não muda a tela; só abre a próxima etapa.")
+
+
+def quem_fica(motivos: Mapping[str, Iterable[str]],
+              considerar: Iterable[str] = MOTIVOS_DIVIDENDO_SEGURADO) -> list[str]:
+    """Os nomes sem nenhum motivo de saída entre os de ``considerar``.
+
+    ``motivos`` é o de `motivos_de_saida`. A §26 usa os três motivos; a
+    variante informativa, só ``MOTIVOS_SO_SOLVENCIA``.
+    """
+    conta = set(considerar)
+    return sorted(str(t).upper() for t, m in motivos.items() if not conta & set(m or ()))
+
+
+def encher_por_baixo(posicoes: Mapping[str, float], nomes: Iterable[str],
+                     dinheiro: float) -> dict[str, float]:
+    """Quanto comprar de cada nome para levantar os menores até um nível só.
+
+    É o rebalanceamento só com aporte: o dinheiro vai primeiro ao nome mais
+    abaixo, depois aos dois mais abaixo, e assim por diante; ninguém recebe
+    se já está acima do nível final. Nome novo começa em zero. A soma das
+    compras é ``dinheiro`` (ou nada, sem nome ou sem dinheiro).
+    """
+    alvo = sorted({str(t).upper() for t in nomes})
+    if not alvo or dinheiro <= 0:
+        return {}
+    atual = {t: max(float(posicoes.get(t, 0.0) or 0.0), 0.0) for t in alvo}
+    ordem = sorted(alvo, key=lambda t: (atual[t], t))
+    soma = 0.0
+    nivel = 0.0
+    for k, t in enumerate(ordem, start=1):
+        soma += atual[t]
+        nivel = (soma + dinheiro) / k
+        proximo = atual[ordem[k]] if k < len(ordem) else math.inf
+        if nivel <= proximo:
+            break
+    return {t: nivel - atual[t] for t in ordem if nivel - atual[t] > 1e-12}
+
+
+def simular_aportes(safras: list[dict], cfg, *,
+                    aporte: float = APORTE_DIVIDENDO_SEGURADO,
+                    capital: float = 100_000.0) -> list[dict]:
+    """A cadeia da §26: alvo 1/N, equilíbrio pelo aporte, venda só na saída.
+
+    Mesmo formato de entrada e de saída de `core.b3_oos_carteira.simular_custos`
+    (os itens de `itens_da_cadeia`), para caber na régua `medir_escolha`. Dos
+    ``pesos`` de cada safra só conta QUEM está; a fração vem das posições.
+
+    Em cada abril: vende o que saiu da lista (corretagem + spread; IR na cadeia
+    com IR, pelas regras de `simular_custos`), soma o aporte (``aporte`` x
+    patrimônio de abril; nenhum na primeira safra) e compra por
+    `encher_por_baixo`. Safra sem lista com ``rendimento_caixa``: vende tudo e
+    rende a taxa; sem a chave, fica fora (``medida: False``).
+
+    ``liquido`` = valor em março / (patrimônio de abril + aporte) - 1 (retorno
+    ponderado pelo tempo: o aporte não conta como ganho); ``bruto`` = soma das
+    frações depois da compra vezes o retorno; ``giro`` = compras / (patrimônio
+    + aporte); ``giro_venda`` = vendas / patrimônio; ``peso_maior`` e
+    ``peso_menor`` = maior e menor fração depois da compra.
+    """
+    from core.transaction_costs import custo_compra, custo_venda
+
+    caixa_tk = "__caixa__"
+    estado = {False: {"pos": {}, "base": {}, "valor": float(capital)},
+              True: {"pos": {}, "base": {}, "valor": float(capital)}}
+    prejuizo = 0.0
+    primeira = True
+    saida: list[dict] = []
+
+    def _passo(e, nomes, rets, com_ir, em_caixa):
+        nonlocal prejuizo
+        pos, base = dict(e["pos"]), dict(e["base"])
+        patrimonio = sum(pos.values()) if pos else e["valor"]
+        novo = 0.0 if primeira else aporte * patrimonio
+        disponivel = patrimonio + novo
+        custo = vendas = realizado = 0.0
+        livre = 0.0 if pos else patrimonio
+        for tk in sorted(pos):
+            if tk in nomes and not em_caixa:
+                continue
+            v = pos.pop(tk)
+            b = base.pop(tk, v)
+            if tk == caixa_tk:
+                livre += v  # resgate do caixa: sem bolsa e sem IR de ações
+                continue
+            fee, _ = custo_venda(tk, v, 0.0, 0.0, cfg)
+            custo += fee
+            vendas += v
+            realizado += v - b
+            livre += v - fee
+        ir = 0.0
+        if com_ir:
+            liquido_ir = realizado + prejuizo
+            if vendas <= cfg.isencao_mes:
+                if realizado < 0:
+                    prejuizo += realizado
+            elif liquido_ir > 0:
+                ir = cfg.ir_rate * liquido_ir
+                prejuizo = 0.0
+            else:
+                prejuizo = liquido_ir
+            livre -= ir
+        livre += novo
+        if em_caixa:
+            compras: dict[str, float] = {}
+            pos, base = {caixa_tk: livre}, {caixa_tk: livre}
+        else:
+            compras = encher_por_baixo(pos, nomes, livre)
+        for tk, valor in compras.items():
+            fee = custo_compra(tk, valor, cfg)
+            custo += fee
+            pos[tk] = pos.get(tk, 0.0) + valor - fee
+            base[tk] = base.get(tk, 0.0) + valor
+        total = sum(pos.values())
+        fracoes = {tk: v / total for tk, v in pos.items()} if total > 0 else {}
+        bruto = sum(w * rets.get(tk, 0.0) for tk, w in fracoes.items())
+        fim = {tk: v * (1.0 + rets.get(tk, 0.0)) for tk, v in pos.items()}
+        e.update(pos=fim, base=base, valor=sum(fim.values()))
+        return {
+            "liquido": e["valor"] / disponivel - 1.0 if disponivel > 0 else 0.0,
+            "bruto": bruto,
+            "custo_pct": custo / disponivel if disponivel > 0 else 0.0,
+            "ir_pct": ir / disponivel if disponivel > 0 else 0.0,
+            "giro": sum(compras.values()) / disponivel if disponivel > 0 else 0.0,
+            "giro_venda": vendas / patrimonio if patrimonio > 0 else 0.0,
+            "fracoes": fracoes,
+        }
+
+    for s in safras:
+        nomes = {str(t).upper() for t in (s.get("pesos") or {})}
+        caixa = s.get("rendimento_caixa")
+        if not nomes and caixa is None:
+            for e in estado.values():
+                e["valor"] = sum(e["pos"].values()) if e["pos"] else e["valor"]
+                e["pos"], e["base"] = {}, {}
+            saida.append({"safra": s["safra"], "medida": False})
+            continue
+        em_caixa = not nomes
+        if em_caixa:
+            rets = {caixa_tk: float(caixa)}
+        else:
+            rets = {str(tk).upper(): float(v or 0.0)
+                    for tk, v in (s.get("retornos") or {}).items()}
+        sem = _passo(estado[False], nomes, rets, False, em_caixa)
+        com = _passo(estado[True], nomes, rets, True, em_caixa)
+        primeira = False
+        fr = [w for tk, w in sem["fracoes"].items() if tk != caixa_tk]
+        item = {"safra": s["safra"], "medida": True,
+                "bruto": sem["bruto"], "liquido": sem["liquido"],
+                "liquido_com_ir": com["liquido"], "custo_pct": sem["custo_pct"],
+                "ir_pct": com["ir_pct"], "giro": sem["giro"],
+                "giro_venda": sem["giro_venda"],
+                "peso_maior": max(fr) if fr else None,
+                "peso_menor": min(fr) if fr else None}
+        if em_caixa:
+            item["caixa"] = True
+        saida.append(item)
+    return saida
+
+
+# ── 9. Solvência em dois anos seguidos (24/11/2026, §27) ────────────────────
+#: Braço da §27 e a variante informativa que também pede prejuízo em dois
+#: exercícios seguidos.
+DIVIDENDO_SEGURADO_DOIS_ANOS = "dividendo_segurado_dois_anos"
+DIVIDENDO_SEGURADO_DOIS_ANOS_COM_PREJUIZO = "dividendo_segurado_dois_anos_com_prejuizo"
+
+#: Motivos que só tiram o nome quando se repetem na safra anterior.
+PERSISTENTES_DOIS_ANOS = (FALHA_SOLVENCIA,)
+PERSISTENTES_COM_PREJUIZO = (FALHA_SOLVENCIA, PREJUIZO)
+
+#: Regra de decisão da §27, registrada antes de medir (24/11/2026).
+REGRA_DE_DECISAO_SOLVENCIA_DOIS_ANOS = (
+    "hipótese da §26 (24/11/2026): a trava de solvência responde por 40 das 52 "
+    "saídas do dividendo segurado, e 13 saídas voltaram depois; exigir a falha "
+    "em dois anos seguidos cortaria giro sem perder retorno. Tudo igual à §26 "
+    "(entrada do dividendo de 6% da §23; alvo 1/N; equilíbrio só pelo aporte "
+    "de 10% do patrimônio de abril; ninguém vendido por ter subido), menos uma "
+    "coisa: a falha da trava de solvência só tira o nome se ele também falhou "
+    "na trava na safra anterior (retrato de abril de N-1, mesmo universo de "
+    "N-1). Sem retrato na safra anterior, ou fora do universo dela, não há "
+    "falha anterior: dado ausente não é degradação. Sair do universo e ter "
+    "prejuízo no último exercício seguem tirando na hora. Candidata só se, "
+    "LÍQUIDA, passar nos três testes da §19: (a) excesso médio sobre pesos "
+    "iguais no universo > 0 com IC 95% acima de zero; (b) média sem a melhor "
+    "safra > 0; (c) diferença pareada contra a carteira padrão atual "
+    "(Equilibrado, sem portão) com média > 0. A hipótese do giro se confirma "
+    "se o giro de venda médio anual ficar abaixo do da §26 E a diferença "
+    "pareada contra a §26 não tiver IC 95% inteiro abaixo de zero. Um braço "
+    "sob a regra. Só informativos: a variante que também pede prejuízo em dois "
+    "exercícios seguidos; a §26 refeita na mesma rodada; a diferença pareada "
+    "contra o dividendo de 6% sem segurar; as voltas (nome que sai e volta em "
+    "safra posterior), os motivos de saída e o excesso com IR. Passar não muda "
+    "a tela; só abre a próxima etapa.")
+
+
+def motivos_persistentes(agora: Mapping[str, Iterable[str]],
+                         antes: Mapping[str, Iterable[str]],
+                         persistentes: Iterable[str] = PERSISTENTES_DOIS_ANOS
+                         ) -> dict[str, list[str]]:
+    """Motivos de saída da §27: os de ``persistentes`` só contam se repetidos.
+
+    ``agora`` e ``antes`` são `motivos_de_saida` da safra e da anterior. Um
+    motivo de ``persistentes`` fica só se o nome também o tinha em ``antes``;
+    os outros motivos passam como estão. Nome ausente de ``antes`` não tem
+    motivo anterior (dado ausente não é degradação).
+    """
+    conta = set(persistentes)
+    out: dict[str, list[str]] = {}
+    for tk, ms in agora.items():
+        prev = set((antes or {}).get(tk) or ())
+        out[str(tk).upper()] = [m for m in (ms or ()) if m not in conta or m in prev]
+    return out

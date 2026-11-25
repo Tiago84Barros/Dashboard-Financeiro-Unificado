@@ -1624,3 +1624,323 @@ Informativos, todos contra a rota sozinha:
   de retorno medido. E sozinho ele não passa mais (§23 refeita).
 
 Nada muda na tela.
+
+## 26. O dividendo de 6% segurado, com equilíbrio pelo aporte (24/11/2026, medido: giro cai pela metade, retorno igual; não passa)
+
+### Que pergunta responde
+
+O dividendo de 6% da §23 refaz a carteira todo abril: quem deixa de ter DY
+médio de 6% sai, mesmo saudável. Isso gerou giro de 50% ao ano. A premissa
+do usuário (24/11/2026) é outra:
+
+- comprar boas empresas que pagam bom dividendo;
+- não vender enquanto a empresa seguir saudável, por mais que o dividendo
+  caia;
+- a cada ano, novas empresas podem entrar pela mesma regra;
+- sair só quando a saúde financeira degradar a ponto de tornar a empresa
+  perigosa;
+- manter o equilíbrio entre as empresas com o aporte: comprar mais das que
+  ficaram abaixo, não vender as que subiram.
+
+Pergunta: **com essa regra, a carteira rende mais que pesos iguais, líquida
+dos custos, e com menos giro?**
+
+### O que se mede
+
+| Parte | Regra |
+|---|---|
+| Entrada | a do dividendo de 6% da §23, sem mudança: DY médio de N-3 a N-1 ≥ 6%, os três anos presentes, sem falha na trava de solvência |
+| Saída | a do líder segurado da §19, sem mudança: deixar o universo, falhar na trava de solvência da rota de valor ou ter prejuízo no último exercício. Dado ausente não é degradação. DY abaixo de 6% não tira ninguém |
+| Peso-alvo | igual (1/N) entre todos os nomes da carteira |
+| Equilíbrio | em cada abril, o aporte (10% do patrimônio) mais o que sobrar das saídas compra os nomes mais abaixo do alvo, de baixo para cima, até o dinheiro acabar (`encher_por_baixo`). Quem está acima do alvo fica como está |
+| Retorno da safra | valor em março de N+1 sobre (patrimônio de abril + aporte), líquido de custo de compra e de venda. É o retorno ponderado pelo tempo: o aporte não conta como ganho |
+
+A cadeia é `simular_aportes`, em `core/b3_estrategias_fundamentalistas.py`.
+Ela entra na régua `medir_escolha` pelo argumento `simular`; o resto da régua
+(universo, preços, pesos iguais do universo, Selic) é o mesmo da §19 à §25.
+
+### Regra de decisão (registrada antes de medir)
+
+`REGRA_DE_DECISAO_DIVIDENDO_SEGURADO`, versão `fundamentalistas-1.6.0`,
+commit de 24/11/2026 anterior à medição. Um braço sob a regra
+(`dividendo_segurado`, aporte de 10%). Candidato só se, **líquido**, passar
+nos três testes da §19:
+
+- (a) excesso médio sobre pesos iguais no universo > 0, com IC 95% acima de
+  zero;
+- (b) média sem a melhor safra > 0;
+- (c) diferença pareada contra a carteira padrão atual (Equilibrado, sem
+  portão) com média > 0.
+
+Só informativos:
+
+- aporte de 5% e de 20%;
+- a mesma carteira com a régua da §19 (volta a 1/N todo abril, vendendo o
+  excesso);
+- a variante que só vende por solvência ou saída do universo (prejuízo não
+  tira);
+- a diferença pareada contra o dividendo de 6% sem segurar, na régua da §23
+  e na mesma cadeia com aporte;
+- o giro de venda, os motivos de saída e o peso maior e menor por safra;
+- o excesso com IR.
+
+Passar não muda a tela; só abre a próxima etapa.
+
+### Limites declarados antes
+
+- Nove safras: diferenças pequenas não se separam do ruído.
+- O dividendo pago é reinvestido no próprio nome (o preço é ajustado), não
+  vai para os nomes abaixo do alvo. Na vida real ele pode ajudar o
+  equilíbrio.
+- "Saiu do universo" inclui cair abaixo do piso de tamanho ou de liquidez,
+  não só deixar de ser negociada.
+- A carteira padrão do teste (c) e os pesos iguais do universo usam a régua
+  da §19: voltam a 1/N todo abril, sem aporte e, no caso dos pesos iguais,
+  sem custo. Isso pesa contra a carteira.
+- Muitos braços foram medidos da §19 à §26 no mesmo período. Um falso
+  positivo fica mais provável do que o IC sugere.
+- As §1 a §22 deste guia ainda usam a leitura antiga dos fundamentos.
+
+### Como rodar
+
+```bash
+python scripts/medir_estrategias_fundamentalistas_b3.py --cache-dir <pasta> --dividendo-segurado
+```
+
+Grava `data/oos_dividendo_segurado_b3.json`.
+
+### Resultado (24/11/2026): giro cai pela metade, retorno igual; não passa
+
+Nove safras, 2017 a 2025 (abril/2017 a março/2026), com o leitor corrigido
+e os preços conferidos ponto a ponto (diferença máxima 0,0 em 47.356
+pontos). O dividendo de 6% sem segurar repete os números da §23 refeita.
+
+**Excesso sobre pesos iguais, líquido:**
+
+| Braço | Média | IC 95% | Sem a melhor safra | Giro de compra | Giro de venda |
+|---|---:|---|---:|---:|---:|
+| **dividendo segurado, aporte 10%** | +1,7 pp | [−4,3; +6,7] | +0,5 | 27% | 19% |
+| aporte 5% (informativo) | +1,6 pp | [−4,3; +6,4] | +0,4 | 23% | 19% |
+| aporte 20% (informativo) | +1,9 pp | [−4,0; +7,0] | +0,6 | 33% | 19% |
+| segurado, régua da §19 (informativo) | +2,1 pp | [−3,7; +7,1] | +0,8 | 32% | — |
+| só solvência (informativo) | +1,7 pp | [−4,0; +6,5] | +0,5 | 26% | 19% |
+| dividendo de 6% sem segurar (§23) | +2,1 pp | [−3,6; +7,3] | +0,5 | 50% | — |
+| dividendo de 6% sem segurar, com aporte | +1,6 pp | [−4,0; +6,7] | +0,1 | 48% | 43% |
+
+O giro de compra inclui o aporte, que é dinheiro novo; o de venda mostra o
+que de fato saiu da carteira.
+
+**Sob a regra:**
+
+| Teste | Valor | Passa? |
+|---|---|---|
+| (a) excesso médio > 0 com IC 95% acima de zero | +1,7 pp, IC [−4,3; +6,7] | **não** |
+| (b) média sem a melhor safra > 0 | +0,5 pp | sim |
+| (c) contra a carteira padrão, média > 0 | +0,5 pp | sim |
+
+O IC cruza o zero: **não é candidato.**
+
+Informativos, diferença pareada contra o segurado:
+
+| Comparação | Média | IC 95% |
+|---|---:|---|
+| segurado menos dividendo de 6% sem segurar (§23) | −0,4 pp | [−1,8; +1,3] |
+| segurado menos dividendo de 6% sem segurar, mesma cadeia com aporte | +0,1 pp | [−1,4; +1,8] |
+| segurado menos a mesma carteira na régua da §19 | −0,5 pp | [−1,3; +0,4] |
+| só solvência menos segurado | 0,0 pp | [−0,4; +0,6] |
+
+Com IR, o excesso fica em +1,1 pp, IC [−4,7; +6,0]. O custo médio cai de
+0,13% para 0,06% do patrimônio ao ano.
+
+**Composição por safra:**
+
+| Safra | Nomes | Entraram | Saíram | Seguem sem DY de 6% | Peso maior | Peso menor | Excesso |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 2017 | 22 | 22 | 0 | 0 | 4,5% | 4,5% | +1,1 pp |
+| 2018 | 20 | 5 | 7 | 4 | 5,8% | 4,9% | +0,8 pp |
+| 2019 | 26 | 8 | 2 | 10 | 5,7% | 2,3% | +4,5 pp |
+| 2020 | 26 | 6 | 6 | 11 | 6,1% | 3,2% | −16,1 pp |
+| 2021 | 29 | 6 | 3 | 14 | 6,4% | 2,7% | +8,1 pp |
+| 2022 | 38 | 15 | 6 | 10 | 9,2% | 1,7% | +11,5 pp |
+| 2023 | 44 | 14 | 8 | 5 | 7,9% | 1,5% | −9,0 pp |
+| 2024 | 43 | 9 | 10 | 6 | 5,8% | 2,0% | +6,6 pp |
+| 2025 | 43 | 10 | 10 | 7 | 5,2% | 2,1% | +7,7 pp |
+
+Motivos das 52 saídas (um nome pode ter mais de um): falha na trava de
+solvência 40, saída do universo 10, prejuízo 3. Treze das 52 saídas voltaram
+à carteira em safra posterior.
+
+### Leitura
+
+- **A regra fez o que prometia no giro.** A venda caiu de 43% para 19% do
+  patrimônio ao ano, e o custo caiu pela metade. Ninguém foi vendido por ter
+  subido. Os pesos ficaram entre 1,5% e 9,2%, perto do alvo, só com o
+  aporte.
+- **O retorno não mudou.** Segurar rendeu o mesmo que refazer a carteira
+  todo abril: −0,4 pp contra a §23, IC de −1,8 a +1,3. Tirar o prejuízo da
+  lista de saída também não mudou nada. O tamanho do aporte mexe pouco.
+- **Não passa porque o dividendo de 6% não passa.** As duas versões rendem
+  cerca de +2 pp sobre pesos iguais, com IC cruzando o zero. Segurar não
+  criou nem destruiu retorno; só cortou giro e custo.
+- **A trava de solvência é a maior fonte de venda e oscila.** Ela responde
+  por 40 das 52 saídas, e 13 saídas voltaram depois. Uma régua de "empresa
+  perigosa" mais estável, por exemplo exigir falha em dois anos seguidos,
+  cortaria mais giro. Isso seria regra nova, a registrar antes de medir.
+- Para quem prefere este estilo de carteira, a medição diz que ele não custa
+  retorno em relação ao dividendo de 6% puro. Não diz que ele bate pesos
+  iguais.
+
+Nada muda na tela.
+
+## 27. Solvência em dois anos seguidos (24/11/2026, medido: giro cai de novo, retorno cai; não passa)
+
+### Que pergunta responde
+
+Na §26, a trava de solvência respondeu por 40 das 52 saídas, e 13 saídas
+voltaram à carteira depois. A hipótese levantada ali: a trava oscila, e
+exigir a falha em dois anos seguidos tiraria só quem está de fato perigoso.
+
+Pergunta: **exigir a falha de solvência em dois anos seguidos corta o giro
+sem perder retorno?**
+
+### O que se mede
+
+Tudo igual à §26 (entrada do dividendo de 6% da §23, alvo 1/N, equilíbrio só
+pelo aporte de 10%, ninguém vendido por ter subido), menos uma coisa:
+
+| Motivo de saída | §26 | §27 |
+|---|---|---|
+| Saiu do universo | tira na hora | tira na hora |
+| Prejuízo no último exercício | tira na hora | tira na hora |
+| Falha na trava de solvência | tira na hora | tira só se o nome também falhou na safra anterior (retrato de abril de N-1, universo de N-1) |
+
+Sem retrato na safra anterior, ou fora do universo dela, não há falha
+anterior: dado ausente não é degradação. O filtro é
+`motivos_persistentes`, em `core/b3_estrategias_fundamentalistas.py`. As
+§26 e §27 usam a mesma cadeia (`_cadeia_do_dividendo_segurado`, no script).
+
+### Regra de decisão (registrada antes de medir)
+
+`REGRA_DE_DECISAO_SOLVENCIA_DOIS_ANOS`, versão `fundamentalistas-1.7.0`,
+commit b5eefd94, anterior à medição. Um braço sob a regra
+(`dividendo_segurado_dois_anos`). Candidato só se, líquido, passar nos três
+testes da §19 (a, b e c, como na §26).
+
+A hipótese do giro se confirma se as duas coisas valerem:
+
+- o giro de venda médio anual fica abaixo do da §26;
+- a diferença pareada contra a §26 não tem o IC 95% inteiro abaixo de zero.
+
+Só informativos: a variante que também pede prejuízo em dois exercícios
+seguidos; a §26 refeita na mesma rodada; a diferença contra o dividendo de 6%
+sem segurar; as voltas, os motivos de saída e o excesso com IR.
+
+### Limites declarados antes
+
+- A hipótese nasceu da §26, medida nas mesmas nove safras. O teste do giro
+  não é fora da amostra.
+- Nove safras: diferenças pequenas não se separam do ruído.
+- Muitos braços foram medidos da §19 à §27 no mesmo período. Um falso
+  positivo fica mais provável do que o IC sugere.
+- Os demais limites da §26 valem aqui.
+
+### Como rodar
+
+```bash
+python scripts/medir_estrategias_fundamentalistas_b3.py --cache-dir <pasta> --solvencia-dois-anos
+```
+
+Grava `data/oos_solvencia_dois_anos_b3.json`. A §26 refeita na mesma rodada
+repete os números da §26 (+1,7 pp, giro de venda 19%).
+
+### Resultado (24/11/2026): giro cai de novo, retorno cai; não passa
+
+**Excesso sobre pesos iguais, líquido:**
+
+| Braço | Média | IC 95% | Sem a melhor safra | Giro de compra | Giro de venda | Custo ao ano |
+|---|---:|---|---:|---:|---:|---:|
+| **solvência em dois anos** | +0,9 pp | [−6,7; +6,3] | −0,3 | 18% | 10% | 0,04% |
+| também prejuízo em dois anos (informativo) | +0,9 pp | [−6,6; +6,1] | −0,1 | 18% | 9% | 0,03% |
+| §26 refeita | +1,7 pp | [−4,3; +6,7] | +0,5 | 27% | 19% | 0,06% |
+| dividendo de 6% sem segurar (§23) | +2,1 pp | [−3,6; +7,3] | +0,5 | 50% | — | 0,13% |
+
+**Sob a regra:**
+
+| Teste | Valor | Passa? |
+|---|---|---|
+| (a) excesso médio > 0 com IC 95% acima de zero | +0,9 pp, IC [−6,7; +6,3] | **não** |
+| (b) média sem a melhor safra > 0 | −0,3 pp | **não** |
+| (c) contra a carteira padrão, média > 0 | −0,3 pp | **não** |
+
+**Não é candidato.**
+
+**Hipótese do giro:**
+
+| Condição | Valor | Vale? |
+|---|---|---|
+| giro de venda abaixo da §26 | 10% contra 19% | sim |
+| diferença contra a §26 sem IC inteiro abaixo de zero | −0,8 pp, IC [−3,6; +1,7] | sim |
+
+A hipótese se confirma pelo critério registrado: o giro caiu, e a perda de
+retorno não se separa do ruído. Mas a média contra a §26 é negativa.
+
+Informativos, diferença pareada:
+
+| Comparação | Média | IC 95% |
+|---|---:|---|
+| dois anos menos §26 | −0,8 pp | [−3,6; +1,7] |
+| dois anos menos dividendo de 6% sem segurar | −1,2 pp | [−4,6; +1,7] |
+| também prejuízo menos dois anos | 0,0 pp | [−0,4; +0,6] |
+
+Com IR, o excesso fica em +0,6 pp, IC [−7,0; +6,0].
+
+**Saídas:**
+
+| Braço | Saídas | Por solvência | Saiu do universo | Prejuízo | Voltaram depois |
+|---|---:|---:|---:|---:|---:|
+| solvência em dois anos | 36 | 20 | 12 | 5 | 5 |
+| §26 | 52 | 40 | 10 | 3 | 13 |
+
+**Por safra:**
+
+| Safra | Nomes | A mais que a §26 | Seguem sem DY de 6% | Peso maior | Peso menor | Excesso | Excesso §26 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 2017 | 22 | 0 | 0 | 4,5% | 4,5% | +1,1 pp | +1,1 pp |
+| 2018 | 26 | 6 | 10 | 5,8% | 2,3% | +4,5 pp | +0,8 pp |
+| 2019 | 29 | 3 | 13 | 5,4% | 2,8% | +4,1 pp | +4,5 pp |
+| 2020 | 32 | 6 | 17 | 9,6% | 2,2% | −25,8 pp | −16,1 pp |
+| 2021 | 35 | 6 | 20 | 6,5% | 2,3% | +4,4 pp | +8,1 pp |
+| 2022 | 47 | 9 | 19 | 7,0% | 1,0% | +8,8 pp | +11,5 pp |
+| 2023 | 50 | 6 | 11 | 6,2% | 1,4% | −5,1 pp | −9,0 pp |
+| 2024 | 54 | 11 | 17 | 4,4% | 1,4% | +10,2 pp | +6,6 pp |
+| 2025 | 51 | 8 | 15 | 4,3% | 1,6% | +5,8 pp | +7,7 pp |
+
+### Leitura
+
+- **O giro caiu como previsto.** A venda foi de 19% para 10% ao ano, e as
+  voltas de 13 para 5. As saídas por solvência caíram pela metade.
+- **O retorno caiu, sem se separar do ruído.** Contra a §26, −0,8 pp; contra
+  o dividendo de 6% puro, −1,2 pp. Nenhum dos três testes passa.
+- **A safra de 2020 explica a perda.** A §27 entrou nela com seis nomes que a
+  §26 já tinha vendido por falha de solvência. Ela perdeu 25,8 pp para os
+  pesos iguais, contra 16,1 pp da §26. Só essa safra soma −9,7 pp, mais que
+  a diferença total das nove (−7,0 pp). Na crise, a primeira falha da trava
+  parece ter sido aviso.
+- **A trava oscila, mas não é só ruído.** Esperar o segundo ano corta giro,
+  e o preço disso apareceu justo na safra de crise. Com nove safras, não dá
+  para dizer se isso se repete.
+- Pedir também prejuízo em dois exercícios não muda nada (0,0 pp).
+- Para quem prioriza giro baixo, a §27 é o extremo: vende 10% ao ano. A
+  medição não mostra ganho de retorno em troca. Entre as três versões do
+  dividendo de 6%, a de maior média é a que refaz a carteira todo abril, e
+  nenhuma passa.
+
+**Trava contra a volta no mesmo abril (revisão do PR #807).** Na §26 e na §27,
+quem a regra de saída tira numa safra não volta pela regra de entrada da mesma
+safra (`fe.segurar_lideres(..., barrar_reentrada=True)`). Antes da trava, um
+nome com prejuízo que ainda pagasse 6% sairia e voltaria no mesmo abril. A
+medição refeita com a trava dá os mesmos números: o caso não aconteceu em
+nenhuma safra. O líder segurado da §19 fica sem a trava, porque lá a entrada é
+a própria carteira padrão: quem a padrão escolhe está nela de qualquer jeito.
+
+Nada muda na tela.

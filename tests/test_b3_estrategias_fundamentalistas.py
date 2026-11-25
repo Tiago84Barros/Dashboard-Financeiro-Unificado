@@ -210,6 +210,34 @@ def test_medir_escolha_vazia_vira_caixa_e_mesma_regua(monkeypatch):
     assert len(chamadas["itens"]) == 2
 
 
+def test_medir_escolha_aceita_outra_cadeia_e_leva_os_extras(monkeypatch):
+    """§26: ``simular`` troca a cadeia; giro de venda e pesos seguem na tabela."""
+    import core.b3_oos_carteira as oos
+    import scripts.medir_nota_fatores_b3 as nf_script
+
+    monkeypatch.setattr("core.b3_safras.retorno_da_safra",
+                        lambda *a, **k: {"mensuravel": True, "retorno_selic": 0.10,
+                                         "retorno_equal_weight": 0.08})
+    monkeypatch.setattr(oos, "retornos_por_ticker", lambda *a, **k: {})
+    monkeypatch.setattr(oos, "simular_custos",
+                        lambda *a: pytest.fail("a cadeia padrão não pode rodar"))
+
+    def outra(itens, cost_cfg):
+        return [{"medida": True, "liquido": 0.10, "bruto": 0.10,
+                 "liquido_com_ir": 0.09, "giro": 0.0, "custo_pct": 0.0,
+                 "giro_venda": 0.25, "peso_maior": 0.6, "peso_menor": 0.4}
+                for _ in itens]
+
+    por_safra = [{"safra": a, "universo": ["A3", "B3"], "saidas": {}}
+                 for a in (2017, 2018, 2019)]
+    out = nf_script.medir_escolha(
+        por_safra, lambda p: ["A3", "B3"], precos=None, selic_macro={}, taxa=0.1,
+        selic_mensal={}, cost_cfg=None, comeca_em=2017, simular=outra)
+    assert out["safras"][1]["giro_venda"] == 0.25
+    assert out["safras"][1]["peso_maior"] == 0.6
+    assert out["giro_venda_medio_anual"] == pytest.approx(0.25)
+
+
 def test_selic_ate_e_point_in_time():
     from scripts.medir_estrategias_fundamentalistas_b3 import selic_ate
 
@@ -461,7 +489,7 @@ def test_regra_da_secao_24_registrada():
 
 # ── §25: o dividendo de 6% sobre a rota de valor ────────────────────────────
 def test_regra_da_secao_25_registrada():
-    assert fe.VERSAO == "fundamentalistas-1.5.0"
+    assert fe.VERSAO >= "fundamentalistas-1.5.0"
     texto = fe.REGRA_DE_DECISAO_SOBREPOSICAO_ROTA
     assert "(a)" in texto and "(b)" in texto and "LÍQUIDA" in texto
 
@@ -509,3 +537,145 @@ def test_sobreposicao_tira_so_com_ic_abaixo_de_zero():
 def test_sobreposicao_inconclusiva_com_pouca_amostra_ou_sem_resumo():
     assert fe.leitura_sobreposicao(_par(0.05, 0.01, 0.09, 0.03, n=2))["leitura"] == fe.INCONCLUSIVA
     assert fe.leitura_sobreposicao(None)["leitura"] == fe.INCONCLUSIVA
+
+
+# ── §26: dividendo segurado, equilíbrio pelo aporte ──────────────────────────
+from core.transaction_costs import CostConfig  # noqa: E402
+
+_SEM_CUSTO = CostConfig.desligado()
+
+
+def test_encher_por_baixo_leva_os_menores_ao_mesmo_nivel():
+    compras = fe.encher_por_baixo({"A3": 50.0, "B3": 10.0}, ["A3", "B3", "C3"], 30.0)
+    assert compras == pytest.approx({"C3": 20.0, "B3": 10.0})
+    assert "A3" not in compras  # quem está acima não recebe
+
+
+def test_encher_por_baixo_com_dinheiro_de_sobra_iguala_todos():
+    pos = {"A3": 50.0, "B3": 10.0}
+    compras = fe.encher_por_baixo(pos, ["a3", "b3", "c3"], 200.0)
+    assert sum(compras.values()) == pytest.approx(200.0)
+    finais = {t: pos.get(t, 0.0) + compras[t] for t in ("A3", "B3", "C3")}
+    assert max(finais.values()) == pytest.approx(min(finais.values()))
+
+
+def test_encher_por_baixo_sem_dinheiro_ou_sem_nome_nao_compra():
+    assert fe.encher_por_baixo({"A3": 1.0}, ["A3"], 0.0) == {}
+    assert fe.encher_por_baixo({"A3": 1.0}, [], 10.0) == {}
+
+
+def _safra(ano, rets, **extra):
+    return {"safra": ano, "pesos": {t: 1.0 / len(rets) for t in rets},
+            "retornos": dict(rets), **extra}
+
+
+def test_simular_aportes_primeira_safra_em_pesos_iguais_e_sem_aporte():
+    out = fe.simular_aportes([_safra(2017, {"A3": 1.0, "B3": 0.0})], _SEM_CUSTO)
+    assert out[0]["peso_maior"] == pytest.approx(0.5)
+    assert out[0]["peso_menor"] == pytest.approx(0.5)
+    assert out[0]["liquido"] == pytest.approx(0.5)
+    assert out[0]["giro"] == pytest.approx(1.0)
+
+
+def test_simular_aportes_nao_vende_quem_subiu_e_aporta_em_quem_ficou_atras():
+    out = fe.simular_aportes([_safra(2017, {"A3": 1.0, "B3": 0.0}),
+                              _safra(2018, {"A3": 0.0, "B3": 0.0})], _SEM_CUSTO)
+    s = out[1]
+    # 150 em abril: A3=100, B3=50. O aporte de 15 vai todo para B3.
+    assert s["giro_venda"] == pytest.approx(0.0)
+    assert s["giro"] == pytest.approx(15.0 / 165.0)
+    assert s["peso_maior"] == pytest.approx(100.0 / 165.0)
+    assert s["peso_menor"] == pytest.approx(65.0 / 165.0)
+    # O aporte não conta como ganho.
+    assert s["liquido"] == pytest.approx(0.0)
+
+
+def test_simular_aportes_vende_so_quem_saiu_e_compra_o_novo():
+    out = fe.simular_aportes([_safra(2017, {"A3": 1.0, "B3": 0.0}),
+                              _safra(2018, {"A3": 0.0, "C3": 0.0})], _SEM_CUSTO)
+    s = out[1]
+    assert s["giro_venda"] == pytest.approx(50.0 / 150.0)
+    # B3 saiu (50) + aporte (15) = 65, todos para C3; A3 (100) fica como está.
+    assert s["giro"] == pytest.approx(65.0 / 165.0)
+    assert s["peso_maior"] == pytest.approx(100.0 / 165.0)
+
+
+def test_simular_aportes_safra_em_caixa_e_fora_da_cadeia():
+    out = fe.simular_aportes(
+        [_safra(2017, {"A3": 0.0}), {"safra": 2018, "pesos": {}, "rendimento_caixa": 0.10},
+         {"safra": 2019, "pesos": {}}], _SEM_CUSTO)
+    assert out[1]["caixa"] is True
+    assert out[1]["giro_venda"] == pytest.approx(1.0)
+    assert out[1]["liquido"] == pytest.approx(0.10)
+    assert out[2] == {"safra": 2019, "medida": False}
+
+
+def test_simular_aportes_conta_custo_e_ir_da_venda():
+    cfg = CostConfig.brasil_pf_default()
+    out = fe.simular_aportes([_safra(2017, {"A3": 0.0, "B3": 1.0}),
+                              _safra(2018, {"A3": 0.0})], cfg, capital=1_000_000.0)
+    assert out[0]["custo_pct"] > 0
+    assert out[1]["ir_pct"] > 0  # vendeu B3 com lucro, acima da isenção
+    assert out[1]["liquido_com_ir"] < out[1]["liquido"]
+
+
+def test_quem_fica_ignora_dividendo_e_so_tira_por_degradacao():
+    motivos = {"A3": [], "B3": [fe.PREJUIZO], "C3": [fe.FALHA_SOLVENCIA]}
+    # A3 pode ter DY caindo: sem motivo de saúde, fica.
+    assert fe.quem_fica(motivos) == ["A3"]
+    assert fe.quem_fica(motivos, fe.MOTIVOS_SO_SOLVENCIA) == ["A3", "B3"]
+
+
+def test_regra_da_26_fixa_aporte_e_proibe_venda_para_rebalancear():
+    regra = fe.REGRA_DE_DECISAO_DIVIDENDO_SEGURADO
+    assert fe.VERSAO >= "fundamentalistas-1.6.0"
+    assert fe.APORTE_DIVIDENDO_SEGURADO == pytest.approx(0.10)
+    assert "ninguém é vendido para voltar ao alvo" in regra
+    assert "refeitos em abril" not in regra
+
+
+def test_motivos_persistentes_so_tira_por_solvencia_repetida():
+    agora = {"AAA3": [fe.FALHA_SOLVENCIA], "BBB3": [fe.FALHA_SOLVENCIA],
+             "CCC3": [fe.PREJUIZO], "DDD3": [fe.SAIU_DO_UNIVERSO], "EEE3": []}
+    antes = {"AAA3": [fe.FALHA_SOLVENCIA], "BBB3": [], "CCC3": []}
+    out = fe.motivos_persistentes(agora, antes)
+    assert out["AAA3"] == [fe.FALHA_SOLVENCIA]  # falhou nos dois anos: sai
+    assert out["BBB3"] == []                     # falhou só agora: fica
+    assert out["CCC3"] == [fe.PREJUIZO]          # prejuízo segue tirando na hora
+    assert out["DDD3"] == [fe.SAIU_DO_UNIVERSO]
+    assert out["EEE3"] == []
+    assert fe.quem_fica(out) == ["BBB3", "EEE3"]
+
+
+def test_motivos_persistentes_sem_safra_anterior_nao_tira_por_solvencia():
+    out = fe.motivos_persistentes({"AAA3": [fe.FALHA_SOLVENCIA, fe.PREJUIZO]}, {})
+    assert out["AAA3"] == [fe.PREJUIZO]
+    out = fe.motivos_persistentes({"AAA3": [fe.PREJUIZO]}, {"AAA3": [fe.PREJUIZO]},
+                                  fe.PERSISTENTES_COM_PREJUIZO)
+    assert out["AAA3"] == [fe.PREJUIZO]
+    out = fe.motivos_persistentes({"AAA3": [fe.PREJUIZO]}, {"AAA3": []},
+                                  fe.PERSISTENTES_COM_PREJUIZO)
+    assert out["AAA3"] == []
+
+
+def test_regra_da_27_fixa_dois_anos_e_o_teste_do_giro():
+    regra = fe.REGRA_DE_DECISAO_SOLVENCIA_DOIS_ANOS
+    assert "dois anos seguidos" in regra and "giro de venda" in regra
+    assert fe.PERSISTENTES_DOIS_ANOS == (fe.FALHA_SOLVENCIA,)
+    assert fe.VERSAO >= "fundamentalistas-1.7.0"
+
+
+def test_segurar_lideres_barra_reentrada_no_mesmo_ano():
+    """Quem a saída tira não volta pela entrada da mesma safra (§26/§27)."""
+    entrada = {2020: ["AAAA3", "BBBB3"], 2021: ["AAAA3", "CCCC3"]}
+
+    def manter(s, lista):
+        return [t for t in lista if t != "AAAA3"]  # AAAA3 teve prejuízo em 2021
+
+    sem = fe.segurar_lideres([2020, 2021], entrada.__getitem__, manter)
+    com = fe.segurar_lideres([2020, 2021], entrada.__getitem__, manter,
+                             barrar_reentrada=True)
+    assert sem[2021] == ["AAAA3", "BBBB3", "CCCC3"]
+    assert com[2021] == ["BBBB3", "CCCC3"]
+    # nome novo que nunca esteve na carteira entra normalmente
+    assert com[2020] == ["AAAA3", "BBBB3"]
