@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from datetime import date as _date
 
 from sqlalchemy import text
 
@@ -232,15 +233,74 @@ def _db_cols(conn, table: str) -> set[str]:
     return cols
 
 
+_CHAVE_BARRA_AGREGADA = "_barra_agregada"  # = normalize.CHAVE_BARRA_AGREGADA
+
+
+def _sem_barra_que_pisa_no_diario(conn, rows: list[dict]) -> list[dict]:
+    """Tira do lote de ``historical_prices`` a vela agregada que pisaria no diário.
+
+    ``normalize.price_rows`` marca a vela mensal da brapi (datada no 1º dia
+    útil, com o fechamento do fim do mês). Ela só entra se o mês dela ainda
+    não tem pregão em OUTRA data: mês vazio recebe a vela (histórico só
+    mensal continua inteiro, e o leitor faz ``resample("ME").last()``); mês
+    com a mesma vela gravada antes a atualiza (o mês corrente fecha); mês com
+    pregão diário em outra data fica como está. Limite: a tabela não diz se a
+    linha da data da vela veio de vela ou de pregão; mês só com ela recebe a
+    vela (numa série diária completa, foi o único pregão do mês e os números
+    batem). A marca sai de todas as linhas — não é
+    coluna. Ponto único: todo caminho que grava preço da brapi passa aqui
+    (``ingest_ticker``, ``renormalize``, ``ingest_benchmark``,
+    ``backfill_series``)."""
+    marcadas = [r for r in rows if r.get(_CHAVE_BARRA_AGREGADA)]
+    limpas = [{k: v for k, v in r.items() if k != _CHAVE_BARRA_AGREGADA}
+              for r in rows]
+    if not marcadas:
+        return limpas
+    def _dia(v):
+        return v if isinstance(v, _date) else _date.fromisoformat(str(v)[:10])
+
+    tickers = sorted({str(r["ticker"]) for r in marcadas})
+    ini = min(_dia(r["date"]) for r in marcadas).replace(day=1)
+    res = conn.execute(text(
+        "SELECT ticker, date_trunc('month', date)::date AS mes, "
+        "       min(date) AS primeira, max(date) AS ultima "
+        "FROM market.historical_prices "
+        "WHERE ticker = ANY(:t) AND date >= :ini "
+        "GROUP BY 1, 2"), {"t": tickers, "ini": ini})
+    ocupados = {(str(t), m): (p, u) for t, m, p, u in res.fetchall()}
+    saida: list[dict] = []
+    puladas = 0
+    for r, limpa in zip(rows, limpas):
+        if r.get(_CHAVE_BARRA_AGREGADA):
+            d = _dia(r["date"])
+            ja = ocupados.get((str(r["ticker"]), d.replace(day=1)))
+            if ja is not None and (ja[0] != d or ja[1] != d):
+                puladas += 1
+                continue
+        saida.append(limpa)
+    if puladas:
+        logger.info("upsert historical_prices: %d vela(s) agregada(s) puladas "
+                    "— o mês já tem pregão diário", puladas)
+    return saida
+
+
 def _upsert(conn, table: str, rows: list[dict], page_size: int = 500) -> int:
     """
     UPSERT em LOTE via psycopg2.execute_values (centenas de linhas por statement,
     na mesma transação do SQLAlchemy). Deduplica por chave natural antes (chaves
     repetidas no mesmo lote quebram ON CONFLICT). Fallback só se execute_values
     não existir (ImportError) — erros de SQL reais propagam.
+
+    Em ``historical_prices``, a vela agregada que pisaria num pregão diário
+    sai antes (``_sem_barra_que_pisa_no_diario``); o retorno conta só as
+    linhas enviadas ao banco.
     """
     if not rows:
         return 0
+    if table == "historical_prices":
+        rows = _sem_barra_que_pisa_no_diario(conn, rows)
+        if not rows:
+            return 0
     rows = _dedup(table, rows)
     cols = list(rows[0].keys())
     db_cols = _db_cols(conn, table)

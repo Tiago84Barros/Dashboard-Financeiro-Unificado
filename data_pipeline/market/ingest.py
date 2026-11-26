@@ -243,6 +243,11 @@ def ingest_ticker(engine, ticker: str, *, range_: str, full: bool,
     as duas bordas do mês, não os pregões dele — foi assim que o refresh
     diário passou meses sem trazer preço novo.
 
+    A vela mensal (o default, usado por ``bootstrap`` e ``annual``) vem no 1º
+    dia útil do mês com o fechamento do fim do mês. ``normalize.price_rows`` a
+    marca, e o upsert só a grava em mês sem pregão diário em outra data — ela
+    não pisa mais no preço do dia (``repository._sem_barra_que_pisa_no_diario``).
+
     ``trocas`` ({antigo: atual}, de ``carregar_trocas``): o código antigo é
     pulado antes da rede. Quando a brapi devolve outro símbolo e ele é troca
     de código provada, grava sob o código atual e registra a troca como
@@ -471,7 +476,10 @@ def daily(tickers: list[str] | None = None, source: str = "setores",
 
 def annual(tickers: list[str] | None = None, source: str = "setores",
            limit: int | None = None) -> dict:
-    """Refresh de demonstrações (range=1y + módulos completos)."""
+    """Refresh de demonstrações (range=1y + módulos completos).
+
+    As velas de preço deste refresh são mensais: só preenchem mês sem pregão
+    diário (ver ``ingest_ticker``)."""
     engine = _engine()
     if engine is None:
         return {**_new_progress(), "erros": -1}

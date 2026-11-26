@@ -157,7 +157,41 @@ def asset_row(quote: dict) -> dict | None:
 
 # ── Preços ────────────────────────────────────────────────────────────────────
 
+# Intervalos da brapi cuja vela resume vários pregões. A vela mensal (1mo, o
+# padrão de `bootstrap` e `annual`) vem datada no 1º dia útil do mês, mas traz
+# o fechamento do FIM do mês e o volume do mês inteiro. Gravada como se fosse
+# o pregão daquele dia, ela pisava na linha diária pela chave (ticker, date):
+# IVVB11 em 03/08/2026 ficou com 449,35, o oficial é 435,83 (26/11/2026).
+_INTERVALOS_AGREGADOS = frozenset({"5d", "1wk", "1mo", "3mo"})
+
+# Marca que `price_rows` põe na linha de vela agregada. Não é coluna: o
+# `repository._upsert` a retira e decide, com ela, se a linha entra.
+CHAVE_BARRA_AGREGADA = "_barra_agregada"
+
+
+def _vela_agregada(quote: dict, datas: list) -> bool:
+    """A vela do payload resume mais de um pregão?
+
+    Lê o ``usedInterval`` que a brapi devolve. Payload antigo sem o campo:
+    infere pelo espaçamento — 3 velas ou mais com mediana de 25 dias ou mais
+    entre elas é série mensal. Com menos de 3 velas não há como saber, e a
+    linha segue como pregão (o comportamento de antes)."""
+    intervalo = str((quote or {}).get("usedInterval") or "").strip().lower()
+    if intervalo:
+        return intervalo in _INTERVALOS_AGREGADOS
+    ds = sorted(set(datas))
+    if len(ds) < 3:
+        return False
+    gaps = sorted((b - a).days for a, b in zip(ds, ds[1:]))
+    return gaps[len(gaps) // 2] >= 25
+
+
 def price_rows(quote: dict) -> list[dict]:
+    """Linhas de ``market.historical_prices`` a partir de ``historicalDataPrice``.
+
+    Vela de intervalo agregado (mensal etc., ver ``_vela_agregada``) sai com
+    ``CHAVE_BARRA_AGREGADA = True``: o upsert só a grava no mês que ainda não
+    tem pregão de outra data, para não pisar no preço diário."""
     tk = _ticker(quote)
     out: list[dict] = []
     for it in (quote or {}).get("historicalDataPrice") or []:
@@ -177,6 +211,9 @@ def price_rows(quote: dict) -> list[dict]:
             "adjusted_close": _f(it.get("adjustedClose")),
             "volume": int(_f(it.get("volume")) or 0) if it.get("volume") is not None else None,
         })
+    if out and _vela_agregada(quote, [r["date"] for r in out]):
+        for r in out:
+            r[CHAVE_BARRA_AGREGADA] = True
     return out
 
 
