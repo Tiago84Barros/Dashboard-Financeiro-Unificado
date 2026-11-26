@@ -61,6 +61,11 @@ a §23 não viu (§24, regra própria fixada antes de medir em 24/11/2026:
    anual, que compra primeiro quem está mais abaixo do alvo
    (`simular_aportes`), sem vender quem subiu.
 
+10. ``dividendo_6_topN`` (§28, regra fixada antes de medir em 26/11/2026,
+    ``REGRA_DE_DECISAO_DIVIDENDO_TOPN``) — o ``dividendo_6`` limitado a N
+    nomes (5, 10, 15 e 20): os N de maior DY médio, desempate por ticker. Com
+    menos de N que passam, fica com todos. Pesos iguais.
+
 Todas leem só o que se sabia em abril/N: o retrato e o histórico da safra
 (exercícios até N-1, pela regra de vintage do motor), os múltiplos com o preço
 de fim do exercício (``data_pipeline.market.ingest``, histórico anual) e a
@@ -81,7 +86,7 @@ import pandas as pd
 
 from core.b3_value_route import OPORTUNIDADE, rank_value_opportunities
 
-VERSAO = "fundamentalistas-1.7.0"
+VERSAO = "fundamentalistas-1.8.0"
 
 ROTA_VALOR = "rota_valor"
 FORMULA_MAGICA = "formula_magica"
@@ -554,6 +559,28 @@ def dy_medio(hist: pd.DataFrame | None, ano_max: int, *,
     return float(np.mean([por_ano[a] for a in janela]))
 
 
+def dy_de_quem_passa(df_pit: pd.DataFrame | None, universo: Iterable[str],
+                     historico: Mapping[str, pd.DataFrame] | None,
+                     ano_max: int, *, alvo: float = DY_ALVO_BAZIN,
+                     anos: int = ANOS_DY_BAZIN) -> dict[str, float]:
+    """Quem passa no filtro da regra 7 e o DY médio de cada um.
+
+    Ponto único do filtro do ``dividendo_6``: `carteira_dividendo_bazin` (a
+    carteira inteira) e `carteira_dividendo_topn` (§28) leem daqui.
+    """
+    nomes = sorted({str(t).upper() for t in universo})
+    falhas = falhas_de_solvencia(df_pit, nomes)
+    hist = {str(k).upper(): v for k, v in (historico or {}).items()}
+    fica: dict[str, float] = {}
+    for tk in nomes:
+        if falhas.get(tk):
+            continue
+        media = dy_medio(hist.get(tk), ano_max, anos=anos)
+        if media is not None and media >= float(alvo):
+            fica[tk] = media
+    return fica
+
+
 def carteira_dividendo_bazin(df_pit: pd.DataFrame | None, universo: Iterable[str],
                              historico: Mapping[str, pd.DataFrame] | None,
                              ano_max: int, *, alvo: float = DY_ALVO_BAZIN,
@@ -564,17 +591,51 @@ def carteira_dividendo_bazin(df_pit: pd.DataFrame | None, universo: Iterable[str
     solvência da rota de valor (ausência de dado não é falha). Pesos iguais
     entre quem passa.
     """
-    nomes = sorted({str(t).upper() for t in universo})
-    falhas = falhas_de_solvencia(df_pit, nomes)
-    hist = {str(k).upper(): v for k, v in (historico or {}).items()}
-    fica = []
-    for tk in nomes:
-        if falhas.get(tk):
-            continue
-        media = dy_medio(hist.get(tk), ano_max, anos=anos)
-        if media is not None and media >= float(alvo):
-            fica.append(tk)
-    return fica
+    return sorted(dy_de_quem_passa(df_pit, universo, historico, ano_max,
+                                   alvo=alvo, anos=anos))
+
+
+# ── 7d. O dividendo de 6% com poucos nomes (26/11/2026, §28) ────────────────
+#: Tamanhos da §28, fixados antes de medir (pedido do usuário de 26/11/2026).
+TAMANHOS_DIVIDENDO_TOPN = (5, 10, 15, 20)
+
+#: Regra de decisão da §28, registrada antes de medir (26/11/2026).
+REGRA_DE_DECISAO_DIVIDENDO_TOPN = (
+    "pergunta: o dividendo de 6% da §23, limitado a poucos nomes, se sai "
+    "melhor? A entrada é a mesma da §23 (DY médio de N-3 a N-1 >= 6%, os três "
+    "presentes, sem falha da trava de solvência, universo da carteira padrão). "
+    "Dos que passam, ficam os N de MAIOR DY médio, desempate por ticker; com "
+    "menos de N, todos. N = 5, 10, 15 e 20, fixados antes de medir. Pesos "
+    "iguais, refeita todo abril. Um braço vira candidato só se, LÍQUIDO do "
+    "giro, passar nos três testes da §19: (a) excesso médio sobre pesos iguais "
+    "no universo > 0 com IC 95% acima de zero; (b) média sem a melhor safra > "
+    "0; (c) diferença pareada contra a carteira padrão atual (Equilibrado, sem "
+    "portão) com média > 0. Com mais de um passando, vale o MENOR N. Quatro "
+    "braços: a chance de um falso positivo sobe para perto de 1 em 5. Só "
+    "informativos: o dividendo de 6% inteiro refeito na mesma rodada, a "
+    "diferença pareada contra ele, o número de nomes por safra e a comparação "
+    "com Ibovespa, CDI, IFIX, S&P 500 e inflação. Passar não muda a tela; só "
+    "abre a próxima etapa.")
+
+
+def rotulo_dividendo_topn(n: int) -> str:
+    return f"{DIVIDENDO_6}_top{int(n)}"
+
+
+def carteira_dividendo_topn(df_pit: pd.DataFrame | None, universo: Iterable[str],
+                            historico: Mapping[str, pd.DataFrame] | None,
+                            ano_max: int, n: int, *, alvo: float = DY_ALVO_BAZIN,
+                            anos: int = ANOS_DY_BAZIN) -> list[str]:
+    """Os ``n`` de maior DY médio entre quem passa no ``dividendo_6`` (§28).
+
+    Mesmo filtro da regra 7 (`dy_de_quem_passa`). Ordem: DY médio
+    decrescente, desempate por ticker. Com menos de ``n``, fica com todos.
+    """
+    if int(n) <= 0:
+        return []
+    dy = dy_de_quem_passa(df_pit, universo, historico, ano_max, alvo=alvo, anos=anos)
+    ordem = sorted(dy, key=lambda tk: (-dy[tk], tk))
+    return sorted(ordem[:int(n)])
 
 
 # ── 7c. O dividendo de 6% sobre a rota de valor (24/11/2026, §25) ───────────

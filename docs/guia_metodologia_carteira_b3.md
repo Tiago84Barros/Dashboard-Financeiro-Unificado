@@ -1944,3 +1944,149 @@ nenhuma safra. O líder segurado da §19 fica sem a trava, porque lá a entrada 
 a própria carteira padrão: quem a padrão escolhe está nela de qualquer jeito.
 
 Nada muda na tela.
+
+## 28. O dividendo de 6% com poucos nomes (26/11/2026, medido: nenhum tamanho passa)
+
+### Que pergunta responde
+
+O dividendo de 6% da §23 fica com 15 a 39 nomes por safra. Não supera os
+pesos iguais no universo, mas supera o Ibovespa, o CDI, o IFIX e a inflação
+no mesmo período. Pergunta do usuário: **e se ficarmos só com os 5, 10, 15
+ou 20 de maior DY?**
+
+### O que se mede
+
+A entrada é a da §23: universo da carteira padrão, DY médio de N-3 a N-1
+igual ou acima de 6% (os três exercícios presentes) e nenhuma falha da trava
+de solvência. Dos que passam, ficam os N de maior DY médio, desempate por
+ticker. Com menos de N que passam, ficam todos. Pesos iguais, refeita todo
+abril, mesma régua de custos da §19.
+
+O filtro mora num ponto só, `dy_de_quem_passa`, em
+`core/b3_estrategias_fundamentalistas.py`. A §23 (`carteira_dividendo_bazin`)
+e a §28 (`carteira_dividendo_topn`) leem dele, para que o corte nunca use um
+filtro diferente do da carteira inteira.
+
+### Regra de decisão (registrada antes de medir)
+
+`REGRA_DE_DECISAO_DIVIDENDO_TOPN`, versão `fundamentalistas-1.8.0`, commit
+2a4fc31f, anterior à medição. Quatro braços sob a regra:
+`dividendo_6_top5`, `_top10`, `_top15` e `_top20`. Um braço é candidato só
+se, líquido, passar nos três testes da §19 (a, b e c). Com mais de um
+passando, vale o menor N.
+
+Só informativos: o dividendo de 6% inteiro refeito na mesma rodada, a
+diferença pareada contra ele, o número de nomes por safra e a comparação com
+Ibovespa, CDI, IFIX, S&P 500 e inflação.
+
+### Limites declarados antes
+
+- O DY usa o preço de fim de cada exercício, não o de abril/N.
+- Ordenar pelo maior DY põe na frente quem teve o preço derrubado. É o risco
+  que o corte mede, não um defeito a corrigir depois.
+- Quatro braços: a chance de um falso positivo sobe para perto de 1 em 5.
+- Os braços se sobrepõem (o top 5 está dentro do top 10). Não são quatro
+  testes independentes.
+- Nove safras não separam sorte de regra com folga. O teste (b) existe por
+  isso.
+- Safra sem nenhum nome vira caixa à Selic.
+
+### Como rodar
+
+```bash
+python scripts/medir_estrategias_fundamentalistas_b3.py --cache-dir <pasta> --dividendo-topn
+```
+
+Grava `data/oos_dividendo_topn_b3.json`. A pasta do cache tem de ser nova ou
+montada depois da última mudança de preços no armazém: a conferência dos
+preços (`exigir_precos_conferidos`) para a medição se o pickle não bate,
+ponto a ponto, com `market.historical_prices`.
+
+### Resultado (26/11/2026): cortar piora; nenhum tamanho passa
+
+Rodada com cache montado em 26/11, depois da troca de preços do mesmo dia. A
+conferência dos preços bateu nos 47.356 pontos (diferença máxima 0,0). O
+dividendo de 6% inteiro reproduz a §23: +2,1 pp, IC [−3,6; +7,3].
+
+**Excesso sobre pesos iguais, líquido:**
+
+| Braço | Média | IC 95% | Sem a melhor safra | Com IR | Giro ao ano | Custo ao ano |
+|---|---:|---|---:|---:|---:|---:|
+| top 5 | +0,4 pp | [−6,9; +7,2] | −1,8 | −1,4 | 56% | 0,16% |
+| top 10 | −1,0 pp | [−8,8; +6,1] | −3,1 | −2,3 | 57% | 0,15% |
+| top 15 | −1,7 pp | [−8,3; +4,4] | −3,4 | −2,9 | 50% | 0,13% |
+| top 20 | −0,8 pp | [−7,3; +5,4] | −2,9 | −2,2 | 51% | 0,13% |
+| dividendo de 6% inteiro (informativo) | +2,1 pp | [−3,6; +7,3] | +0,5 | +0,6 | 50% | 0,13% |
+
+**Sob a regra:**
+
+| Braço | (a) IC acima de zero | (b) sem a melhor > 0 | (c) contra a padrão > 0 | Candidato? |
+|---|---|---|---|---|
+| top 5 | não | não (−1,8) | não (−0,8 pp) | não |
+| top 10 | não | não (−3,1) | não (−2,3 pp) | não |
+| top 15 | não | não (−3,4) | não (−2,9 pp) | não |
+| top 20 | não | não (−2,9) | não (−2,0 pp) | não |
+
+**Nenhum é candidato.** O inteiro, informativo, passa em (b) e (c), com +0,9
+pp contra a padrão, IC [−10,0; +10,8], e falha em (a).
+
+Informativos, diferença pareada contra o dividendo de 6% inteiro:
+
+| Braço | Média | IC 95% |
+|---|---:|---|
+| top 5 | −1,7 pp | [−8,3; +5,3] |
+| top 10 | −3,1 pp | [−5,8; −0,7] |
+| top 15 | −3,8 pp | [−6,7; −1,3] |
+| top 20 | −2,9 pp | [−5,5; −0,6] |
+
+**Por safra, excesso sobre pesos iguais (pp):**
+
+| Safra | Nomes no inteiro | top 5 | top 10 | top 15 | top 20 | inteiro |
+|---|---:|---:|---:|---:|---:|---:|
+| 2017 | 22 | −1,6 | −2,8 | −8,4 | −2,5 | +1,1 |
+| 2018 | 16 | +2,3 | −5,1 | −2,1 | −0,7 | −0,7 |
+| 2019 | 16 | +18,6 | +7,7 | +6,6 | +6,6 | +6,6 |
+| 2020 | 15 | +2,3 | −19,9 | −13,9 | −13,9 | −13,9 |
+| 2021 | 15 | +5,5 | +3,7 | +2,9 | +2,9 | +2,9 |
+| 2022 | 28 | +6,8 | +15,3 | +11,8 | +15,9 | +15,1 |
+| 2023 | 39 | −23,3 | −19,2 | −19,8 | −18,5 | −7,9 |
+| 2024 | 37 | +1,5 | +2,9 | +2,0 | +3,0 | +8,0 |
+| 2025 | 36 | −8,2 | +8,2 | +5,7 | 0,0 | +7,8 |
+
+Com 15 ou 16 nomes no inteiro (2018 a 2021), o top 15 e o top 20 são quase a
+carteira inteira.
+
+**Informativo, R$ 100 mil de abril/2017 a abril/2026, líquido:**
+
+| Carteira | Valor final | Ao ano |
+|---|---:|---:|
+| S&P 500 (em reais) | R$ 529 mil | 20,3% |
+| dividendo de 6% inteiro | R$ 362 mil | 15,4% |
+| carteira padrão | R$ 313 mil | 13,5% |
+| top 5 | R$ 308 mil | 13,3% |
+| Ibovespa (BOVA11) | R$ 294 mil | 12,7% |
+| top 20 | R$ 290 mil | 12,6% |
+| pesos iguais | R$ 284 mil | 12,3% |
+| top 10 | R$ 284 mil | 12,3% |
+| top 15 | R$ 266 mil | 11,5% |
+| CDI | R$ 216 mil | 8,9% |
+| IFIX | R$ 190 mil | 7,4% |
+| inflação (IPCA) | R$ 156 mil | 5,1% |
+
+### Leitura
+
+- **Cortar piora.** Os quatro tamanhos ficam abaixo do dividendo de 6%
+  inteiro. No top 10, no top 15 e no top 20 a perda é de 3 a 4 pp ao ano, com
+  o IC inteiro abaixo de zero: é a única diferença desta seção que se separa do
+  ruído.
+- **O top 5 é o mais instável.** Ganha 18,6 pp em 2019 e perde 23,3 pp em
+  2023. Sem 2019, a média fica negativa.
+- **A safra de 2023 mostra o risco declarado.** Os maiores DY daquele abril
+  tinham o preço derrubado, e os cortes perderam de 18 a 23 pp, contra 7,9 pp
+  do inteiro. Ordenar pelo DY concentra justamente nesses nomes.
+- **Todos batem o CDI, o IFIX e a inflação, e nenhum bate o S&P 500.** O top 5
+  fica perto do Ibovespa e da padrão; os outros, perto dos pesos iguais.
+- Entre as versões do dividendo de 6% medidas (§23, §26, §27, §28), a de maior
+  média segue a que refaz a carteira inteira todo abril, e nenhuma passa.
+
+Nada muda na tela.

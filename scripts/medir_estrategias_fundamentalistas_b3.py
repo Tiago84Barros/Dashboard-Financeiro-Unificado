@@ -49,6 +49,7 @@ if str(ROOT) not in sys.path:
 CAMINHO = ROOT / "data" / "oos_estrategias_fundamentalistas_b3.json"
 CAMINHO_ENXUTA = ROOT / "data" / "oos_rota_valor_enxuta_b3.json"
 CAMINHO_PEQUENAS_DIVIDENDO = ROOT / "data" / "oos_pequenas_dividendo_b3.json"
+CAMINHO_DIVIDENDO_TOPN = ROOT / "data" / "oos_dividendo_topn_b3.json"
 CAMINHO_DIVIDENDO_OUTRA_JANELA = ROOT / "data" / "oos_dividendo_outra_janela_b3.json"
 CAMINHO_SOBREPOSICAO_ROTA = ROOT / "data" / "oos_sobreposicao_dividendo_rota_b3.json"
 CAMINHO_DIVIDENDO_SEGURADO = ROOT / "data" / "oos_dividendo_segurado_b3.json"
@@ -198,16 +199,24 @@ def montar_recorte(cache_dir: Path | None) -> dict:
             lambda p, n=n: fe.carteira_rota_valor_topn(
                 p["df_pit"], p["universo"], n, selic=selic_da_safra(p["safra"])))
 
-    def dividendo(p):
+    def historico_da_safra(p):
         # Bazin (§23): DY dos três exercícios até N-1, cortado pela vintage.
-        safra = p["safra"]
-        ano_max = ano_base_do_score(safra)
+        ano_max = ano_base_do_score(p["safra"])
         alvos = set(p["universo"])
         hist = historico_ate({tk: df for tk, df in hist_batch.items() if tk in alvos},
-                             ano_max, M._aceita_da_safra(safra))
+                             ano_max, M._aceita_da_safra(p["safra"]))
+        return hist, ano_max
+
+    def dividendo(p):
+        hist, ano_max = historico_da_safra(p)
         return fe.carteira_dividendo_bazin(p["df_pit"], p["universo"], hist, ano_max)
 
     escolhas[fe.DIVIDENDO_6] = dividendo
+    # §28: o mesmo dividendo de 6% limitado aos N de maior DY médio.
+    for n in fe.TAMANHOS_DIVIDENDO_TOPN:
+        escolhas[fe.rotulo_dividendo_topn(n)] = (
+            lambda p, n=n: fe.carteira_dividendo_topn(
+                p["df_pit"], p["universo"], *historico_da_safra(p), n))
 
     def medir(escolha, memo=None, simular=None):
         return medir_escolha(por_safra, escolha, precos=precos, selic_macro=selic_macro,
@@ -389,6 +398,92 @@ def medir_pequenas_dividendo(rc: dict, cache_dir: Path | None, *,
     else:
         CAMINHO_PEQUENAS_DIVIDENDO.write_text(texto + "\n", encoding="utf-8")
         print(f"gravado em {CAMINHO_PEQUENAS_DIVIDENDO}")
+    return 0
+
+
+def medir_dividendo_topn(rc: dict, *, dry_run: bool = False) -> int:
+    """A §28: o dividendo de 6% limitado a 5, 10, 15 e 20 nomes."""
+    from core.b3_methodology import SCORE_VERSION
+    from core.b3_portfolio_presets import VERSION as PRESETS_VERSION
+    from scripts.medir_vantagem_oos import _fonte_efetiva_b3
+
+    oos, fe = rc["oos"], rc["fe"]
+    inteiro = _avaliar(rc, rc["medir"](rc["escolhas"][fe.DIVIDENDO_6]))
+    sob_regra = [fe.rotulo_dividendo_topn(n) for n in fe.TAMANHOS_DIVIDENDO_TOPN]
+    bracos = {}
+    for rotulo in sob_regra:
+        m = _avaliar(rc, rc["medir"](rc["escolhas"][rotulo]))
+        # Informativo: quanto o corte rende frente ao dividendo inteiro.
+        pc = diferenca_pareada(inteiro["safras"], m["safras"], "liquido")
+        m["vs_dividendo_6"] = {**oos.resumir(pc, "dif"), "safras": pc}
+        bracos[rotulo] = m
+    bracos[fe.DIVIDENDO_6] = inteiro
+    for rotulo, m in bracos.items():
+        r = m["vs_equal_weight"]
+        nomes = [t["n_carteira"] for t in m["safras"]]
+        print(f"{rotulo}: media={r['media']} ic95={r['ic95']} n={r['n_safras']} "
+              f"sem_melhor={r['media_sem_melhor_safra']} "
+              f"vs_padrao={m['vs_carteira_padrao']['media']} nomes={nomes} "
+              f"candidata={m['decisao']['candidata']}", flush=True)
+
+    candidatas = [k for k in sob_regra if bracos[k]["decisao"]["candidata"]]
+    safras_medidas = sorted({t["safra"] for m in bracos.values() for t in m["safras"]})
+    saida = {
+        "versao_medicao": fe.VERSAO,
+        "versao_metodologia": SCORE_VERSION,
+        "versao_presets": PRESETS_VERSION,
+        "medido_em": datetime.now().isoformat(timespec="seconds"),
+        "perfil": rc["nome"],
+        "safras": safras_medidas,
+        "janela": (f"abril/{min(safras_medidas)} a março/{max(safras_medidas) + 1}"
+                   if safras_medidas else None),
+        "regra_de_decisao": fe.REGRA_DE_DECISAO_DIVIDENDO_TOPN,
+        "sob_a_regra": sob_regra,
+        "informativos": [fe.DIVIDENDO_6],
+        "regras": {
+            **{fe.rotulo_dividendo_topn(n): (
+                f"o dividendo de 6% da §23 limitado a {n} nomes: os {n} de maior "
+                "DY médio de N-3 a N-1, desempate por ticker; com menos de "
+                f"{n} que passam, todos") for n in fe.TAMANHOS_DIVIDENDO_TOPN},
+            fe.DIVIDENDO_6: "informativo: a regra da §23 inteira, refeita na mesma rodada",
+            "pesos": "iguais entre os escolhidos",
+            "formacao": "em abril (início da vigência)",
+        },
+        "metrica_principal": (
+            "excesso por safra (abril/N a março/N+1), LÍQUIDO do giro, sobre "
+            "pesos iguais no universo da carteira padrão"),
+        "custos": {
+            "modelo": "CostConfig.brasil_pf_default()",
+            "benchmarks": "brutos (pesos iguais não paga custo): viés contra a carteira",
+        },
+        "fonte": {
+            **fonte_dos_precos_da_aba(rc["precos"]),
+            "fundamentos": f"aba de Criação de Portfólio B3 sobre {_fonte_efetiva_b3()}",
+        },
+        "limites": [
+            "DY com o preço de fim de cada exercício, não o de abril/N",
+            ("ordenar pelo maior DY põe na frente quem teve o preço derrubado: "
+             "é o risco que o corte mede, não um defeito a corrigir depois"),
+            "quatro braços: a chance de um falso positivo sobe para perto de 1 em 5",
+            "nove safras não separam sorte de regra com folga; o teste (b) existe por isso",
+            "safra sem nenhum nome vira caixa à Selic",
+            ("os braços se sobrepõem (o top-5 está dentro do top-10): não são "
+             "quatro testes independentes"),
+        ],
+        "estrategias": bracos,
+        "carteira_padrao": {
+            "vs_equal_weight": rc["padrao"]["vs_equal_weight"],
+            "fonte": "scripts/medir_oos_carteira_b3.py, mesma rodada, sem portão",
+        },
+        "candidatas": candidatas,
+        "vencedora": candidatas[0] if candidatas else None,
+    }
+    texto = json.dumps(saida, indent=2, ensure_ascii=False, default=str)
+    if dry_run:
+        print(texto)
+    else:
+        CAMINHO_DIVIDENDO_TOPN.write_text(texto + "\n", encoding="utf-8")
+        print(f"gravado em {CAMINHO_DIVIDENDO_TOPN}")
     return 0
 
 
@@ -1174,9 +1269,14 @@ def main() -> int:
     ap.add_argument("--solvencia-dois-anos", action="store_true",
                     help="mede a §27: a §26 com a falha de solvência exigida em dois "
                          "anos seguidos (grava data/oos_solvencia_dois_anos_b3.json)")
+    ap.add_argument("--dividendo-topn", action="store_true",
+                    help="mede a §28: o dividendo de 6%% limitado a 5, 10, 15 e 20 "
+                         "nomes (grava data/oos_dividendo_topn_b3.json)")
     args = ap.parse_args()
 
     rc = montar_recorte(args.cache_dir)
+    if args.dividendo_topn:
+        return medir_dividendo_topn(rc, dry_run=args.dry_run)
     if args.solvencia_dois_anos:
         return medir_solvencia_dois_anos(rc, dry_run=args.dry_run)
     if args.dividendo_segurado:
