@@ -1,0 +1,5290 @@
+{
+  "versao_regua": "1.0.0",
+  "versao_metodologia": "2.33.0",
+  "versao_presets": "b3-presets-1.0.0",
+  "medido_em": "2026-11-26T17:56:48",
+  "perfil": "Equilibrado (padrão)",
+  "safras": [
+    2017,
+    2018,
+    2019,
+    2020,
+    2021,
+    2022,
+    2023,
+    2024,
+    2025
+  ],
+  "janela": "abril/2017 a março/2026",
+  "regra": {
+    "r1_retorno": "excesso líquido médio sobre pesos iguais > 0, IC 95% acima de zero, média sem a melhor safra > 0",
+    "r2_dividendo_crescente": "tendência da renda >= a dos pesos iguais e anos de queda <= os dos pesos iguais",
+    "r3_valorizacao": "capital final (só preço) >= o dos pesos iguais",
+    "escolha": "candidata = R1, R2 e R3; vira padrão a de maior excesso médio; sem candidata fica nota_fatores",
+    "capital_inicial": 100000.0,
+    "rendimento": "(a1/a0)/(c1/c0) - 1 em market.historical_prices, véspera e fim da vigência, tolerância 45 dias, válido em [-0.05, 1.0)"
+  },
+  "fonte": {
+    "precos": "mensal ajustado de market.historical_prices: os da aba, conferidos ponto a ponto contra uma releitura do armazém",
+    "conferencia_dos_precos": {
+      "fonte_precos": "market.historical_prices",
+      "fonte_precos_erro": null,
+      "fonte_precos_da_aba": null,
+      "inicio_aba": "2016-11-30",
+      "inicio_sem_corte": "2000-01-31",
+      "colunas": 470,
+      "colunas_sem_preco_sem_corte": 0,
+      "pontos_comparados": 47356,
+      "pontos_que_a_aba_tem_e_o_longo_nao": 0,
+      "maior_diferenca_relativa": 0.0
+    },
+    "fundamentos": "aba de Criação de Portfólio B3 sobre armazem local"
+  },
+  "pesos_iguais": {
+    "renda": {
+      "anos": [
+        {
+          "safra": 2017,
+          "capital_inicio": 100000.0,
+          "renda": 4098.4447126867835,
+          "rendimento": 0.040984447126867836,
+          "retorno": 0.25369392765126486
+        },
+        {
+          "safra": 2018,
+          "capital_inicio": 121270.9480524397,
+          "renda": 4891.25076792888,
+          "rendimento": 0.04033324424753253,
+          "retorno": 0.15782033945560164
+        },
+        {
+          "safra": 2019,
+          "capital_inicio": 135518.71947224948,
+          "renda": 4671.51957720371,
+          "rendimento": 0.03447139698040247,
+          "retorno": -0.07373992027676457
+        },
+        {
+          "safra": 2020,
+          "capital_inicio": 120854.06032515287,
+          "renda": 3275.26238261359,
+          "rendimento": 0.02710097098766588,
+          "retorno": 0.5408524351647683
+        },
+        {
+          "safra": 2021,
+          "capital_inicio": 182943.010768948,
+          "renda": 11954.336393013336,
+          "rendimento": 0.06534459197302342,
+          "retorno": 0.03917631051626266
+        },
+        {
+          "safra": 2022,
+          "capital_inicio": 178155.70657259895,
+          "renda": 11108.234081984878,
+          "rendimento": 0.06235126730256177,
+          "retorno": -0.1487468884801675
+        },
+        {
+          "safra": 2023,
+          "capital_inicio": 140547.36547295426,
+          "renda": 7557.4342268082,
+          "rendimento": 0.053771439979517,
+          "retorno": 0.25203074042736257
+        },
+        {
+          "safra": 2024,
+          "capital_inicio": 168412.18783140983,
+          "renda": 9273.686518058666,
+          "rendimento": 0.0550654120552258,
+          "retorno": -0.07589156652218879
+        },
+        {
+          "safra": 2025,
+          "capital_inicio": 146357.43655739637,
+          "renda": 9994.826901525099,
+          "rendimento": 0.06829052992879846,
+          "retorno": 0.3410817301465795
+        }
+      ],
+      "capital_final": 186282.4573366863,
+      "renda_total": 66824.99556182315,
+      "crescimento_renda_aa": 0.13633371586560905,
+      "quedas_de_renda": 4,
+      "renda_ultimo_sobre_primeiro": 2.438687746741098
+    },
+    "cobertura_do_rendimento": {
+      "2017": 0.7114093959731543,
+      "2018": 0.7272727272727273,
+      "2019": 0.7300613496932515,
+      "2020": 0.7873563218390804,
+      "2021": 0.8156424581005587,
+      "2022": 0.8539325842696629,
+      "2023": 0.8650306748466258,
+      "2024": 0.8802395209580839,
+      "2025": 0.8823529411764706
+    }
+  },
+  "estrategias": {
+    "lider_segmento": {
+      "vs_equal_weight": {
+        "media": 0.012380424605357765,
+        "ic95": [
+          -0.06631997583612509,
+          0.09421420291105245
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2018,
+          2019,
+          2023,
+          2025
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2024,
+        "media_sem_melhor_safra": -0.010284399818370753
+      },
+      "com_ir_vs_equal_weight": null,
+      "giro_medio_anual": null,
+      "renda": {
+        "anos": [
+          {
+            "safra": 2017,
+            "capital_inicio": 100000.0,
+            "renda": 2670.3561328946134,
+            "rendimento": 0.026703561328946135,
+            "retorno": 0.12942928714664648
+          },
+          {
+            "safra": 2018,
+            "capital_inicio": 110272.57258177003,
+            "renda": 3739.778763578972,
+            "rendimento": 0.03391395227318041,
+            "retorno": 0.08007148616958082
+          },
+          {
+            "safra": 2019,
+            "capital_inicio": 115362.48258855636,
+            "renda": 4167.928121232623,
+            "rendimento": 0.036128973889177296,
+            "retorno": -0.1105800247996207
+          },
+          {
+            "safra": 2020,
+            "capital_inicio": 98437.76828173538,
+            "renda": 3434.158270304558,
+            "rendimento": 0.0348865921104161,
+            "retorno": 0.7031604049930413
+          },
+          {
+            "safra": 2021,
+            "capital_inicio": 164221.15102302705,
+            "renda": 13753.115672926237,
+            "rendimento": 0.08374752939709805,
+            "retorno": 0.18255895305716918
+          },
+          {
+            "safra": 2022,
+            "capital_inicio": 180448.07675070793,
+            "renda": 13802.80070363154,
+            "rendimento": 0.07649181389004407,
+            "retorno": -0.11899543865027207
+          },
+          {
+            "safra": 2023,
+            "capital_inicio": 145172.77800052793,
+            "renda": 15661.1602874509,
+            "rendimento": 0.10787945579848274,
+            "retorno": 0.23467502459316614
+          },
+          {
+            "safra": 2024,
+            "capital_inicio": 163580.04296060916,
+            "renda": 14084.044983548,
+            "rendimento": 0.08609879743667449,
+            "retorno": 0.11780745347299715
+          },
+          {
+            "safra": 2025,
+            "capital_inicio": 168766.946277254,
+            "renda": 17979.885887367498,
+            "rendimento": 0.1065367732484165,
+            "retorno": 0.17957378354823028
+          }
+        ],
+        "capital_final": 181093.1794707739,
+        "renda_total": 89293.22882293494,
+        "crescimento_renda_aa": 0.2978997934724881,
+        "quedas_de_renda": 2,
+        "renda_ultimo_sobre_primeiro": 6.733141570850198
+      },
+      "cobertura_do_rendimento": {
+        "2017": 1.0,
+        "2018": 0.9388888888896076,
+        "2019": 0.6000000000031923,
+        "2020": 0.818181818181074,
+        "2021": 0.8357142857147537,
+        "2022": 0.8947368421058854,
+        "2023": 0.9249999999999999,
+        "2024": 0.9333333333331717,
+        "2025": 0.7999999999999999
+      },
+      "nomes_por_safra": {
+        "2017": 4,
+        "2018": 15,
+        "2019": 15,
+        "2020": 11,
+        "2021": 19,
+        "2022": 19,
+        "2023": 10,
+        "2024": 12,
+        "2025": 9
+      },
+      "decisao": {
+        "testes": {
+          "r1_retorno": false,
+          "r2_dividendo_crescente": true,
+          "r3_valorizacao": false
+        },
+        "candidata": false,
+        "falhou": [
+          "r1_retorno",
+          "r3_valorizacao"
+        ]
+      },
+      "vs_nota_fatores": {
+        "media": -0.005037893587502988,
+        "ic95": [
+          -0.08071248126729735,
+          0.07247332957314627
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2018,
+          2019,
+          2022,
+          2023,
+          2025
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2024,
+        "media_sem_melhor_safra": -0.0250420047647045,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": -0.14190398189057007
+          },
+          {
+            "safra": 2018,
+            "dif": -0.06439596114894863
+          },
+          {
+            "safra": 2019,
+            "dif": -0.06614264052830277
+          },
+          {
+            "safra": 2020,
+            "dif": 0.1462479319374408
+          },
+          {
+            "safra": 2021,
+            "dif": 0.12384651225304832
+          },
+          {
+            "safra": 2022,
+            "dif": -0.004664730294451136
+          },
+          {
+            "safra": 2023,
+            "dif": -0.0077821337689940595
+          },
+          {
+            "safra": 2024,
+            "dif": 0.15499499583010912
+          },
+          {
+            "safra": 2025,
+            "dif": -0.18554103467685845
+          }
+        ]
+      },
+      "vs_lider": null
+    },
+    "nota_fatores": {
+      "vs_equal_weight": {
+        "media": 0.017418318192860757,
+        "ic95": [
+          0.0057909342397081415,
+          0.02766422229802249
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2018,
+          2023
+        ],
+        "ic_cruza_zero": false,
+        "melhor_safra": 2024,
+        "media_sem_melhor_safra": 0.014757604946333748
+      },
+      "com_ir_vs_equal_weight": {
+        "media": 0.00932938576531656,
+        "ic95": [
+          -0.0029754957016099185,
+          0.02084180703290548
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2018,
+          2021,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2024,
+        "media_sem_melhor_safra": 0.006119978249695992
+      },
+      "giro_medio_anual": 0.2593384790382434,
+      "renda": {
+        "anos": [
+          {
+            "safra": 2017,
+            "capital_inicio": 100000.0,
+            "renda": 5188.11631606526,
+            "rendimento": 0.0518811631606526,
+            "retorno": 0.27133326903721655
+          },
+          {
+            "safra": 2018,
+            "capital_inicio": 121945.21058765639,
+            "renda": 5714.561030585591,
+            "rendimento": 0.04686170947630504,
+            "retorno": 0.14446744731852945
+          },
+          {
+            "safra": 2019,
+            "capital_inicio": 133847.76284339002,
+            "renda": 5207.580407135185,
+            "rendimento": 0.03890674223093567,
+            "retorno": -0.04443738427131794
+          },
+          {
+            "safra": 2020,
+            "capital_inicio": 122692.33796492688,
+            "renda": 3929.094075455688,
+            "rendimento": 0.032023956349897485,
+            "retorno": 0.5569124730556005
+          },
+          {
+            "safra": 2021,
+            "capital_inicio": 187092.13725049217,
+            "renda": 12463.657209200504,
+            "rendimento": 0.06661774990850246,
+            "retorno": 0.05871244080412086
+          },
+          {
+            "safra": 2022,
+            "capital_inicio": 185613.11607452764,
+            "renda": 14329.46066877475,
+            "rendimento": 0.07720069018733118,
+            "retorno": -0.11433070835582093
+          },
+          {
+            "safra": 2023,
+            "capital_inicio": 150062.37636482093,
+            "renda": 10154.799065637731,
+            "rendimento": 0.06767052016389577,
+            "retorno": 0.2424571583621602
+          },
+          {
+            "safra": 2024,
+            "capital_inicio": 176291.27464967067,
+            "renda": 11414.099380358211,
+            "rendimento": 0.06474568524755706,
+            "retorno": -0.03718754235711197
+          },
+          {
+            "safra": 2025,
+            "capital_inicio": 158321.33602608857,
+            "renda": 12375.849367536013,
+            "rendimento": 0.07816918223515175,
+            "retorno": 0.36511481822508873
+          }
+        ],
+        "capital_final": 203750.95248287107,
+        "renda_total": 80777.21752074893,
+        "crescimento_renda_aa": 0.14611297205296148,
+        "quedas_de_renda": 3,
+        "renda_ultimo_sobre_primeiro": 2.3854224950997303
+      },
+      "cobertura_do_rendimento": {
+        "2017": 0.7428571428571429,
+        "2018": 0.7586206896551724,
+        "2019": 0.7913043478260869,
+        "2020": 0.8032786885245902,
+        "2021": 0.8253968253968254,
+        "2022": 0.888,
+        "2023": 0.8695652173913043,
+        "2024": 0.9059829059829061,
+        "2025": 0.8981481481481481
+      },
+      "nomes_por_safra": {
+        "2017": 105,
+        "2018": 116,
+        "2019": 115,
+        "2020": 122,
+        "2021": 126,
+        "2022": 125,
+        "2023": 115,
+        "2024": 117,
+        "2025": 108
+      },
+      "decisao": {
+        "testes": {
+          "r1_retorno": true,
+          "r2_dividendo_crescente": true,
+          "r3_valorizacao": true
+        },
+        "candidata": true,
+        "falhou": []
+      },
+      "vs_nota_fatores": null,
+      "vs_lider": {
+        "media": 0.005037893587502988,
+        "ic95": [
+          -0.0724733295731463,
+          0.08071248126729734
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2020,
+          2021,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2025,
+        "media_sem_melhor_safra": -0.017524999048666445,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.14190398189057007
+          },
+          {
+            "safra": 2018,
+            "dif": 0.06439596114894863
+          },
+          {
+            "safra": 2019,
+            "dif": 0.06614264052830277
+          },
+          {
+            "safra": 2020,
+            "dif": -0.1462479319374408
+          },
+          {
+            "safra": 2021,
+            "dif": -0.12384651225304832
+          },
+          {
+            "safra": 2022,
+            "dif": 0.004664730294451136
+          },
+          {
+            "safra": 2023,
+            "dif": 0.0077821337689940595
+          },
+          {
+            "safra": 2024,
+            "dif": -0.15499499583010912
+          },
+          {
+            "safra": 2025,
+            "dif": 0.18554103467685845
+          }
+        ]
+      }
+    },
+    "tirar_30_pela_nota": {
+      "vs_equal_weight": {
+        "media": 0.011592145427936145,
+        "ic95": [
+          0.0019024490936687647,
+          0.02056505670033609
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2018,
+          2023
+        ],
+        "ic_cruza_zero": false,
+        "melhor_safra": 2025,
+        "media_sem_melhor_safra": 0.009000904611602464
+      },
+      "com_ir_vs_equal_weight": {
+        "media": 0.002842763789086258,
+        "ic95": [
+          -0.0076165607917082845,
+          0.013749213790165603
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2018,
+          2021,
+          2022,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2025,
+        "media_sem_melhor_safra": -0.00040526420744317875
+      },
+      "giro_medio_anual": 0.2654354747967653,
+      "renda": {
+        "anos": [
+          {
+            "safra": 2017,
+            "capital_inicio": 100000.0,
+            "renda": 5213.304570493203,
+            "rendimento": 0.05213304570493203,
+            "retorno": 0.28015265571170134
+          },
+          {
+            "safra": 2018,
+            "capital_inicio": 122801.96100067694,
+            "renda": 6017.648170184468,
+            "rendimento": 0.04900286706456826,
+            "retorno": 0.15445857064326218
+          },
+          {
+            "safra": 2019,
+            "capital_inicio": 135752.12819884665,
+            "renda": 5383.571473869193,
+            "rendimento": 0.039657363352591124,
+            "retorno": -0.04829421784888943
+          },
+          {
+            "safra": 2020,
+            "capital_inicio": 123812.51387229198,
+            "renda": 3894.900551555078,
+            "rendimento": 0.0314580524192613,
+            "retorno": 0.5525527068778491
+          },
+          {
+            "safra": 2021,
+            "capital_inicio": 188330.55300622305,
+            "renda": 12487.621734595963,
+            "rendimento": 0.06630693498884024,
+            "retorno": 0.05406301948156189
+          },
+          {
+            "safra": 2022,
+            "capital_inicio": 186024.64962777586,
+            "renda": 13836.396342894914,
+            "rendimento": 0.07437937053277999,
+            "retorno": -0.14480847430640387
+          },
+          {
+            "safra": 2023,
+            "capital_inicio": 145250.3075888994,
+            "renda": 9069.48711259063,
+            "rendimento": 0.06244039866862049,
+            "retorno": 0.23690131140931192
+          },
+          {
+            "safra": 2024,
+            "capital_inicio": 170590.80882672497,
+            "renda": 10828.298011434728,
+            "rendimento": 0.06347527211992651,
+            "retorno": -0.0678229571394342
+          },
+          {
+            "safra": 2025,
+            "capital_inicio": 148192.53769985386,
+            "renda": 11930.370733505431,
+            "rendimento": 0.0805058805165275,
+            "retorno": 0.3734038021051851
+          }
+        ],
+        "capital_final": 191597.82398708983,
+        "renda_total": 78661.59870112361,
+        "crescimento_renda_aa": 0.13097215261152928,
+        "quedas_de_renda": 3,
+        "renda_ultimo_sobre_primeiro": 2.2884469096684223
+      },
+      "cobertura_do_rendimento": {
+        "2017": 0.7142857142857143,
+        "2018": 0.6982758620689655,
+        "2019": 0.7304347826086957,
+        "2020": 0.778688524590164,
+        "2021": 0.8015873015873015,
+        "2022": 0.872,
+        "2023": 0.8695652173913043,
+        "2024": 0.888888888888889,
+        "2025": 0.8888888888888888
+      },
+      "nomes_por_safra": {
+        "2017": 105,
+        "2018": 116,
+        "2019": 115,
+        "2020": 122,
+        "2021": 126,
+        "2022": 125,
+        "2023": 115,
+        "2024": 117,
+        "2025": 108
+      },
+      "decisao": {
+        "testes": {
+          "r1_retorno": true,
+          "r2_dividendo_crescente": false,
+          "r3_valorizacao": true
+        },
+        "candidata": false,
+        "falhou": [
+          "r2_dividendo_crescente"
+        ]
+      },
+      "vs_nota_fatores": {
+        "media": -0.005826172764924611,
+        "ic95": [
+          -0.01603498428248041,
+          0.0029985958266553906
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2019,
+          2020,
+          2021,
+          2022,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2018,
+        "media_sem_melhor_safra": -0.007803334776131779,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.008819386674484786
+          },
+          {
+            "safra": 2018,
+            "dif": 0.009991123324732731
+          },
+          {
+            "safra": 2019,
+            "dif": -0.0038568335775714946
+          },
+          {
+            "safra": 2020,
+            "dif": -0.004359766177751467
+          },
+          {
+            "safra": 2021,
+            "dif": -0.0046494213225589665
+          },
+          {
+            "safra": 2022,
+            "dif": -0.030477765950582936
+          },
+          {
+            "safra": 2023,
+            "dif": -0.005555846952848276
+          },
+          {
+            "safra": 2024,
+            "dif": -0.030635414782322234
+          },
+          {
+            "safra": 2025,
+            "dif": 0.008288983880096357
+          }
+        ]
+      },
+      "vs_lider": {
+        "media": -0.0007882791774216234,
+        "ic95": [
+          -0.08471838136465061,
+          0.08156613582165385
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2020,
+          2021,
+          2022,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2025,
+        "media_sem_melhor_safra": -0.025115566394218677,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.15072336856505486
+          },
+          {
+            "safra": 2018,
+            "dif": 0.07438708447368136
+          },
+          {
+            "safra": 2019,
+            "dif": 0.06228580695073127
+          },
+          {
+            "safra": 2020,
+            "dif": -0.15060769811519226
+          },
+          {
+            "safra": 2021,
+            "dif": -0.1284959335756073
+          },
+          {
+            "safra": 2022,
+            "dif": -0.0258130356561318
+          },
+          {
+            "safra": 2023,
+            "dif": 0.002226286816145784
+          },
+          {
+            "safra": 2024,
+            "dif": -0.18563041061243135
+          },
+          {
+            "safra": 2025,
+            "dif": 0.1938300185569548
+          }
+        ]
+      }
+    },
+    "lider_filtro_nota_fatores": {
+      "vs_equal_weight": {
+        "media": 0.006880933989134296,
+        "ic95": [
+          -0.06749677245576567,
+          0.08071140155788985
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2018,
+          2019,
+          2023,
+          2025
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": -0.012556727203336813
+      },
+      "com_ir_vs_equal_weight": null,
+      "giro_medio_anual": null,
+      "renda": {
+        "anos": [
+          {
+            "safra": 2017,
+            "capital_inicio": 100000.0,
+            "renda": 3219.8963731178364,
+            "rendimento": 0.032198963731178365,
+            "retorno": 0.08688227602256071
+          },
+          {
+            "safra": 2018,
+            "capital_inicio": 105468.33122913823,
+            "renda": 3498.4420126647947,
+            "rendimento": 0.033170544863027694,
+            "retorno": 0.12215729954054377
+          },
+          {
+            "safra": 2019,
+            "capital_inicio": 114853.61574647255,
+            "renda": 4148.3017543330625,
+            "rendimento": 0.03611816421600525,
+            "retorno": -0.10988196821512008
+          },
+          {
+            "safra": 2020,
+            "capital_inicio": 98084.97263729398,
+            "renda": 3421.850432558599,
+            "rendimento": 0.0348865921104161,
+            "retorno": 0.7032346586936715
+          },
+          {
+            "safra": 2021,
+            "capital_inicio": 163639.87446030093,
+            "renda": 13704.435196901486,
+            "rendimento": 0.08374752939709805,
+            "retorno": 0.18255895305716918
+          },
+          {
+            "safra": 2022,
+            "capital_inicio": 179809.36342327858,
+            "renda": 13753.944362660723,
+            "rendimento": 0.07649181389004407,
+            "retorno": -0.11899543865027196
+          },
+          {
+            "safra": 2023,
+            "capital_inicio": 144658.92498663865,
+            "renda": 15605.726103952114,
+            "rendimento": 0.10787945579848274,
+            "retorno": 0.23467502459316614
+          },
+          {
+            "safra": 2024,
+            "capital_inicio": 163001.03566154692,
+            "renda": 15177.52977694648,
+            "rendimento": 0.09311308799571612,
+            "retorno": 0.05127152835224047
+          },
+          {
+            "safra": 2025,
+            "capital_inicio": 156180.818105966,
+            "renda": 18895.557095870285,
+            "rendimento": 0.1209851332898639,
+            "retorno": 0.19630318059096763
+          }
+        ],
+        "capital_final": 167944.0523515962,
+        "renda_total": 91425.68310900537,
+        "crescimento_renda_aa": 0.29524144682768116,
+        "quedas_de_renda": 2,
+        "renda_ultimo_sobre_primeiro": 5.868374291056346
+      },
+      "cobertura_do_rendimento": {
+        "2017": 1.0,
+        "2018": 0.9411764705880348,
+        "2019": 0.6163636363621128,
+        "2020": 0.818181818181074,
+        "2021": 0.8357142857147537,
+        "2022": 0.8947368421058854,
+        "2023": 0.9249999999999999,
+        "2024": 0.9249999999995779,
+        "2025": 0.7999999999999999
+      },
+      "nomes_por_safra": {
+        "2017": 3,
+        "2018": 13,
+        "2019": 13,
+        "2020": 11,
+        "2021": 19,
+        "2022": 19,
+        "2023": 10,
+        "2024": 11,
+        "2025": 8
+      },
+      "decisao": {
+        "testes": {
+          "r1_retorno": false,
+          "r2_dividendo_crescente": true,
+          "r3_valorizacao": false
+        },
+        "candidata": false,
+        "falhou": [
+          "r1_retorno",
+          "r3_valorizacao"
+        ]
+      },
+      "vs_nota_fatores": {
+        "media": -0.010537384203726456,
+        "ic95": [
+          -0.08342067196567356,
+          0.06070914639240271
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2018,
+          2019,
+          2022,
+          2023,
+          2025
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": -0.030144830433951136,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": -0.18445099301465584
+          },
+          {
+            "safra": 2018,
+            "dif": -0.02231014777798568
+          },
+          {
+            "safra": 2019,
+            "dif": -0.06544458394380215
+          },
+          {
+            "safra": 2020,
+            "dif": 0.14632218563807098
+          },
+          {
+            "safra": 2021,
+            "dif": 0.12384651225304832
+          },
+          {
+            "safra": 2022,
+            "dif": -0.004664730294451025
+          },
+          {
+            "safra": 2023,
+            "dif": -0.0077821337689940595
+          },
+          {
+            "safra": 2024,
+            "dif": 0.08845907070935244
+          },
+          {
+            "safra": 2025,
+            "dif": -0.1688116376341211
+          }
+        ]
+      },
+      "vs_lider": {
+        "media": -0.005499490616223469,
+        "ic95": [
+          -0.026750963701928285,
+          0.013086793001601567
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2018,
+        "media_sem_melhor_safra": -0.011447653614621772,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": -0.042547011124085765
+          },
+          {
+            "safra": 2018,
+            "dif": 0.042085813370962954
+          },
+          {
+            "safra": 2019,
+            "dif": 0.000698056584500617
+          },
+          {
+            "safra": 2020,
+            "dif": 7.42537006301891e-05
+          },
+          {
+            "safra": 2021,
+            "dif": 0.0
+          },
+          {
+            "safra": 2022,
+            "dif": 1.1102230246251565e-16
+          },
+          {
+            "safra": 2023,
+            "dif": 0.0
+          },
+          {
+            "safra": 2024,
+            "dif": -0.06653592512075668
+          },
+          {
+            "safra": 2025,
+            "dif": 0.01672939704273735
+          }
+        ]
+      }
+    },
+    "rota_valor": {
+      "vs_equal_weight": {
+        "media": 0.16251700040119216,
+        "ic95": [
+          0.028144554795697677,
+          0.38517519948278295
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2021
+        ],
+        "ic_cruza_zero": false,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.05846022425471936
+      },
+      "com_ir_vs_equal_weight": {
+        "media": 0.1434837822218165,
+        "ic95": [
+          -0.00043165150068784813,
+          0.3743696070744782
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2021
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.037047853802921735
+      },
+      "giro_medio_anual": 0.6282719163235507,
+      "renda": {
+        "anos": [
+          {
+            "safra": 2017,
+            "capital_inicio": 100000.0,
+            "renda": 7062.889449470622,
+            "rendimento": 0.07062889449470622,
+            "retorno": 0.3846713180282506
+          },
+          {
+            "safra": 2018,
+            "capital_inicio": 131404.24235335444,
+            "renda": 8311.723752377015,
+            "rendimento": 0.06325308531536034,
+            "retorno": 0.33067570276536196
+          },
+          {
+            "safra": 2019,
+            "capital_inicio": 166544.70878752283,
+            "renda": 7309.902230735816,
+            "rendimento": 0.04389153089253508,
+            "retorno": -0.027243785469592274
+          },
+          {
+            "safra": 2020,
+            "capital_inicio": 154697.49823948403,
+            "renda": 8283.09175683903,
+            "rendimento": 0.053543799034268445,
+            "retorno": 1.535823644737743
+          },
+          {
+            "safra": 2021,
+            "capital_inicio": 384002.4820606199,
+            "renda": 24945.472066969083,
+            "rendimento": 0.06496174694785203,
+            "retorno": -0.005502991628116072
+          },
+          {
+            "safra": 2022,
+            "capital_inicio": 356943.84754969546,
+            "renda": 43271.726378313775,
+            "rendimento": 0.12122838557201711,
+            "retorno": -0.10544780810890186
+          },
+          {
+            "safra": 2023,
+            "capital_inicio": 276033.1748293083,
+            "renda": 22395.613648885923,
+            "rendimento": 0.08113377554250421,
+            "retorno": 0.2699621283800453
+          },
+          {
+            "safra": 2024,
+            "capital_inicio": 328156.06456084363,
+            "renda": 23282.07742258228,
+            "rendimento": 0.07094818574735051,
+            "retorno": -0.052815130302686475
+          },
+          {
+            "safra": 2025,
+            "capital_inicio": 287542.3818288636,
+            "renda": 23773.80406208083,
+            "rendimento": 0.0826793042155096,
+            "retorno": 0.41880703329134406
+          }
+        ],
+        "capital_final": 384193.34964605595,
+        "renda_total": 168636.30076825438,
+        "crescimento_renda_aa": 0.21809976263919784,
+        "quedas_de_renda": 2,
+        "renda_ultimo_sobre_primeiro": 3.3660167318437537
+      },
+      "cobertura_do_rendimento": {
+        "2017": 0.8,
+        "2018": 0.9090909090909092,
+        "2019": 0.8235294117647058,
+        "2020": 1.0,
+        "2021": 0.7777777777777777,
+        "2022": 0.8863636363636364,
+        "2023": 0.9,
+        "2024": 0.8888888888888888,
+        "2025": 0.9500000000000001
+      },
+      "nomes_por_safra": {
+        "2017": 10,
+        "2018": 11,
+        "2019": 17,
+        "2020": 9,
+        "2021": 9,
+        "2022": 44,
+        "2023": 40,
+        "2024": 27,
+        "2025": 40
+      },
+      "decisao": {
+        "testes": {
+          "r1_retorno": true,
+          "r2_dividendo_crescente": true,
+          "r3_valorizacao": true
+        },
+        "candidata": true,
+        "falhou": []
+      },
+      "vs_nota_fatores": {
+        "media": 0.14509868220833141,
+        "ic95": [
+          0.007236280626265458,
+          0.3692781858256477
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2021,
+          2024
+        ],
+        "ic_cruza_zero": false,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.040872121024105035,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.11333804899103406
+          },
+          {
+            "safra": 2018,
+            "dif": 0.1862082554468325
+          },
+          {
+            "safra": 2019,
+            "dif": 0.017193598801725662
+          },
+          {
+            "safra": 2020,
+            "dif": 0.9789111716821424
+          },
+          {
+            "safra": 2021,
+            "dif": -0.06421543243223693
+          },
+          {
+            "safra": 2022,
+            "dif": 0.008882900246919068
+          },
+          {
+            "safra": 2023,
+            "dif": 0.0275049700178851
+          },
+          {
+            "safra": 2024,
+            "dif": -0.015627587945574506
+          },
+          {
+            "safra": 2025,
+            "dif": 0.05369221506625532
+          }
+        ]
+      },
+      "vs_lider": {
+        "media": 0.1501365757958344,
+        "ic95": [
+          -0.014953826361295285,
+          0.35326767175739743
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2021,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.064820742802226,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.25524203088160413
+          },
+          {
+            "safra": 2018,
+            "dif": 0.25060421659578114
+          },
+          {
+            "safra": 2019,
+            "dif": 0.08333623933002843
+          },
+          {
+            "safra": 2020,
+            "dif": 0.8326632397447016
+          },
+          {
+            "safra": 2021,
+            "dif": -0.18806194468528525
+          },
+          {
+            "safra": 2022,
+            "dif": 0.013547630541370204
+          },
+          {
+            "safra": 2023,
+            "dif": 0.03528710378687916
+          },
+          {
+            "safra": 2024,
+            "dif": -0.17062258377568362
+          },
+          {
+            "safra": 2025,
+            "dif": 0.23923324974311377
+          }
+        ]
+      }
+    },
+    "formula_magica": {
+      "vs_equal_weight": {
+        "media": 0.04168614830489692,
+        "ic95": [
+          0.0049070118550732615,
+          0.07579634867883826
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2019,
+          2023,
+          2025
+        ],
+        "ic_cruza_zero": false,
+        "melhor_safra": 2024,
+        "media_sem_melhor_safra": 0.03292973279451373
+      },
+      "com_ir_vs_equal_weight": {
+        "media": 0.02806641525403348,
+        "ic95": [
+          -0.005356664959815299,
+          0.060386926363556845
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2019,
+          2023,
+          2025
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2024,
+        "media_sem_melhor_safra": 0.01907894042488737
+      },
+      "giro_medio_anual": 0.4504738964720471,
+      "renda": {
+        "anos": [
+          {
+            "safra": 2017,
+            "capital_inicio": 100000.0,
+            "renda": 3347.165744044129,
+            "rendimento": 0.03347165744044129,
+            "retorno": 0.29853387110446294
+          },
+          {
+            "safra": 2018,
+            "capital_inicio": 126506.22136640217,
+            "renda": 7447.864084091474,
+            "rendimento": 0.05887350047805235,
+            "retorno": 0.23861892995095246
+          },
+          {
+            "safra": 2019,
+            "capital_inicio": 149245.1364568999,
+            "renda": 7207.426383965138,
+            "rendimento": 0.048292537734028945,
+            "retorno": -0.09130613788704989
+          },
+          {
+            "safra": 2020,
+            "capital_inicio": 128410.71306462948,
+            "renda": 3367.777668957382,
+            "rendimento": 0.02622660982547749,
+            "retorno": 0.626625930954819
+          },
+          {
+            "safra": 2021,
+            "capital_inicio": 205508.4180143677,
+            "renda": 17632.463987423198,
+            "rendimento": 0.08579922982128382,
+            "retorno": 0.12488784561329003
+          },
+          {
+            "safra": 2022,
+            "capital_inicio": 213541.45760815433,
+            "renda": 29288.600668757652,
+            "rendimento": 0.13715650814045596,
+            "retorno": -0.09183906494782135
+          },
+          {
+            "safra": 2023,
+            "capital_inicio": 164641.40914506896,
+            "renda": 16442.004526085235,
+            "rendimento": 0.0998655478683242,
+            "retorno": 0.20458679254631207
+          },
+          {
+            "safra": 2024,
+            "capital_inicio": 181882.86243627843,
+            "renda": 15101.222553846332,
+            "rendimento": 0.0830271876721588,
+            "retorno": 0.03584590586577363
+          },
+          {
+            "safra": 2025,
+            "capital_inicio": 173301.3958479204,
+            "renda": 14690.44579065212,
+            "rendimento": 0.08476819080870897,
+            "retorno": 0.31549836962605204
+          }
+        ],
+        "capital_final": 213287.2579012062,
+        "renda_total": 114524.97140782265,
+        "crescimento_renda_aa": 0.21833842195350228,
+        "quedas_de_renda": 5,
+        "renda_ultimo_sobre_primeiro": 4.388920930130803
+      },
+      "cobertura_do_rendimento": {
+        "2017": 0.84,
+        "2018": 0.84375,
+        "2019": 0.90625,
+        "2020": 0.8888888888888888,
+        "2021": 0.9210526315789473,
+        "2022": 0.8717948717948718,
+        "2023": 0.8378378378378379,
+        "2024": 0.8648648648648649,
+        "2025": 0.8333333333333333
+      },
+      "nomes_por_safra": {
+        "2017": 25,
+        "2018": 32,
+        "2019": 32,
+        "2020": 36,
+        "2021": 38,
+        "2022": 39,
+        "2023": 37,
+        "2024": 37,
+        "2025": 36
+      },
+      "decisao": {
+        "testes": {
+          "r1_retorno": true,
+          "r2_dividendo_crescente": false,
+          "r3_valorizacao": true
+        },
+        "candidata": false,
+        "falhou": [
+          "r2_dividendo_crescente"
+        ]
+      },
+      "vs_nota_fatores": {
+        "media": 0.024267830112036162,
+        "ic95": [
+          -0.011496954059014432,
+          0.05840946209426922
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2019,
+          2023,
+          2025
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2018,
+        "media_sem_melhor_safra": 0.015532373546987804,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.027200602067246393
+          },
+          {
+            "safra": 2018,
+            "dif": 0.09415148263242301
+          },
+          {
+            "safra": 2019,
+            "dif": -0.04686875361573195
+          },
+          {
+            "safra": 2020,
+            "dif": 0.06971345789921846
+          },
+          {
+            "safra": 2021,
+            "dif": 0.06617540480916917
+          },
+          {
+            "safra": 2022,
+            "dif": 0.022491643407999584
+          },
+          {
+            "safra": 2023,
+            "dif": -0.03787036581584813
+          },
+          {
+            "safra": 2024,
+            "dif": 0.0730334482228856
+          },
+          {
+            "safra": 2025,
+            "dif": -0.04961644859903669
+          }
+        ]
+      },
+      "vs_lider": {
+        "media": 0.029305723699539148,
+        "ic95": [
+          -0.03251269987635389,
+          0.0932051717617645
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2020,
+          2021,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2017,
+        "media_sem_melhor_safra": 0.011830866167254483,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.16910458395781647
+          },
+          {
+            "safra": 2018,
+            "dif": 0.15854744378137164
+          },
+          {
+            "safra": 2019,
+            "dif": 0.019273886912570815
+          },
+          {
+            "safra": 2020,
+            "dif": -0.07653447403822233
+          },
+          {
+            "safra": 2021,
+            "dif": -0.057671107443879155
+          },
+          {
+            "safra": 2022,
+            "dif": 0.02715637370245072
+          },
+          {
+            "safra": 2023,
+            "dif": -0.03008823204685407
+          },
+          {
+            "safra": 2024,
+            "dif": -0.08196154760722352
+          },
+          {
+            "safra": 2025,
+            "dif": 0.13592458607782176
+          }
+        ]
+      }
+    },
+    "qualidade_constante": {
+      "vs_equal_weight": {
+        "media": 0.008189082226539465,
+        "ic95": [
+          -0.04666025155472975,
+          0.06245818863979732
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2018,
+          2020,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2019,
+        "media_sem_melhor_safra": -0.009145737349636075
+      },
+      "com_ir_vs_equal_weight": {
+        "media": -0.004388002070836046,
+        "ic95": [
+          -0.06008082343419524,
+          0.049982615979580244
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2018,
+          2020,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2019,
+        "media_sem_melhor_safra": -0.022674110985206237
+      },
+      "giro_medio_anual": 0.5215225481398911,
+      "renda": {
+        "anos": [
+          {
+            "safra": 2017,
+            "capital_inicio": 100000.0,
+            "renda": 4427.144921180004,
+            "rendimento": 0.04427144921180003,
+            "retorno": 0.23797217723223896
+          },
+          {
+            "safra": 2018,
+            "capital_inicio": 119370.0728020439,
+            "renda": 4674.072491325269,
+            "rendimento": 0.03915615012714676,
+            "retorno": 0.0581534417209546
+          },
+          {
+            "safra": 2019,
+            "capital_inicio": 121637.7808826384,
+            "renda": 4819.2043758725795,
+            "rendimento": 0.03961930529234469,
+            "retorno": 0.07312771855917921
+          },
+          {
+            "safra": 2020,
+            "capital_inicio": 125713.66991331452,
+            "renda": 4687.482128049718,
+            "rendimento": 0.0372869723020731,
+            "retorno": 0.43724976047024766
+          },
+          {
+            "safra": 2021,
+            "capital_inicio": 175994.45984269737,
+            "renda": 14955.955851524017,
+            "rendimento": 0.08497969688870631,
+            "retorno": 0.12247589561824035
+          },
+          {
+            "safra": 2022,
+            "capital_inicio": 182593.58308425616,
+            "renda": 16109.652749027668,
+            "rendimento": 0.08822682854957731,
+            "retorno": -0.06480359070854547
+          },
+          {
+            "safra": 2023,
+            "capital_inicio": 154651.21051102955,
+            "renda": 11083.124321211993,
+            "rendimento": 0.07166529304613208,
+            "retorno": 0.1806812719735209
+          },
+          {
+            "safra": 2024,
+            "capital_inicio": 171510.66361719512,
+            "renda": 10302.619024498701,
+            "rendimento": 0.060069845263346015,
+            "retorno": -0.05330578604338809
+          },
+          {
+            "safra": 2025,
+            "capital_inicio": 152065.5338537587,
+            "renda": 12313.07431271436,
+            "rendimento": 0.08097215720529961,
+            "retorno": 0.36842795929912575
+          }
+        ],
+        "capital_final": 195777.65385851677,
+        "renda_total": 83372.3301754043,
+        "crescimento_renda_aa": 0.16888234371587751,
+        "quedas_de_renda": 3,
+        "renda_ultimo_sobre_primeiro": 2.7812675057929783
+      },
+      "cobertura_do_rendimento": {
+        "2017": 0.9285714285714285,
+        "2018": 1.0,
+        "2019": 0.9,
+        "2020": 0.9500000000000001,
+        "2021": 0.894736842105263,
+        "2022": 1.0,
+        "2023": 0.9772727272727273,
+        "2024": 0.9347826086956521,
+        "2025": 0.92
+      },
+      "nomes_por_safra": {
+        "2017": 14,
+        "2018": 17,
+        "2019": 20,
+        "2020": 20,
+        "2021": 19,
+        "2022": 37,
+        "2023": 44,
+        "2024": 46,
+        "2025": 25
+      },
+      "decisao": {
+        "testes": {
+          "r1_retorno": false,
+          "r2_dividendo_crescente": true,
+          "r3_valorizacao": true
+        },
+        "candidata": false,
+        "falhou": [
+          "r1_retorno"
+        ]
+      },
+      "vs_nota_fatores": {
+        "media": -0.009229235966321291,
+        "ic95": [
+          -0.05584159008794944,
+          0.03848566116928392
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2018,
+          2020,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2019,
+        "media_sem_melhor_safra": -0.025078528315923596,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": -0.033361091804977594
+          },
+          {
+            "safra": 2018,
+            "dif": -0.08631400559757485
+          },
+          {
+            "safra": 2019,
+            "dif": 0.11756510283049715
+          },
+          {
+            "safra": 2020,
+            "dif": -0.11966271258535288
+          },
+          {
+            "safra": 2021,
+            "dif": 0.06376345481411949
+          },
+          {
+            "safra": 2022,
+            "dif": 0.049527117647275465
+          },
+          {
+            "safra": 2023,
+            "dif": -0.06177588638863929
+          },
+          {
+            "safra": 2024,
+            "dif": -0.016118243686276124
+          },
+          {
+            "safra": 2025,
+            "dif": 0.003313141074037018
+          }
+        ]
+      },
+      "vs_lider": {
+        "media": -0.004191342378818303,
+        "ic95": [
+          -0.10167246302655325,
+          0.0882389299361816
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2018,
+          2020,
+          2021,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2025,
+        "media_sem_melhor_safra": -0.028322032145032525,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.10854289008559248
+          },
+          {
+            "safra": 2018,
+            "dif": -0.021918044448626217
+          },
+          {
+            "safra": 2019,
+            "dif": 0.1837077433587999
+          },
+          {
+            "safra": 2020,
+            "dif": -0.26591064452279367
+          },
+          {
+            "safra": 2021,
+            "dif": -0.06008305743892883
+          },
+          {
+            "safra": 2022,
+            "dif": 0.0541918479417266
+          },
+          {
+            "safra": 2023,
+            "dif": -0.05399375261964523
+          },
+          {
+            "safra": 2024,
+            "dif": -0.17111323951638524
+          },
+          {
+            "safra": 2025,
+            "dif": 0.18885417575089547
+          }
+        ]
+      }
+    },
+    "qualidade_3_anos": {
+      "vs_equal_weight": {
+        "media": -0.008482129724782957,
+        "ic95": [
+          -0.0574948623186989,
+          0.04165589504528062
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2018,
+          2020,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2022,
+        "media_sem_melhor_safra": -0.02529829373366297
+      },
+      "com_ir_vs_equal_weight": {
+        "media": -0.01871924933117971,
+        "ic95": [
+          -0.07131447632445326,
+          0.0347209857346208
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2018,
+          2020,
+          2023,
+          2024,
+          2025
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2022,
+        "media_sem_melhor_safra": -0.0360563430034865
+      },
+      "giro_medio_anual": 0.2972809960065666,
+      "renda": {
+        "anos": [
+          {
+            "safra": 2017,
+            "capital_inicio": 100000.0,
+            "renda": 4427.144921180004,
+            "rendimento": 0.04427144921180003,
+            "retorno": 0.23797217723223896
+          },
+          {
+            "safra": 2018,
+            "capital_inicio": 119370.0728020439,
+            "renda": 3765.6358697289224,
+            "rendimento": 0.031545895728602134,
+            "retorno": 0.04181310243702896
+          },
+          {
+            "safra": 2019,
+            "capital_inicio": 120595.67001430245,
+            "renda": 4347.411952526712,
+            "rendimento": 0.036049486287618095,
+            "retorno": -0.006427716019616336
+          },
+          {
+            "safra": 2020,
+            "capital_inicio": 115473.10334172845,
+            "renda": 4305.642405937453,
+            "rendimento": 0.0372869723020731,
+            "retorno": 0.43664148574889605
+          },
+          {
+            "safra": 2021,
+            "capital_inicio": 161587.80834295912,
+            "renda": 7844.313137317051,
+            "rendimento": 0.048545204107651674,
+            "retorno": 0.08393289486871214
+          },
+          {
+            "safra": 2022,
+            "capital_inicio": 167306.02773535726,
+            "renda": 13306.917916053968,
+            "rendimento": 0.0795363926582651,
+            "retorno": -0.02269970613391037
+          },
+          {
+            "safra": 2023,
+            "capital_inicio": 150201.31215527884,
+            "renda": 10764.221051521617,
+            "rendimento": 0.07166529304613208,
+            "retorno": 0.17968341049302627
+          },
+          {
+            "safra": 2024,
+            "capital_inicio": 166425.77513234536,
+            "renda": 8841.866438932784,
+            "rendimento": 0.05312798712760413,
+            "retorno": -0.08704197409921222
+          },
+          {
+            "safra": 2025,
+            "capital_inicio": 143097.88068490164,
+            "renda": 9135.129038359406,
+            "rendimento": 0.06383832517041085,
+            "retorno": 0.3460642660325086
+          }
+        ],
+        "capital_final": 183483.81469657022,
+        "renda_total": 66738.28273155792,
+        "crescimento_renda_aa": 0.15027159931257938,
+        "quedas_de_renda": 4,
+        "renda_ultimo_sobre_primeiro": 2.063435735897379
+      },
+      "cobertura_do_rendimento": {
+        "2017": 0.9285714285714285,
+        "2018": 0.9166666666666666,
+        "2019": 0.9166666666666666,
+        "2020": 0.9500000000000001,
+        "2021": 0.9444444444444444,
+        "2022": 1.0,
+        "2023": 0.9772727272727273,
+        "2024": 0.9722222222222222,
+        "2025": 0.9696969696969697
+      },
+      "nomes_por_safra": {
+        "2017": 14,
+        "2018": 12,
+        "2019": 12,
+        "2020": 20,
+        "2021": 18,
+        "2022": 16,
+        "2023": 44,
+        "2024": 36,
+        "2025": 33
+      },
+      "decisao": {
+        "testes": {
+          "r1_retorno": false,
+          "r2_dividendo_crescente": true,
+          "r3_valorizacao": false
+        },
+        "candidata": false,
+        "falhou": [
+          "r1_retorno",
+          "r3_valorizacao"
+        ]
+      },
+      "vs_nota_fatores": {
+        "media": -0.025900447917643715,
+        "ic95": [
+          -0.0673948647891709,
+          0.017385497060236062
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2018,
+          2020,
+          2023,
+          2024,
+          2025
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2022,
+        "media_sem_melhor_safra": -0.040591879185088,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": -0.033361091804977594
+          },
+          {
+            "safra": 2018,
+            "dif": -0.10265434488150049
+          },
+          {
+            "safra": 2019,
+            "dif": 0.0380096682517016
+          },
+          {
+            "safra": 2020,
+            "dif": -0.12027098730670449
+          },
+          {
+            "safra": 2021,
+            "dif": 0.02522045406459128
+          },
+          {
+            "safra": 2022,
+            "dif": 0.09163100222191056
+          },
+          {
+            "safra": 2023,
+            "dif": -0.06277374786913392
+          },
+          {
+            "safra": 2024,
+            "dif": -0.04985443174210025
+          },
+          {
+            "safra": 2025,
+            "dif": -0.019050552192580117
+          }
+        ]
+      },
+      "vs_lider": {
+        "media": -0.020862554330140726,
+        "ic95": [
+          -0.11763304686078016,
+          0.0687355416571888
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2018,
+          2020,
+          2021,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2025,
+        "media_sem_melhor_safra": -0.04428168393194311,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.10854289008559248
+          },
+          {
+            "safra": 2018,
+            "dif": -0.03825838373255186
+          },
+          {
+            "safra": 2019,
+            "dif": 0.10415230878000437
+          },
+          {
+            "safra": 2020,
+            "dif": -0.2665189192441453
+          },
+          {
+            "safra": 2021,
+            "dif": -0.09862605818845704
+          },
+          {
+            "safra": 2022,
+            "dif": 0.0962957325163617
+          },
+          {
+            "safra": 2023,
+            "dif": -0.05499161410013986
+          },
+          {
+            "safra": 2024,
+            "dif": -0.20484942757220936
+          },
+          {
+            "safra": 2025,
+            "dif": 0.16649048248427833
+          }
+        ]
+      }
+    },
+    "lider_segurado": {
+      "vs_equal_weight": {
+        "media": -0.004388678370029175,
+        "ic95": [
+          -0.04725466397621601,
+          0.03738438060646966
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2018,
+          2019,
+          2025
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2021,
+        "media_sem_melhor_safra": -0.017917448928399048
+      },
+      "com_ir_vs_equal_weight": {
+        "media": -0.014457098400657037,
+        "ic95": [
+          -0.055255705413973184,
+          0.024838123882184288
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2018,
+          2019,
+          2020,
+          2025
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2021,
+        "media_sem_melhor_safra": -0.026244035026780528
+      },
+      "giro_medio_anual": 0.4047813803841812,
+      "renda": {
+        "anos": [
+          {
+            "safra": 2017,
+            "capital_inicio": 100000.0,
+            "renda": 2670.3561328948854,
+            "rendimento": 0.026703561328948855,
+            "retorno": 0.12942928714669644
+          },
+          {
+            "safra": 2018,
+            "capital_inicio": 110272.57258177476,
+            "renda": 4646.165142333454,
+            "rendimento": 0.04213346105522296,
+            "retorno": 0.10113196974389349
+          },
+          {
+            "safra": 2019,
+            "capital_inicio": 116778.48991336266,
+            "renda": 3910.8500299363836,
+            "rendimento": 0.03348947252904043,
+            "retorno": -0.12673509485470413
+          },
+          {
+            "safra": 2020,
+            "capital_inicio": 98067.70688726715,
+            "renda": 2763.1290699824585,
+            "rendimento": 0.028175728358355405,
+            "retorno": 0.5461142579762515
+          },
+          {
+            "safra": 2021,
+            "capital_inicio": 148860.7507954571,
+            "renda": 9846.579077084505,
+            "rendimento": 0.06614624086247052,
+            "retorno": 0.14301779661319247
+          },
+          {
+            "safra": 2022,
+            "capital_inicio": 160303.90829932442,
+            "renda": 10103.648943230533,
+            "rendimento": 0.06302808864999528,
+            "retorno": -0.12357872583062834
+          },
+          {
+            "safra": 2023,
+            "capital_inicio": 130390.10662279348,
+            "renda": 9442.686046431561,
+            "rendimento": 0.07241873092218859,
+            "retorno": 0.26979219875371063
+          },
+          {
+            "safra": 2024,
+            "capital_inicio": 156125.65413785612,
+            "renda": 9889.580635711018,
+            "rendimento": 0.06334372586185417,
+            "retorno": -0.013064033824298549
+          },
+          {
+            "safra": 2025,
+            "capital_inicio": 144196.4426756474,
+            "renda": 12150.423870907196,
+            "rendimento": 0.08426299321570724,
+            "retorno": 0.32067134702834266
+          }
+        ],
+        "capital_final": 178285.68631423527,
+        "renda_total": 65423.41894851199,
+        "crescimento_renda_aa": 0.2089761742184666,
+        "quedas_de_renda": 3,
+        "renda_ultimo_sobre_primeiro": 4.550113642608089
+      },
+      "cobertura_do_rendimento": {
+        "2017": 1.0,
+        "2018": 0.9411764705882353,
+        "2019": 0.75,
+        "2020": 0.8076923076923077,
+        "2021": 0.8108108108108109,
+        "2022": 0.9210526315789473,
+        "2023": 0.9117647058823529,
+        "2024": 0.9210526315789473,
+        "2025": 0.9354838709677419
+      },
+      "nomes_por_safra": {
+        "2017": 4,
+        "2018": 17,
+        "2019": 24,
+        "2020": 26,
+        "2021": 37,
+        "2022": 38,
+        "2023": 34,
+        "2024": 38,
+        "2025": 31
+      },
+      "decisao": {
+        "testes": {
+          "r1_retorno": false,
+          "r2_dividendo_crescente": true,
+          "r3_valorizacao": false
+        },
+        "candidata": false,
+        "falhou": [
+          "r1_retorno",
+          "r3_valorizacao"
+        ]
+      },
+      "vs_nota_fatores": {
+        "media": -0.02180699656288993,
+        "ic95": [
+          -0.06309585936585083,
+          0.018084931891030432
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2018,
+          2019,
+          2020,
+          2022,
+          2025
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2021,
+        "media_sem_melhor_safra": -0.03507104060938512,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": -0.14190398189052011
+          },
+          {
+            "safra": 2018,
+            "dif": -0.04333547757463596
+          },
+          {
+            "safra": 2019,
+            "dif": -0.0822977105833862
+          },
+          {
+            "safra": 2020,
+            "dif": -0.010798215079349083
+          },
+          {
+            "safra": 2021,
+            "dif": 0.08430535580907161
+          },
+          {
+            "safra": 2022,
+            "dif": -0.009248017474807413
+          },
+          {
+            "safra": 2023,
+            "dif": 0.027335040391550436
+          },
+          {
+            "safra": 2024,
+            "dif": 0.02412350853281342
+          },
+          {
+            "safra": 2025,
+            "dif": -0.044443471196746076
+          }
+        ]
+      },
+      "vs_lider": {
+        "media": -0.016769102975386942,
+        "ic95": [
+          -0.07281216717030421,
+          0.037481545227592714
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2019,
+          2020,
+          2021,
+          2022,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2025,
+        "media_sem_melhor_safra": -0.03650243628232436,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 4.9960036108132044e-14
+          },
+          {
+            "safra": 2018,
+            "dif": 0.02106048357431267
+          },
+          {
+            "safra": 2019,
+            "dif": -0.01615507005508343
+          },
+          {
+            "safra": 2020,
+            "dif": -0.15704614701678987
+          },
+          {
+            "safra": 2021,
+            "dif": -0.03954115644397671
+          },
+          {
+            "safra": 2022,
+            "dif": -0.004583287180356277
+          },
+          {
+            "safra": 2023,
+            "dif": 0.035117174160544495
+          },
+          {
+            "safra": 2024,
+            "dif": -0.1308714872972957
+          },
+          {
+            "safra": 2025,
+            "dif": 0.14109756348011238
+          }
+        ]
+      }
+    },
+    "rota_valor_top10": {
+      "vs_equal_weight": {
+        "media": 0.11957316474658322,
+        "ic95": [
+          -0.040252933837971114,
+          0.360312695283145
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2021,
+          2023,
+          2024,
+          2025
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.010010283362565722
+      },
+      "com_ir_vs_equal_weight": {
+        "media": 0.10213056993121396,
+        "ic95": [
+          -0.060262653365899296,
+          0.3479933016686627
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2019,
+          2021,
+          2023,
+          2024,
+          2025
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": -0.009612635804724757
+      },
+      "giro_medio_anual": 0.638592553376286,
+      "renda": {
+        "anos": [
+          {
+            "safra": 2017,
+            "capital_inicio": 100000.0,
+            "renda": 7062.889449470622,
+            "rendimento": 0.07062889449470622,
+            "retorno": 0.3846713180282506
+          },
+          {
+            "safra": 2018,
+            "capital_inicio": 131404.24235335444,
+            "renda": 8048.616959069967,
+            "rendimento": 0.061250815155774956,
+            "retorno": 0.3267194437143588
+          },
+          {
+            "safra": 2019,
+            "capital_inicio": 166287.94635767923,
+            "renda": 5783.468118966534,
+            "rendimento": 0.03477983970363377,
+            "retorno": -0.06664084509462687
+          },
+          {
+            "safra": 2020,
+            "capital_inicio": 149422.90896438697,
+            "renda": 8000.670208704924,
+            "rendimento": 0.053543799034268445,
+            "retorno": 1.5369286509834916
+          },
+          {
+            "safra": 2021,
+            "capital_inicio": 371074.5886563464,
+            "renda": 24105.65352707186,
+            "rendimento": 0.06496174694785203,
+            "retorno": -0.005502991628116183
+          },
+          {
+            "safra": 2022,
+            "capital_inicio": 344926.914774492,
+            "renda": 35497.35358964227,
+            "rendimento": 0.10291268111927393,
+            "retorno": -0.12057373148612627
+          },
+          {
+            "safra": 2023,
+            "capital_inicio": 267840.43598049216,
+            "renda": 33243.40711613196,
+            "rendimento": 0.12411646133428937,
+            "retorno": 0.05419849333596427
+          },
+          {
+            "safra": 2024,
+            "capital_inicio": 249113.57694895068,
+            "renda": 14587.878193106473,
+            "rendimento": 0.0585591454780318,
+            "retorno": -0.08821011356870334
+          },
+          {
+            "safra": 2025,
+            "capital_inicio": 212551.36184167137,
+            "renda": 27942.444961764453,
+            "rendimento": 0.13146208389188616,
+            "retorno": 0.3408453665174751
+          }
+        ],
+        "capital_final": 257056.0637106199,
+        "renda_total": 164272.38212392907,
+        "crescimento_renda_aa": 0.22697037256934527,
+        "quedas_de_renda": 3,
+        "renda_ultimo_sobre_primeiro": 3.9562342242039192
+      },
+      "cobertura_do_rendimento": {
+        "2017": 0.8,
+        "2018": 0.9,
+        "2019": 0.8,
+        "2020": 1.0,
+        "2021": 0.7777777777777777,
+        "2022": 1.0,
+        "2023": 1.0,
+        "2024": 0.9,
+        "2025": 0.9
+      },
+      "nomes_por_safra": {
+        "2017": 10,
+        "2018": 10,
+        "2019": 10,
+        "2020": 9,
+        "2021": 9,
+        "2022": 10,
+        "2023": 10,
+        "2024": 10,
+        "2025": 10
+      },
+      "decisao": {
+        "testes": {
+          "r1_retorno": false,
+          "r2_dividendo_crescente": true,
+          "r3_valorizacao": true
+        },
+        "candidata": false,
+        "falhou": [
+          "r1_retorno"
+        ]
+      },
+      "vs_nota_fatores": {
+        "media": 0.10215484655372246,
+        "ic95": [
+          -0.056816828343517915,
+          0.3433664611961712
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2019,
+          2021,
+          2022,
+          2023,
+          2024,
+          2025
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": -0.007577819868048605,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.11333804899103406
+          },
+          {
+            "safra": 2018,
+            "dif": 0.18225199639582934
+          },
+          {
+            "safra": 2019,
+            "dif": -0.02220346082330893
+          },
+          {
+            "safra": 2020,
+            "dif": 0.9800161779278911
+          },
+          {
+            "safra": 2021,
+            "dif": -0.06421543243223704
+          },
+          {
+            "safra": 2022,
+            "dif": -0.006243023130305336
+          },
+          {
+            "safra": 2023,
+            "dif": -0.18825866502619593
+          },
+          {
+            "safra": 2024,
+            "dif": -0.05102257121159137
+          },
+          {
+            "safra": 2025,
+            "dif": -0.024269451707613632
+          }
+        ]
+      },
+      "vs_lider": {
+        "media": 0.10719274014122544,
+        "ic95": [
+          -0.07107141629070829,
+          0.32660651620785974
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2021,
+          2022,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.016370801910072355,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.25524203088160413
+          },
+          {
+            "safra": 2018,
+            "dif": 0.24664795754477797
+          },
+          {
+            "safra": 2019,
+            "dif": 0.043939179704993836
+          },
+          {
+            "safra": 2020,
+            "dif": 0.8337682459904503
+          },
+          {
+            "safra": 2021,
+            "dif": -0.18806194468528536
+          },
+          {
+            "safra": 2022,
+            "dif": -0.0015782928358542003
+          },
+          {
+            "safra": 2023,
+            "dif": -0.18047653125720187
+          },
+          {
+            "safra": 2024,
+            "dif": -0.2060175670417005
+          },
+          {
+            "safra": 2025,
+            "dif": 0.16127158296924482
+          }
+        ]
+      }
+    },
+    "rota_valor_top15": {
+      "vs_equal_weight": {
+        "media": 0.14765504225858406,
+        "ic95": [
+          -0.014349394767509531,
+          0.3854753824972268
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2021,
+          2022,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.041715211117840975
+      },
+      "com_ir_vs_equal_weight": {
+        "media": 0.12956669095992876,
+        "ic95": [
+          -0.03676717750639864,
+          0.3737724984451129
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2021,
+          2022,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.02136581590685375
+      },
+      "giro_medio_anual": 0.6690951174671645,
+      "renda": {
+        "anos": [
+          {
+            "safra": 2017,
+            "capital_inicio": 100000.0,
+            "renda": 7062.889449470622,
+            "rendimento": 0.07062889449470622,
+            "retorno": 0.3846713180282506
+          },
+          {
+            "safra": 2018,
+            "capital_inicio": 131404.24235335444,
+            "renda": 8311.723752377015,
+            "rendimento": 0.06325308531536034,
+            "retorno": 0.33067570276536196
+          },
+          {
+            "safra": 2019,
+            "capital_inicio": 166544.70878752283,
+            "renda": 6539.014155896164,
+            "rendimento": 0.03926281539354466,
+            "retorno": -0.03338522563489055
+          },
+          {
+            "safra": 2020,
+            "capital_inicio": 154445.56195045807,
+            "renda": 8269.602130809984,
+            "rendimento": 0.053543799034268445,
+            "retorno": 1.536026126549297
+          },
+          {
+            "safra": 2021,
+            "capital_inicio": 383408.37810513965,
+            "renda": 24906.878036152455,
+            "rendimento": 0.06496174694785203,
+            "retorno": -0.005502991628116072
+          },
+          {
+            "safra": 2022,
+            "capital_inicio": 356391.606974125,
+            "renda": 37622.70086994428,
+            "rendimento": 0.10556561976689813,
+            "retorno": -0.17081780187915885
+          },
+          {
+            "safra": 2023,
+            "capital_inicio": 257890.8751926796,
+            "renda": 27015.95421431915,
+            "rendimento": 0.1047573094400279,
+            "retorno": 0.1048464807856293
+          },
+          {
+            "safra": 2024,
+            "capital_inicio": 257913.8716690389,
+            "renda": 17293.36149595881,
+            "rendimento": 0.06705091658718557,
+            "retorno": -0.09595885890554579
+          },
+          {
+            "safra": 2025,
+            "capital_inicio": 215871.38935180774,
+            "renda": 24015.19121579252,
+            "rendimento": 0.11124767987041917,
+            "retorno": 0.5646177383291475
+          }
+        ],
+        "capital_final": 313741.01376180374,
+        "renda_total": 161037.315320721,
+        "crescimento_renda_aa": 0.21016897759818587,
+        "quedas_de_renda": 3,
+        "renda_ultimo_sobre_primeiro": 3.400193559251095
+      },
+      "cobertura_do_rendimento": {
+        "2017": 0.8,
+        "2018": 0.9090909090909092,
+        "2019": 0.8,
+        "2020": 1.0,
+        "2021": 0.7777777777777777,
+        "2022": 0.9333333333333333,
+        "2023": 0.9333333333333333,
+        "2024": 0.8666666666666667,
+        "2025": 0.8666666666666667
+      },
+      "nomes_por_safra": {
+        "2017": 10,
+        "2018": 11,
+        "2019": 15,
+        "2020": 9,
+        "2021": 9,
+        "2022": 15,
+        "2023": 15,
+        "2024": 15,
+        "2025": 15
+      },
+      "decisao": {
+        "testes": {
+          "r1_retorno": false,
+          "r2_dividendo_crescente": true,
+          "r3_valorizacao": true
+        },
+        "candidata": false,
+        "falhou": [
+          "r1_retorno"
+        ]
+      },
+      "vs_nota_fatores": {
+        "media": 0.13023672406572329,
+        "ic95": [
+          -0.032432890528455625,
+          0.36932707577305424
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2021,
+          2022,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.024127107887226648,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.11333804899103406
+          },
+          {
+            "safra": 2018,
+            "dif": 0.1862082554468325
+          },
+          {
+            "safra": 2019,
+            "dif": 0.01105215863642739
+          },
+          {
+            "safra": 2020,
+            "dif": 0.9791136534936964
+          },
+          {
+            "safra": 2021,
+            "dif": -0.06421543243223693
+          },
+          {
+            "safra": 2022,
+            "dif": -0.05648709352333792
+          },
+          {
+            "safra": 2023,
+            "dif": -0.1376106775765309
+          },
+          {
+            "safra": 2024,
+            "dif": -0.058771316548433816
+          },
+          {
+            "safra": 2025,
+            "dif": 0.1995029201040588
+          }
+        ]
+      },
+      "vs_lider": {
+        "media": 0.1352746176532263,
+        "ic95": [
+          -0.05435037984500565,
+          0.35879403341273053
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2021,
+          2022,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.04807572966534761,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.25524203088160413
+          },
+          {
+            "safra": 2018,
+            "dif": 0.25060421659578114
+          },
+          {
+            "safra": 2019,
+            "dif": 0.07719479916473015
+          },
+          {
+            "safra": 2020,
+            "dif": 0.8328657215562556
+          },
+          {
+            "safra": 2021,
+            "dif": -0.18806194468528525
+          },
+          {
+            "safra": 2022,
+            "dif": -0.05182236322888678
+          },
+          {
+            "safra": 2023,
+            "dif": -0.12982854380753683
+          },
+          {
+            "safra": 2024,
+            "dif": -0.21376631237854293
+          },
+          {
+            "safra": 2025,
+            "dif": 0.38504395478091724
+          }
+        ]
+      }
+    },
+    "rota_valor_top20": {
+      "vs_equal_weight": {
+        "media": 0.16953149497637632,
+        "ic95": [
+          0.01588883140550578,
+          0.40011271880454896
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2021,
+          2023
+        ],
+        "ic_cruza_zero": false,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.06635153065180156
+      },
+      "com_ir_vs_equal_weight": {
+        "media": 0.1513167895598803,
+        "ic95": [
+          -0.008889389684516169,
+          0.3857013294607637
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2021,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.045859987058243505
+      },
+      "giro_medio_anual": 0.6623156863038941,
+      "renda": {
+        "anos": [
+          {
+            "safra": 2017,
+            "capital_inicio": 100000.0,
+            "renda": 7062.889449470622,
+            "rendimento": 0.07062889449470622,
+            "retorno": 0.3846713180282506
+          },
+          {
+            "safra": 2018,
+            "capital_inicio": 131404.24235335444,
+            "renda": 8311.723752377015,
+            "rendimento": 0.06325308531536034,
+            "retorno": 0.33067570276536196
+          },
+          {
+            "safra": 2019,
+            "capital_inicio": 166544.70878752283,
+            "renda": 7309.902230735816,
+            "rendimento": 0.04389153089253508,
+            "retorno": -0.027243785469592274
+          },
+          {
+            "safra": 2020,
+            "capital_inicio": 154697.49823948403,
+            "renda": 8283.09175683903,
+            "rendimento": 0.053543799034268445,
+            "retorno": 1.535823644737743
+          },
+          {
+            "safra": 2021,
+            "capital_inicio": 384002.4820606199,
+            "renda": 24945.472066969083,
+            "rendimento": 0.06496174694785203,
+            "retorno": -0.005502991628116072
+          },
+          {
+            "safra": 2022,
+            "capital_inicio": 356943.84754969546,
+            "renda": 58296.535826107334,
+            "rendimento": 0.16332130733249578,
+            "retorno": -0.11877527225026174
+          },
+          {
+            "safra": 2023,
+            "capital_inicio": 256251.20905281714,
+            "renda": 24832.080509491043,
+            "rendimento": 0.09690522281349621,
+            "retorno": 0.1826827365677146
+          },
+          {
+            "safra": 2024,
+            "capital_inicio": 278231.8006618803,
+            "renda": 19210.630842502367,
+            "rendimento": 0.06904541751447019,
+            "retorno": -0.07530763939287854
+          },
+          {
+            "safra": 2025,
+            "capital_inicio": 238068.18970750176,
+            "renda": 23243.533213430044,
+            "rendimento": 0.09763393102618119,
+            "retorno": 0.6050368495118843
+          }
+        ],
+        "capital_final": 358864.6839636962,
+        "renda_total": 181495.85964792236,
+        "crescimento_renda_aa": 0.2148091786945494,
+        "quedas_de_renda": 3,
+        "renda_ultimo_sobre_primeiro": 3.290938273877725
+      },
+      "cobertura_do_rendimento": {
+        "2017": 0.8,
+        "2018": 0.9090909090909092,
+        "2019": 0.8235294117647058,
+        "2020": 1.0,
+        "2021": 0.7777777777777777,
+        "2022": 0.9,
+        "2023": 0.9,
+        "2024": 0.8500000000000001,
+        "2025": 0.9
+      },
+      "nomes_por_safra": {
+        "2017": 10,
+        "2018": 11,
+        "2019": 17,
+        "2020": 9,
+        "2021": 9,
+        "2022": 20,
+        "2023": 20,
+        "2024": 20,
+        "2025": 20
+      },
+      "decisao": {
+        "testes": {
+          "r1_retorno": true,
+          "r2_dividendo_crescente": true,
+          "r3_valorizacao": true
+        },
+        "candidata": true,
+        "falhou": []
+      },
+      "vs_nota_fatores": {
+        "media": 0.15211317678351557,
+        "ic95": [
+          -0.003242845910469671,
+          0.38324612340379205
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2021,
+          2022,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.048763427421187236,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.11333804899103406
+          },
+          {
+            "safra": 2018,
+            "dif": 0.1862082554468325
+          },
+          {
+            "safra": 2019,
+            "dif": 0.017193598801725662
+          },
+          {
+            "safra": 2020,
+            "dif": 0.9789111716821424
+          },
+          {
+            "safra": 2021,
+            "dif": -0.06421543243223693
+          },
+          {
+            "safra": 2022,
+            "dif": -0.004444563894440812
+          },
+          {
+            "safra": 2023,
+            "dif": -0.05977442179444559
+          },
+          {
+            "safra": 2024,
+            "dif": -0.038120097035766576
+          },
+          {
+            "safra": 2025,
+            "dif": 0.23992203128679557
+          }
+        ]
+      },
+      "vs_lider": {
+        "media": 0.15715107037101855,
+        "ic95": [
+          -0.026920242761316684,
+          0.37384446703819574
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2021,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.0727120491993082,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.25524203088160413
+          },
+          {
+            "safra": 2018,
+            "dif": 0.25060421659578114
+          },
+          {
+            "safra": 2019,
+            "dif": 0.08333623933002843
+          },
+          {
+            "safra": 2020,
+            "dif": 0.8326632397447016
+          },
+          {
+            "safra": 2021,
+            "dif": -0.18806194468528525
+          },
+          {
+            "safra": 2022,
+            "dif": 0.00022016640001032428
+          },
+          {
+            "safra": 2023,
+            "dif": -0.05199228802545153
+          },
+          {
+            "safra": 2024,
+            "dif": -0.1931150928658757
+          },
+          {
+            "safra": 2025,
+            "dif": 0.425463065963654
+          }
+        ]
+      }
+    },
+    "dividendo_6": {
+      "vs_equal_weight": {
+        "media": 0.02116485700170182,
+        "ic95": [
+          -0.03558590252277603,
+          0.07277789673870902
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2018,
+          2020,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2022,
+        "media_sem_melhor_safra": 0.004949906655141341
+      },
+      "com_ir_vs_equal_weight": {
+        "media": 0.006330407528201363,
+        "ic95": [
+          -0.04885795036695027,
+          0.05698298242117596
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2018,
+          2020,
+          2021,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2022,
+        "media_sem_melhor_safra": -0.009269402762873809
+      },
+      "giro_medio_anual": 0.49707667254078086,
+      "renda": {
+        "anos": [
+          {
+            "safra": 2017,
+            "capital_inicio": 100000.0,
+            "renda": 7534.895946277356,
+            "rendimento": 0.07534895946277356,
+            "retorno": 0.26515840228698484
+          },
+          {
+            "safra": 2018,
+            "capital_inicio": 118980.94428242111,
+            "renda": 8898.988714005982,
+            "rendimento": 0.07479339458663858,
+            "retorno": 0.15113476676144622
+          },
+          {
+            "safra": 2019,
+            "capital_inicio": 128064.11283159547,
+            "renda": 7516.866107713662,
+            "rendimento": 0.058696116667737774,
+            "retorno": -0.007484667497412167
+          },
+          {
+            "safra": 2020,
+            "capital_inicio": 119588.72942098624,
+            "renda": 5616.170245741796,
+            "rendimento": 0.04696237072618511,
+            "retorno": 0.4015611628637523
+          },
+          {
+            "safra": 2021,
+            "capital_inicio": 161994.74842693433,
+            "renda": 11242.642200094617,
+            "rendimento": 0.06940127571583266,
+            "retorno": 0.06792873358515905
+          },
+          {
+            "safra": 2022,
+            "capital_inicio": 161756.20433492778,
+            "renda": 22393.061921939294,
+            "rendimento": 0.13843711290092378,
+            "retorno": 0.002137571294018148
+          },
+          {
+            "safra": 2023,
+            "capital_inicio": 139708.90783200416,
+            "renda": 12346.40079643251,
+            "rendimento": 0.0883723234833293,
+            "retorno": 0.17313485168863485
+          },
+          {
+            "safra": 2024,
+            "capital_inicio": 151550.98807264684,
+            "renda": 10443.13051818288,
+            "rendimento": 0.06890836312579436,
+            "retorno": 0.004318384109373685
+          },
+          {
+            "safra": 2025,
+            "capital_inicio": 141762.31293311674,
+            "renda": 12090.485391056694,
+            "rendimento": 0.0852870212181214,
+            "retorno": 0.41887161600607814
+          }
+        ],
+        "capital_final": 189052.03664911402,
+        "renda_total": 98082.6418414448,
+        "crescimento_renda_aa": 0.08233143740602644,
+        "quedas_de_renda": 4,
+        "renda_ultimo_sobre_primeiro": 1.6045988527592134
+      },
+      "cobertura_do_rendimento": {
+        "2017": 0.8636363636363636,
+        "2018": 0.6875,
+        "2019": 0.75,
+        "2020": 0.9333333333333333,
+        "2021": 1.0,
+        "2022": 0.9285714285714285,
+        "2023": 0.8974358974358974,
+        "2024": 0.918918918918919,
+        "2025": 1.0
+      },
+      "nomes_por_safra": {
+        "2017": 22,
+        "2018": 16,
+        "2019": 16,
+        "2020": 15,
+        "2021": 15,
+        "2022": 28,
+        "2023": 39,
+        "2024": 37,
+        "2025": 36
+      },
+      "decisao": {
+        "testes": {
+          "r1_retorno": false,
+          "r2_dividendo_crescente": false,
+          "r3_valorizacao": true
+        },
+        "candidata": false,
+        "falhou": [
+          "r1_retorno",
+          "r2_dividendo_crescente"
+        ]
+      },
+      "vs_nota_fatores": {
+        "media": 0.003746538808841065,
+        "ic95": [
+          -0.047182293048541275,
+          0.0487038027137911
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2020,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2022,
+        "media_sem_melhor_safra": -0.010343678796283687,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": -0.006174866750231711
+          },
+          {
+            "safra": 2018,
+            "dif": 0.006667319442916764
+          },
+          {
+            "safra": 2019,
+            "dif": 0.03695271677390577
+          },
+          {
+            "safra": 2020,
+            "dif": -0.15535131019184822
+          },
+          {
+            "safra": 2021,
+            "dif": 0.009216292781038193
+          },
+          {
+            "safra": 2022,
+            "dif": 0.11646827964983908
+          },
+          {
+            "safra": 2023,
+            "dif": -0.06932230667352535
+          },
+          {
+            "safra": 2024,
+            "dif": 0.041505926466485654
+          },
+          {
+            "safra": 2025,
+            "dif": 0.05375679778098941
+          }
+        ]
+      },
+      "vs_lider": {
+        "media": 0.008784432396344053,
+        "ic95": [
+          -0.09976555752180716,
+          0.1078131378661283
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2020,
+          2021,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2025,
+        "media_sem_melhor_safra": -0.020029742611343923,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.13572911514033836
+          },
+          {
+            "safra": 2018,
+            "dif": 0.0710632805918654
+          },
+          {
+            "safra": 2019,
+            "dif": 0.10309535730220853
+          },
+          {
+            "safra": 2020,
+            "dif": -0.301599242129289
+          },
+          {
+            "safra": 2021,
+            "dif": -0.11463021947201013
+          },
+          {
+            "safra": 2022,
+            "dif": 0.12113300994429022
+          },
+          {
+            "safra": 2023,
+            "dif": -0.06154017290453129
+          },
+          {
+            "safra": 2024,
+            "dif": -0.11348906936362346
+          },
+          {
+            "safra": 2025,
+            "dif": 0.23929783245784786
+          }
+        ]
+      }
+    },
+    "dividendo_6_top5": {
+      "vs_equal_weight": {
+        "media": 0.004310910354869348,
+        "ic95": [
+          -0.0687235035067494,
+          0.07196535992565321
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2023,
+          2025
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2019,
+        "media_sem_melhor_safra": -0.018458387401794677
+      },
+      "com_ir_vs_equal_weight": {
+        "media": -0.013595766217436748,
+        "ic95": [
+          -0.08251170987870426,
+          0.049446027980475246
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2018,
+          2020,
+          2023,
+          2024,
+          2025
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2019,
+        "media_sem_melhor_safra": -0.03517175827024997
+      },
+      "giro_medio_anual": 0.5598925967905419,
+      "renda": {
+        "anos": [
+          {
+            "safra": 2017,
+            "capital_inicio": 100000.0,
+            "renda": 10130.63992243745,
+            "rendimento": 0.10130639922437451,
+            "retorno": 0.23731755041463365
+          },
+          {
+            "safra": 2018,
+            "capital_inicio": 113601.11511902591,
+            "renda": 9082.055850328308,
+            "rendimento": 0.07994688996505499,
+            "retorno": 0.18040887337380673
+          },
+          {
+            "safra": 2019,
+            "capital_inicio": 125013.70846132918,
+            "renda": 7555.008574306381,
+            "rendimento": 0.06043344099853971,
+            "retorno": 0.11272537213141698
+          },
+          {
+            "safra": 2020,
+            "capital_inicio": 131550.91669485462,
+            "renda": 11805.720712089076,
+            "rendimento": 0.08974259555692504,
+            "retorno": 0.564034359384521
+          },
+          {
+            "safra": 2021,
+            "capital_inicio": 193944.43300719434,
+            "renda": 21121.415068440838,
+            "rendimento": 0.10890446681528282,
+            "retorno": 0.09371540775866927
+          },
+          {
+            "safra": 2022,
+            "capital_inicio": 190998.59956054666,
+            "renda": 28558.8057650939,
+            "rendimento": 0.14952363960156023,
+            "retorno": -0.08037850936603985
+          },
+          {
+            "safra": 2023,
+            "capital_inicio": 147087.61107177485,
+            "renda": 12971.339905782092,
+            "rendimento": 0.08818784812170498,
+            "retorno": 0.019055835575567892
+          },
+          {
+            "safra": 2024,
+            "capital_inicio": 136919.1484977796,
+            "renda": 12522.380934854602,
+            "rendimento": 0.09145821510172243,
+            "retorno": -0.06136614802059803
+          },
+          {
+            "safra": 2025,
+            "capital_inicio": 115994.566829356,
+            "renda": 11279.454156484837,
+            "rendimento": 0.09724122831613716,
+            "retorno": 0.25956256002456524
+          }
+        ],
+        "capital_final": 134822.9593880393,
+        "renda_total": 125026.82088981749,
+        "crescimento_renda_aa": 0.057558350982301665,
+        "quedas_de_renda": 5,
+        "renda_ultimo_sobre_primeiro": 1.1133999671139214
+      },
+      "cobertura_do_rendimento": {
+        "2017": 0.8,
+        "2018": 0.8,
+        "2019": 0.6000000000000001,
+        "2020": 0.8,
+        "2021": 1.0,
+        "2022": 1.0,
+        "2023": 1.0,
+        "2024": 0.8,
+        "2025": 1.0
+      },
+      "nomes_por_safra": {
+        "2017": 5,
+        "2018": 5,
+        "2019": 5,
+        "2020": 5,
+        "2021": 5,
+        "2022": 5,
+        "2023": 5,
+        "2024": 5,
+        "2025": 5
+      },
+      "decisao": {
+        "testes": {
+          "r1_retorno": false,
+          "r2_dividendo_crescente": false,
+          "r3_valorizacao": false
+        },
+        "candidata": false,
+        "falhou": [
+          "r1_retorno",
+          "r2_dividendo_crescente",
+          "r3_valorizacao"
+        ]
+      },
+      "vs_nota_fatores": {
+        "media": -0.013107407837991407,
+        "ic95": [
+          -0.0800400189528412,
+          0.050033743354389704
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2023,
+          2024,
+          2025
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2019,
+        "media_sem_melhor_safra": -0.0343911783680822,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": -0.0340157186225829
+          },
+          {
+            "safra": 2018,
+            "dif": 0.03594142605527728
+          },
+          {
+            "safra": 2019,
+            "dif": 0.15716275640273492
+          },
+          {
+            "safra": 2020,
+            "dif": 0.007121886328920413
+          },
+          {
+            "safra": 2021,
+            "dif": 0.03500296695454841
+          },
+          {
+            "safra": 2022,
+            "dif": 0.03395219898978108
+          },
+          {
+            "safra": 2023,
+            "dif": -0.2234013227865923
+          },
+          {
+            "safra": 2024,
+            "dif": -0.024178605663486064
+          },
+          {
+            "safra": 2025,
+            "dif": -0.1055522582005235
+          }
+        ]
+      },
+      "vs_lider": {
+        "media": -0.00806951425048842,
+        "ic95": [
+          -0.10300844498687742,
+          0.08449708815190984
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2020,
+          2021,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2019,
+        "media_sem_melhor_safra": -0.03699137814817918,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.10788826326798717
+          },
+          {
+            "safra": 2018,
+            "dif": 0.10033738720422591
+          },
+          {
+            "safra": 2019,
+            "dif": 0.22330539693103768
+          },
+          {
+            "safra": 2020,
+            "dif": -0.13912604560852038
+          },
+          {
+            "safra": 2021,
+            "dif": -0.08884354529849992
+          },
+          {
+            "safra": 2022,
+            "dif": 0.038616929284232215
+          },
+          {
+            "safra": 2023,
+            "dif": -0.21561918901759825
+          },
+          {
+            "safra": 2024,
+            "dif": -0.17917360149359518
+          },
+          {
+            "safra": 2025,
+            "dif": 0.07998877647633496
+          }
+        ]
+      }
+    },
+    "dividendo_6_top10": {
+      "vs_equal_weight": {
+        "media": -0.010191823674755565,
+        "ic95": [
+          -0.0881319229657586,
+          0.06059712878604589
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2018,
+          2020,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2022,
+        "media_sem_melhor_safra": -0.03059026188968377
+      },
+      "com_ir_vs_equal_weight": {
+        "media": -0.02271394907143793,
+        "ic95": [
+          -0.09991172782568256,
+          0.0480246459648408
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2018,
+          2020,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2022,
+        "media_sem_melhor_safra": -0.043045557315357134
+      },
+      "giro_medio_anual": 0.5731773656818457,
+      "renda": {
+        "anos": [
+          {
+            "safra": 2017,
+            "capital_inicio": 100000.0,
+            "renda": 8561.954007892597,
+            "rendimento": 0.08561954007892596,
+            "retorno": 0.22566155848253588
+          },
+          {
+            "safra": 2018,
+            "capital_inicio": 114004.201840361,
+            "renda": 8939.080903762935,
+            "rendimento": 0.0784101003249007,
+            "retorno": 0.10651277780971857
+          },
+          {
+            "safra": 2019,
+            "capital_inicio": 117208.02515659474,
+            "renda": 6954.9816641206535,
+            "rendimento": 0.05933878379768375,
+            "retorno": 0.003403237982127605
+          },
+          {
+            "safra": 2020,
+            "capital_inicio": 110651.93029549718,
+            "renda": 6501.47952444464,
+            "rendimento": 0.058756132921336024,
+            "retorno": 0.34225180793155263
+          },
+          {
+            "safra": 2021,
+            "capital_inicio": 142021.2739658026,
+            "renda": 12190.952909578149,
+            "rendimento": 0.08583892095288215,
+            "retorno": 0.07625663573196828
+          },
+          {
+            "safra": 2022,
+            "capital_inicio": 140660.38561122472,
+            "renda": 16920.699403247123,
+            "rendimento": 0.12029470365604378,
+            "retorno": 0.004248793564502584
+          },
+          {
+            "safra": 2023,
+            "capital_inicio": 124337.32314914302,
+            "renda": 10791.640920758693,
+            "rendimento": 0.08679325441013463,
+            "retorno": 0.06048628606314521
+          },
+          {
+            "safra": 2024,
+            "capital_inicio": 121066.38512470912,
+            "renda": 9274.745556624292,
+            "rendimento": 0.07660875929408878,
+            "retorno": -0.04709422805417518
+          },
+          {
+            "safra": 2025,
+            "capital_inicio": 106090.11161732717,
+            "renda": 13853.643611719139,
+            "rendimento": 0.13058374056283387,
+            "retorno": 0.422823825498543
+          }
+        ],
+        "capital_final": 137093.89484721373,
+        "renda_total": 93989.17850214822,
+        "crescimento_renda_aa": 0.06663627622073265,
+        "quedas_de_renda": 4,
+        "renda_ultimo_sobre_primeiro": 1.6180469550465404
+      },
+      "cobertura_do_rendimento": {
+        "2017": 0.9,
+        "2018": 0.7000000000000001,
+        "2019": 0.7000000000000001,
+        "2020": 0.9,
+        "2021": 1.0,
+        "2022": 1.0,
+        "2023": 1.0,
+        "2024": 0.9,
+        "2025": 1.0
+      },
+      "nomes_por_safra": {
+        "2017": 10,
+        "2018": 10,
+        "2019": 10,
+        "2020": 10,
+        "2021": 10,
+        "2022": 10,
+        "2023": 10,
+        "2024": 10,
+        "2025": 10
+      },
+      "decisao": {
+        "testes": {
+          "r1_retorno": false,
+          "r2_dividendo_crescente": false,
+          "r3_valorizacao": false
+        },
+        "candidata": false,
+        "falhou": [
+          "r1_retorno",
+          "r2_dividendo_crescente",
+          "r3_valorizacao"
+        ]
+      },
+      "vs_nota_fatores": {
+        "media": -0.02761014186761632,
+        "ic95": [
+          -0.09857929189201553,
+          0.03690509009490707
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2018,
+          2020,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2022,
+        "media_sem_melhor_safra": -0.0458838473411088,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": -0.04567171055468067
+          },
+          {
+            "safra": 2018,
+            "dif": -0.03795466950881088
+          },
+          {
+            "safra": 2019,
+            "dif": 0.04784062225344554
+          },
+          {
+            "safra": 2020,
+            "dif": -0.2146606651240479
+          },
+          {
+            "safra": 2021,
+            "dif": 0.017544194927847423
+          },
+          {
+            "safra": 2022,
+            "dif": 0.11857950192032352
+          },
+          {
+            "safra": 2023,
+            "dif": -0.18197087229901499
+          },
+          {
+            "safra": 2024,
+            "dif": -0.009906685697063211
+          },
+          {
+            "safra": 2025,
+            "dif": 0.057709007273454294
+          }
+        ]
+      },
+      "vs_lider": {
+        "media": -0.02257224828011333,
+        "ic95": [
+          -0.1472252693760629,
+          0.09132996041368238
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2020,
+          2021,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2025,
+        "media_sem_melhor_safra": -0.05580003455891659,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.09623227133588941
+          },
+          {
+            "safra": 2018,
+            "dif": 0.026441291640137754
+          },
+          {
+            "safra": 2019,
+            "dif": 0.1139832627817483
+          },
+          {
+            "safra": 2020,
+            "dif": -0.3609085970614887
+          },
+          {
+            "safra": 2021,
+            "dif": -0.1063023173252009
+          },
+          {
+            "safra": 2022,
+            "dif": 0.12324423221477465
+          },
+          {
+            "safra": 2023,
+            "dif": -0.17418873853002093
+          },
+          {
+            "safra": 2024,
+            "dif": -0.16490168152717233
+          },
+          {
+            "safra": 2025,
+            "dif": 0.24325004195031275
+          }
+        ]
+      }
+    },
+    "dividendo_6_top15": {
+      "vs_equal_weight": {
+        "media": -0.016853512530845625,
+        "ic95": [
+          -0.08293583419679285,
+          0.04395974694230714
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2018,
+          2020,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2022,
+        "media_sem_melhor_safra": -0.03373976781603163
+      },
+      "com_ir_vs_equal_weight": {
+        "media": -0.02883860568239101,
+        "ic95": [
+          -0.09177079715936488,
+          0.029729975946562032
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2018,
+          2020,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2022,
+        "media_sem_melhor_safra": -0.04520499125644977
+      },
+      "giro_medio_anual": 0.5010737870213111,
+      "renda": {
+        "anos": [
+          {
+            "safra": 2017,
+            "capital_inicio": 100000.0,
+            "renda": 7359.174625582975,
+            "rendimento": 0.07359174625582975,
+            "retorno": 0.16989793163246758
+          },
+          {
+            "safra": 2018,
+            "capital_inicio": 109630.61853766379,
+            "renda": 8199.646111064741,
+            "rendimento": 0.07479339458663858,
+            "retorno": 0.13725106145011767
+          },
+          {
+            "safra": 2019,
+            "capital_inicio": 116477.89118832635,
+            "renda": 6836.799890402069,
+            "rendimento": 0.05869611666773777,
+            "retorno": -0.008123245405654567
+          },
+          {
+            "safra": 2020,
+            "capital_inicio": 108694.91280346838,
+            "renda": 5104.570791126846,
+            "rendimento": 0.04696237072618511,
+            "retorno": 0.4016184429882812
+          },
+          {
+            "safra": 2021,
+            "capital_inicio": 147244.22365321752,
+            "renda": 10218.936963320677,
+            "rendimento": 0.06940127571583266,
+            "retorno": 0.06792873358515927
+          },
+          {
+            "safra": 2022,
+            "capital_inicio": 147027.40033038985,
+            "renda": 21030.220708011788,
+            "rendimento": 0.14303606443937744,
+            "retorno": -0.030510358729525122
+          },
+          {
+            "safra": 2023,
+            "capital_inicio": 121511.32089522837,
+            "renda": 10732.155897617275,
+            "rendimento": 0.08832227169080765,
+            "retorno": 0.05416106817832711
+          },
+          {
+            "safra": 2024,
+            "capital_inicio": 117360.34793305615,
+            "renda": 8495.940004577014,
+            "rendimento": 0.07239191221061485,
+            "retorno": -0.05614497189749923
+          },
+          {
+            "safra": 2025,
+            "capital_inicio": 102275.21449189697,
+            "renda": 11970.248108784452,
+            "rendimento": 0.11703957961127352,
+            "retorno": 0.39851683350343414
+          }
+        ],
+        "capital_final": 131063.36100830784,
+        "renda_total": 89947.69310048784,
+        "crescimento_renda_aa": 0.0755525463087181,
+        "quedas_de_renda": 4,
+        "renda_ultimo_sobre_primeiro": 1.6265748154924642
+      },
+      "cobertura_do_rendimento": {
+        "2017": 0.8,
+        "2018": 0.7333333333333333,
+        "2019": 0.8,
+        "2020": 0.9333333333333333,
+        "2021": 1.0,
+        "2022": 0.9333333333333333,
+        "2023": 0.9333333333333333,
+        "2024": 0.9333333333333333,
+        "2025": 1.0
+      },
+      "nomes_por_safra": {
+        "2017": 15,
+        "2018": 15,
+        "2019": 15,
+        "2020": 15,
+        "2021": 15,
+        "2022": 15,
+        "2023": 15,
+        "2024": 15,
+        "2025": 15
+      },
+      "decisao": {
+        "testes": {
+          "r1_retorno": false,
+          "r2_dividendo_crescente": false,
+          "r3_valorizacao": false
+        },
+        "candidata": false,
+        "falhou": [
+          "r1_retorno",
+          "r2_dividendo_crescente",
+          "r3_valorizacao"
+        ]
+      },
+      "vs_nota_fatores": {
+        "media": -0.03427183072370638,
+        "ic95": [
+          -0.09427919370007588,
+          0.02026474784730409
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2018,
+          2020,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2022,
+        "media_sem_melhor_safra": -0.049033353267456656,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": -0.10143533740474897
+          },
+          {
+            "safra": 2018,
+            "dif": -0.007216385868411779
+          },
+          {
+            "safra": 2019,
+            "dif": 0.03631413886566337
+          },
+          {
+            "safra": 2020,
+            "dif": -0.15529403006731934
+          },
+          {
+            "safra": 2021,
+            "dif": 0.009216292781038415
+          },
+          {
+            "safra": 2022,
+            "dif": 0.08382034962629581
+          },
+          {
+            "safra": 2023,
+            "dif": -0.1882960901838331
+          },
+          {
+            "safra": 2024,
+            "dif": -0.01895742954038726
+          },
+          {
+            "safra": 2025,
+            "dif": 0.03340201527834541
+          }
+        ]
+      },
+      "vs_lider": {
+        "media": -0.029233937136203394,
+        "ic95": [
+          -0.1379410403980112,
+          0.07484068376018808
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2020,
+          2021,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2025,
+        "media_sem_melhor_safra": -0.0602560605226293,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.040468644485821104
+          },
+          {
+            "safra": 2018,
+            "dif": 0.057179575280536854
+          },
+          {
+            "safra": 2019,
+            "dif": 0.10245677939396614
+          },
+          {
+            "safra": 2020,
+            "dif": -0.30154196200476013
+          },
+          {
+            "safra": 2021,
+            "dif": -0.11463021947200991
+          },
+          {
+            "safra": 2022,
+            "dif": 0.08848507992074695
+          },
+          {
+            "safra": 2023,
+            "dif": -0.18051395641483903
+          },
+          {
+            "safra": 2024,
+            "dif": -0.17395242537049638
+          },
+          {
+            "safra": 2025,
+            "dif": 0.21894304995520386
+          }
+        ]
+      }
+    },
+    "dividendo_6_top20": {
+      "vs_equal_weight": {
+        "media": -0.007983900839379575,
+        "ic95": [
+          -0.07299239371152641,
+          0.05416105745504133
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2018,
+          2020,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2022,
+        "media_sem_melhor_safra": -0.028855795398173643
+      },
+      "com_ir_vs_equal_weight": {
+        "media": -0.02170951021623909,
+        "ic95": [
+          -0.0838526785761403,
+          0.037435093975516864
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2018,
+          2020,
+          2021,
+          2023,
+          2025
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2022,
+        "media_sem_melhor_safra": -0.042018474511856994
+      },
+      "giro_medio_anual": 0.5078665600044429,
+      "renda": {
+        "anos": [
+          {
+            "safra": 2017,
+            "capital_inicio": 100000.0,
+            "renda": 7478.402319511938,
+            "rendimento": 0.07478402319511938,
+            "retorno": 0.22905043851390183
+          },
+          {
+            "safra": 2018,
+            "capital_inicio": 115426.64153187825,
+            "renda": 8633.150345904256,
+            "rendimento": 0.07479339458663858,
+            "retorno": 0.1509074946394473
+          },
+          {
+            "safra": 2019,
+            "capital_inicio": 124212.23647419532,
+            "renda": 7290.7759236500015,
+            "rendimento": 0.058696116667737774,
+            "retorno": -0.0074846674974122784
+          },
+          {
+            "safra": 2020,
+            "capital_inicio": 115991.77326142602,
+            "renda": 5447.248657090694,
+            "rendimento": 0.04696237072618511,
+            "retorno": 0.4015611628637523
+          },
+          {
+            "safra": 2021,
+            "capital_inicio": 157122.31595782225,
+            "renda": 10904.489170898996,
+            "rendimento": 0.06940127571583266,
+            "retorno": 0.06792873358515927
+          },
+          {
+            "safra": 2022,
+            "capital_inicio": 156890.9467279054,
+            "renda": 24267.93101387194,
+            "rendimento": 0.15468025096412735,
+            "retorno": 0.010244367150805456
+          },
+          {
+            "safra": 2023,
+            "capital_inicio": 134230.26417495156,
+            "renda": 11862.106925083874,
+            "rendimento": 0.08837132965501113,
+            "retorno": 0.06716367431698345
+          },
+          {
+            "safra": 2024,
+            "capital_inicio": 131383.5549963968,
+            "renda": 9481.969509748871,
+            "rendimento": 0.07217013963436227,
+            "retorno": -0.04623220811983353
+          },
+          {
+            "safra": 2025,
+            "capital_inicio": 115827.43362853091,
+            "renda": 12156.901765709426,
+            "rendimento": 0.10495701566433487,
+            "retorno": 0.3412830050754987
+          }
+        ],
+        "capital_final": 143200.46648174938,
+        "renda_total": 97522.97563146999,
+        "crescimento_renda_aa": 0.08134579716292722,
+        "quedas_de_renda": 4,
+        "renda_ultimo_sobre_primeiro": 1.6256014648999013
+      },
+      "cobertura_do_rendimento": {
+        "2017": 0.8500000000000001,
+        "2018": 0.6875,
+        "2019": 0.75,
+        "2020": 0.9333333333333333,
+        "2021": 1.0,
+        "2022": 0.9500000000000001,
+        "2023": 0.9500000000000001,
+        "2024": 0.9,
+        "2025": 1.0
+      },
+      "nomes_por_safra": {
+        "2017": 20,
+        "2018": 16,
+        "2019": 16,
+        "2020": 15,
+        "2021": 15,
+        "2022": 20,
+        "2023": 20,
+        "2024": 20,
+        "2025": 20
+      },
+      "decisao": {
+        "testes": {
+          "r1_retorno": false,
+          "r2_dividendo_crescente": false,
+          "r3_valorizacao": false
+        },
+        "candidata": false,
+        "falhou": [
+          "r1_retorno",
+          "r2_dividendo_crescente",
+          "r3_valorizacao"
+        ]
+      },
+      "vs_nota_fatores": {
+        "media": -0.025402219032240332,
+        "ic95": [
+          -0.0844118528033178,
+          0.030624335419711803
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2020,
+          2023,
+          2024,
+          2025
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2022,
+        "media_sem_melhor_safra": -0.04414938084959867,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": -0.04228283052331472
+          },
+          {
+            "safra": 2018,
+            "dif": 0.006440047320917852
+          },
+          {
+            "safra": 2019,
+            "dif": 0.03695271677390566
+          },
+          {
+            "safra": 2020,
+            "dif": -0.15535131019184822
+          },
+          {
+            "safra": 2021,
+            "dif": 0.009216292781038415
+          },
+          {
+            "safra": 2022,
+            "dif": 0.12457507550662639
+          },
+          {
+            "safra": 2023,
+            "dif": -0.17529348404517675
+          },
+          {
+            "safra": 2024,
+            "dif": -0.00904466576272156
+          },
+          {
+            "safra": 2025,
+            "dif": -0.023831813149590042
+          }
+        ]
+      },
+      "vs_lider": {
+        "media": -0.020364325444737343,
+        "ic95": [
+          -0.12900712505674136,
+          0.07950756764355832
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2020,
+          2021,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2025,
+        "media_sem_melhor_safra": -0.04312351881623806,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.09962115136725536
+          },
+          {
+            "safra": 2018,
+            "dif": 0.07083600846986648
+          },
+          {
+            "safra": 2019,
+            "dif": 0.10309535730220842
+          },
+          {
+            "safra": 2020,
+            "dif": -0.301599242129289
+          },
+          {
+            "safra": 2021,
+            "dif": -0.11463021947200991
+          },
+          {
+            "safra": 2022,
+            "dif": 0.12923980580107752
+          },
+          {
+            "safra": 2023,
+            "dif": -0.1675113502761827
+          },
+          {
+            "safra": 2024,
+            "dif": -0.16403966159283068
+          },
+          {
+            "safra": 2025,
+            "dif": 0.1617092215272684
+          }
+        ]
+      }
+    },
+    "dividendo_segurado": {
+      "vs_equal_weight": {
+        "media": 0.01690529219428185,
+        "ic95": [
+          -0.042807711286774,
+          0.06701386981815481
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2020,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2022,
+        "media_sem_melhor_safra": 0.004629587160831207
+      },
+      "com_ir_vs_equal_weight": {
+        "media": 0.011437544146875684,
+        "ic95": [
+          -0.04724463365610218,
+          0.060438775921674806
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2018,
+          2020,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2022,
+        "media_sem_melhor_safra": -0.00048157290749035325
+      },
+      "giro_medio_anual": 0.26750416113139314,
+      "renda": {
+        "anos": [
+          {
+            "safra": 2017,
+            "capital_inicio": 100000.0,
+            "renda": 7534.895946277356,
+            "rendimento": 0.07534895946277356,
+            "retorno": 0.26514869468204316
+          },
+          {
+            "safra": 2018,
+            "capital_inicio": 118979.97352192695,
+            "renda": 9029.49779831928,
+            "rendimento": 0.07589090441892916,
+            "retorno": 0.1660429710608058
+          },
+          {
+            "safra": 2019,
+            "capital_inicio": 129706.26402392444,
+            "renda": 7055.926385601828,
+            "rendimento": 0.05439927237670153,
+            "retorno": -0.028912932405037783
+          },
+          {
+            "safra": 2020,
+            "capital_inicio": 118900.1491940889,
+            "renda": 5399.214885585948,
+            "rendimento": 0.04540965610373152,
+            "retorno": 0.3799166139857111
+          },
+          {
+            "safra": 2021,
+            "capital_inicio": 158673.07639271708,
+            "renda": 10929.736839360736,
+            "rendimento": 0.06888211338582453,
+            "retorno": 0.12062439257036806
+          },
+          {
+            "safra": 2022,
+            "capital_inicio": 166883.18301049943,
+            "renda": 20084.510618582157,
+            "rendimento": 0.12035071632902965,
+            "retorno": -0.03363595601828051
+          },
+          {
+            "safra": 2023,
+            "capital_inicio": 141185.39698798547,
+            "renda": 12123.742886719008,
+            "rendimento": 0.08587108260035356,
+            "retorno": 0.16154669808963695
+          },
+          {
+            "safra": 2024,
+            "capital_inicio": 151869.6888031501,
+            "renda": 10415.041378330401,
+            "rendimento": 0.0685788023957179,
+            "retorno": -0.009907995590651808
+          },
+          {
+            "safra": 2025,
+            "capital_inicio": 139949.9232178044,
+            "renda": 11484.525200356984,
+            "rendimento": 0.08206167560723553,
+            "retorno": 0.4176022514566604
+          }
+        ],
+        "capital_final": 186908.8010443893,
+        "renda_total": 94057.0919391337,
+        "crescimento_renda_aa": 0.07807056658912259,
+        "quedas_de_renda": 4,
+        "renda_ultimo_sobre_primeiro": 1.5241783406486134
+      },
+      "cobertura_do_rendimento": {
+        "2017": 0.8636363636363636,
+        "2018": 0.75,
+        "2019": 0.7692307692307693,
+        "2020": 0.8461538461538463,
+        "2021": 0.9310344827586207,
+        "2022": 0.9210526315789473,
+        "2023": 0.8863636363636364,
+        "2024": 0.9302325581395349,
+        "2025": 0.9767441860465116
+      },
+      "nomes_por_safra": {
+        "2017": 22,
+        "2018": 20,
+        "2019": 26,
+        "2020": 26,
+        "2021": 29,
+        "2022": 38,
+        "2023": 44,
+        "2024": 43,
+        "2025": 43
+      },
+      "decisao": {
+        "testes": {
+          "r1_retorno": false,
+          "r2_dividendo_crescente": false,
+          "r3_valorizacao": true
+        },
+        "candidata": false,
+        "falhou": [
+          "r1_retorno",
+          "r2_dividendo_crescente"
+        ]
+      },
+      "vs_nota_fatores": {
+        "media": -0.0005130259985789051,
+        "ic95": [
+          -0.0559742075403461,
+          0.04369064306533591
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2020,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2022,
+        "media_sem_melhor_safra": -0.01066399829059382,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": -0.006184574355173389
+          },
+          {
+            "safra": 2018,
+            "dif": 0.021575523742276337
+          },
+          {
+            "safra": 2019,
+            "dif": 0.015524451866280153
+          },
+          {
+            "safra": 2020,
+            "dif": -0.17699585906988946
+          },
+          {
+            "safra": 2021,
+            "dif": 0.0619119517662472
+          },
+          {
+            "safra": 2022,
+            "dif": 0.08069475233754042
+          },
+          {
+            "safra": 2023,
+            "dif": -0.08091046027252324
+          },
+          {
+            "safra": 2024,
+            "dif": 0.02727954676646016
+          },
+          {
+            "safra": 2025,
+            "dif": 0.05248743323157168
+          }
+        ]
+      },
+      "vs_lider": {
+        "media": 0.004524867588924082,
+        "ic95": [
+          -0.10645064176898981,
+          0.10152085211637138
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2020,
+          2021,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2025,
+        "media_sem_melhor_safra": -0.024663082451014173,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.13571940753539669
+          },
+          {
+            "safra": 2018,
+            "dif": 0.08597148489122497
+          },
+          {
+            "safra": 2019,
+            "dif": 0.08166709239458292
+          },
+          {
+            "safra": 2020,
+            "dif": -0.32324379100733025
+          },
+          {
+            "safra": 2021,
+            "dif": -0.06193456048680113
+          },
+          {
+            "safra": 2022,
+            "dif": 0.08535948263199156
+          },
+          {
+            "safra": 2023,
+            "dif": -0.07312832650352918
+          },
+          {
+            "safra": 2024,
+            "dif": -0.12771544906364896
+          },
+          {
+            "safra": 2025,
+            "dif": 0.23802846790843013
+          }
+        ]
+      }
+    },
+    "dividendo_segurado_so_solvencia": {
+      "vs_equal_weight": {
+        "media": 0.01711784031716439,
+        "ic95": [
+          -0.040449785645473794,
+          0.06482167220940191
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2020,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2022,
+        "media_sem_melhor_safra": 0.004868703799074066
+      },
+      "com_ir_vs_equal_weight": {
+        "media": 0.0114027451616985,
+        "ic95": [
+          -0.04502084479445908,
+          0.05810954768634688
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2018,
+          2020,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2022,
+        "media_sem_melhor_safra": -0.0005207217658146843
+      },
+      "giro_medio_anual": 0.2641775466781897,
+      "renda": {
+        "anos": [
+          {
+            "safra": 2017,
+            "capital_inicio": 100000.0,
+            "renda": 7534.895946277356,
+            "rendimento": 0.07534895946277356,
+            "retorno": 0.26514869468204316
+          },
+          {
+            "safra": 2018,
+            "capital_inicio": 118979.97352192695,
+            "renda": 9029.49779831928,
+            "rendimento": 0.07589090441892916,
+            "retorno": 0.1660429710608058
+          },
+          {
+            "safra": 2019,
+            "capital_inicio": 129706.26402392444,
+            "renda": 7055.926385601828,
+            "rendimento": 0.05439927237670153,
+            "retorno": -0.028912932405037783
+          },
+          {
+            "safra": 2020,
+            "capital_inicio": 118900.1491940889,
+            "renda": 5399.214885585948,
+            "rendimento": 0.04540965610373152,
+            "retorno": 0.3799166139857111
+          },
+          {
+            "safra": 2021,
+            "capital_inicio": 158673.07639271708,
+            "renda": 10929.736839360736,
+            "rendimento": 0.06888211338582453,
+            "retorno": 0.12062439257036806
+          },
+          {
+            "safra": 2022,
+            "capital_inicio": 166883.18301049943,
+            "renda": 20084.510618582157,
+            "rendimento": 0.12035071632902965,
+            "retorno": -0.03363595601828051
+          },
+          {
+            "safra": 2023,
+            "capital_inicio": 141185.39698798547,
+            "renda": 11864.403009731112,
+            "rendimento": 0.08403420794815446,
+            "retorno": 0.1831535403379474
+          },
+          {
+            "safra": 2024,
+            "capital_inicio": 155179.59928062247,
+            "renda": 10450.193633842304,
+            "rendimento": 0.0673425739097603,
+            "retorno": -0.019659947891376595
+          },
+          {
+            "safra": 2025,
+            "capital_inicio": 141678.58281111842,
+            "renda": 11387.924572566131,
+            "rendimento": 0.08037858896251218,
+            "retorno": 0.4076602946150176
+          }
+        ],
+        "capital_final": 188047.391047971,
+        "renda_total": 93736.30368986685,
+        "crescimento_renda_aa": 0.07686872527336308,
+        "quedas_de_renda": 4,
+        "renda_ultimo_sobre_primeiro": 1.5113579077614705
+      },
+      "cobertura_do_rendimento": {
+        "2017": 0.8636363636363636,
+        "2018": 0.75,
+        "2019": 0.7692307692307693,
+        "2020": 0.8461538461538463,
+        "2021": 0.9310344827586207,
+        "2022": 0.9210526315789473,
+        "2023": 0.888888888888889,
+        "2024": 0.9318181818181819,
+        "2025": 0.9777777777777779
+      },
+      "nomes_por_safra": {
+        "2017": 22,
+        "2018": 20,
+        "2019": 26,
+        "2020": 26,
+        "2021": 29,
+        "2022": 38,
+        "2023": 45,
+        "2024": 44,
+        "2025": 45
+      },
+      "decisao": {
+        "testes": {
+          "r1_retorno": false,
+          "r2_dividendo_crescente": false,
+          "r3_valorizacao": true
+        },
+        "candidata": false,
+        "falhou": [
+          "r1_retorno",
+          "r2_dividendo_crescente"
+        ]
+      },
+      "vs_nota_fatores": {
+        "media": -0.0003004778756963638,
+        "ic95": [
+          -0.05335248471055974,
+          0.04166121513080717
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2020,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2022,
+        "media_sem_melhor_safra": -0.010424881652350962,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": -0.006184574355173389
+          },
+          {
+            "safra": 2018,
+            "dif": 0.021575523742276337
+          },
+          {
+            "safra": 2019,
+            "dif": 0.015524451866280153
+          },
+          {
+            "safra": 2020,
+            "dif": -0.17699585906988946
+          },
+          {
+            "safra": 2021,
+            "dif": 0.0619119517662472
+          },
+          {
+            "safra": 2022,
+            "dif": 0.08069475233754042
+          },
+          {
+            "safra": 2023,
+            "dif": -0.0593036180242128
+          },
+          {
+            "safra": 2024,
+            "dif": 0.017527594465735374
+          },
+          {
+            "safra": 2025,
+            "dif": 0.04254547638992889
+          }
+        ]
+      },
+      "vs_lider": {
+        "media": 0.004737415711806624,
+        "ic95": [
+          -0.1063607178147896,
+          0.1010480430774761
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2020,
+          2021,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2025,
+        "media_sem_melhor_safra": -0.023181221207565966,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.13571940753539669
+          },
+          {
+            "safra": 2018,
+            "dif": 0.08597148489122497
+          },
+          {
+            "safra": 2019,
+            "dif": 0.08166709239458292
+          },
+          {
+            "safra": 2020,
+            "dif": -0.32324379100733025
+          },
+          {
+            "safra": 2021,
+            "dif": -0.06193456048680113
+          },
+          {
+            "safra": 2022,
+            "dif": 0.08535948263199156
+          },
+          {
+            "safra": 2023,
+            "dif": -0.05152148425521874
+          },
+          {
+            "safra": 2024,
+            "dif": -0.13746740136437374
+          },
+          {
+            "safra": 2025,
+            "dif": 0.22808651106678735
+          }
+        ]
+      }
+    },
+    "dividendo_segurado_dois_anos": {
+      "vs_equal_weight": {
+        "media": 0.00915463832514651,
+        "ic95": [
+          -0.0671444780333778,
+          0.0634465603646782
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2020,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2024,
+        "media_sem_melhor_safra": -0.002501960868681742
+      },
+      "com_ir_vs_equal_weight": {
+        "media": 0.005732081655713666,
+        "ic95": [
+          -0.06952102839250385,
+          0.059514225587904486
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2020,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2024,
+        "media_sem_melhor_safra": -0.005915316903082439
+      },
+      "giro_medio_anual": 0.18331752534806398,
+      "renda": {
+        "anos": [
+          {
+            "safra": 2017,
+            "capital_inicio": 100000.0,
+            "renda": 7534.895946277356,
+            "rendimento": 0.07534895946277356,
+            "retorno": 0.26514869468204316
+          },
+          {
+            "safra": 2018,
+            "capital_inicio": 118979.97352192695,
+            "renda": 10088.345631306996,
+            "rendimento": 0.08479028304244667,
+            "retorno": 0.20330538627181105
+          },
+          {
+            "safra": 2019,
+            "capital_inicio": 133080.89736610514,
+            "renda": 7392.4434160268975,
+            "rendimento": 0.05554849390360142,
+            "retorno": -0.032727339052118
+          },
+          {
+            "safra": 2020,
+            "capital_inicio": 121333.0703006176,
+            "renda": 5445.202653832731,
+            "rendimento": 0.04487814113944015,
+            "retorno": 0.28328258659538985
+          },
+          {
+            "safra": 2021,
+            "capital_inicio": 150259.4136411041,
+            "renda": 10090.022878409336,
+            "rendimento": 0.06715068716100173,
+            "retorno": 0.08348915277227853
+          },
+          {
+            "safra": 2022,
+            "capital_inicio": 152714.4219036499,
+            "renda": 16626.57361257932,
+            "rendimento": 0.10887363095981403,
+            "retorno": -0.060321195495391056
+          },
+          {
+            "safra": 2023,
+            "capital_inicio": 126875.93179245488,
+            "renda": 11853.930293811882,
+            "rendimento": 0.09342930630218092,
+            "retorno": 0.20075261642388664
+          },
+          {
+            "safra": 2024,
+            "capital_inicio": 140492.67676719688,
+            "renda": 10231.203322603304,
+            "rendimento": 0.07282374824103394,
+            "retorno": 0.026515865353583745
+          },
+          {
+            "safra": 2025,
+            "capital_inicio": 133986.75834491715,
+            "renda": 11135.998826242976,
+            "rendimento": 0.08311268190828221,
+            "retorno": 0.39922308545755336
+          }
+        ],
+        "capital_final": 176341.3665955876,
+        "renda_total": 90398.6165810908,
+        "crescimento_renda_aa": 0.06299467707131345,
+        "quedas_de_renda": 4,
+        "renda_ultimo_sobre_primeiro": 1.4779233722191953
+      },
+      "cobertura_do_rendimento": {
+        "2017": 0.8636363636363636,
+        "2018": 0.8076923076923077,
+        "2019": 0.7931034482758621,
+        "2020": 0.84375,
+        "2021": 0.8571428571428571,
+        "2022": 0.8936170212765957,
+        "2023": 0.88,
+        "2024": 0.9259259259259258,
+        "2025": 0.9607843137254902
+      },
+      "nomes_por_safra": {
+        "2017": 22,
+        "2018": 26,
+        "2019": 29,
+        "2020": 32,
+        "2021": 35,
+        "2022": 47,
+        "2023": 50,
+        "2024": 54,
+        "2025": 51
+      },
+      "decisao": {
+        "testes": {
+          "r1_retorno": false,
+          "r2_dividendo_crescente": false,
+          "r3_valorizacao": false
+        },
+        "candidata": false,
+        "falhou": [
+          "r1_retorno",
+          "r2_dividendo_crescente",
+          "r3_valorizacao"
+        ]
+      },
+      "vs_nota_fatores": {
+        "media": -0.008263679867714245,
+        "ic95": [
+          -0.0815480508986606,
+          0.0414965980377998
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2017,
+          2020,
+          2023
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2024,
+        "media_sem_melhor_safra": -0.01725956581501549,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": -0.006184574355173389
+          },
+          {
+            "safra": 2018,
+            "dif": 0.0588379389532816
+          },
+          {
+            "safra": 2019,
+            "dif": 0.011710045219199938
+          },
+          {
+            "safra": 2020,
+            "dif": -0.2736298864602107
+          },
+          {
+            "safra": 2021,
+            "dif": 0.024776711968157672
+          },
+          {
+            "safra": 2022,
+            "dif": 0.054009512860429876
+          },
+          {
+            "safra": 2023,
+            "dif": -0.041704541938273554
+          },
+          {
+            "safra": 2024,
+            "dif": 0.06370340771069571
+          },
+          {
+            "safra": 2025,
+            "dif": 0.03410826723246463
+          }
+        ]
+      },
+      "vs_lider": {
+        "media": -0.0032257862802112574,
+        "ic95": [
+          -0.13177584731672265,
+          0.10069836552673941
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2020,
+          2021,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2025,
+        "media_sem_melhor_safra": -0.03108517230390305,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.13571940753539669
+          },
+          {
+            "safra": 2018,
+            "dif": 0.12323390010223023
+          },
+          {
+            "safra": 2019,
+            "dif": 0.0778526857475027
+          },
+          {
+            "safra": 2020,
+            "dif": -0.4198778183976515
+          },
+          {
+            "safra": 2021,
+            "dif": -0.09906980028489065
+          },
+          {
+            "safra": 2022,
+            "dif": 0.05867424315488101
+          },
+          {
+            "safra": 2023,
+            "dif": -0.033922408169279494
+          },
+          {
+            "safra": 2024,
+            "dif": -0.0912915881194134
+          },
+          {
+            "safra": 2025,
+            "dif": 0.21964930190932308
+          }
+        ]
+      }
+    },
+    "rota_mais_dividendo": {
+      "vs_equal_weight": {
+        "media": 0.09184092870144699,
+        "ic95": [
+          0.028823242711327714,
+          0.18553128402680494
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2021,
+          2023
+        ],
+        "ic_cruza_zero": false,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.04984104870963045
+      },
+      "com_ir_vs_equal_weight": {
+        "media": 0.07490709487500893,
+        "ic95": [
+          0.007611417395147876,
+          0.17293549132484187
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2021,
+          2023
+        ],
+        "ic_cruza_zero": false,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.03161500445663595
+      },
+      "giro_medio_anual": null,
+      "renda": {
+        "anos": [
+          {
+            "safra": 2017,
+            "capital_inicio": 100000.0,
+            "renda": 7307.920144534227,
+            "rendimento": 0.07307920144534227,
+            "retorno": 0.3249148601576177
+          },
+          {
+            "safra": 2018,
+            "capital_inicio": 125183.56587122755,
+            "renda": 8540.323302262197,
+            "rendimento": 0.06822239998377552,
+            "retorno": 0.24090523476340409
+          },
+          {
+            "safra": 2019,
+            "capital_inicio": 146800.6188936935,
+            "renda": 7479.186516669002,
+            "rendimento": 0.050947922243332625,
+            "retorno": -0.01736422648350222
+          },
+          {
+            "safra": 2020,
+            "capital_inicio": 136772.35318263608,
+            "renda": 6888.752629565702,
+            "rendimento": 0.050366557782090295,
+            "retorno": 0.9686924038007476
+          },
+          {
+            "safra": 2021,
+            "capital_inicio": 262373.94013104297,
+            "renda": 17699.47887304255,
+            "rendimento": 0.06745898187984113,
+            "retorno": 0.03121287097852149
+          },
+          {
+            "safra": 2022,
+            "capital_inicio": 252863.905199437,
+            "renda": 32880.614436525924,
+            "rendimento": 0.13003285071703913,
+            "retorno": -0.05165511840744186
+          },
+          {
+            "safra": 2023,
+            "capital_inicio": 206921.575798866,
+            "renda": 17536.166219637944,
+            "rendimento": 0.08474788649726708,
+            "retorno": 0.22154849003434007
+          },
+          {
+            "safra": 2024,
+            "capital_inicio": 235228.57225299306,
+            "renda": 16445.142901985575,
+            "rendimento": 0.06991133238822064,
+            "retorno": -0.024248373096656395
+          },
+          {
+            "safra": 2025,
+            "capital_inicio": 213079.5191680231,
+            "renda": 17902.215661768416,
+            "rendimento": 0.08401659498607976,
+            "retorno": 0.4188393246487111
+          }
+        ],
+        "capital_final": 284423.3854110616,
+        "renda_total": 132679.80068599153,
+        "crescimento_renda_aa": 0.15829282198875672,
+        "quedas_de_renda": 4,
+        "renda_ultimo_sobre_primeiro": 2.449700504069947
+      },
+      "cobertura_do_rendimento": {
+        "2017": 0.8318181818181818,
+        "2018": 0.7982954545454546,
+        "2019": 0.7867647058823529,
+        "2020": 0.9666666666666666,
+        "2021": 0.888888888888889,
+        "2022": 0.9074675324675324,
+        "2023": 0.8987179487179487,
+        "2024": 0.9039039039039038,
+        "2025": 0.975
+      },
+      "nomes_por_safra": {
+        "2017": 25,
+        "2018": 22,
+        "2019": 25,
+        "2020": 22,
+        "2021": 19,
+        "2022": 55,
+        "2023": 53,
+        "2024": 46,
+        "2025": 56
+      },
+      "decisao": {
+        "testes": {
+          "r1_retorno": true,
+          "r2_dividendo_crescente": true,
+          "r3_valorizacao": true
+        },
+        "candidata": true,
+        "falhou": []
+      },
+      "vs_nota_fatores": {
+        "media": 0.07442261050858623,
+        "ic95": [
+          0.013134318109032152,
+          0.16754708407030156
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2021,
+          2023
+        ],
+        "ic_cruza_zero": false,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.03225294547901613,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.05358159112040117
+          },
+          {
+            "safra": 2018,
+            "dif": 0.09643778744487463
+          },
+          {
+            "safra": 2019,
+            "dif": 0.027073157787815716
+          },
+          {
+            "safra": 2020,
+            "dif": 0.41177993074514707
+          },
+          {
+            "safra": 2021,
+            "dif": -0.027499569825599368
+          },
+          {
+            "safra": 2022,
+            "dif": 0.06267558994837907
+          },
+          {
+            "safra": 2023,
+            "dif": -0.020908668327820124
+          },
+          {
+            "safra": 2024,
+            "dif": 0.012939169260455574
+          },
+          {
+            "safra": 2025,
+            "dif": 0.053724506423622365
+          }
+        ]
+      },
+      "vs_lider": {
+        "media": 0.07946050409608924,
+        "ic95": [
+          -0.01810617430992846,
+          0.17079799738331874
+        ],
+        "n_safras": 9,
+        "safras_negativas": [
+          2021,
+          2023,
+          2024
+        ],
+        "ic_cruza_zero": true,
+        "melhor_safra": 2020,
+        "media_sem_melhor_safra": 0.05620156725713709,
+        "safras": [
+          {
+            "safra": 2017,
+            "dif": 0.19548557301097125
+          },
+          {
+            "safra": 2018,
+            "dif": 0.16083374859382327
+          },
+          {
+            "safra": 2019,
+            "dif": 0.09321579831611848
+          },
+          {
+            "safra": 2020,
+            "dif": 0.2655319988077063
+          },
+          {
+            "safra": 2021,
+            "dif": -0.1513460820786477
+          },
+          {
+            "safra": 2022,
+            "dif": 0.06734032024283021
+          },
+          {
+            "safra": 2023,
+            "dif": -0.013126534558826064
+          },
+          {
+            "safra": 2024,
+            "dif": -0.14205582656965354
+          },
+          {
+            "safra": 2025,
+            "dif": 0.23926554110048082
+          }
+        ]
+      }
+    }
+  },
+  "escolha": {
+    "padrao": "rota_valor_top20",
+    "trocou": true,
+    "candidatas": [
+      "rota_valor_top20",
+      "rota_valor",
+      "rota_mais_dividendo",
+      "nota_fatores"
+    ],
+    "motivo": "maior excesso médio entre as candidatas"
+  },
+  "limites": [
+    "nove safras; com ~20 estratégias, alguma passar R1 por sorte é provável",
+    "estratégias sobrepostas: não são testes independentes",
+    "com aporte (§26/§27) o rendimento usa pesos iguais na composição",
+    "pesos iguais (benchmark) é bruto de custo: viés contra as estratégias",
+    "pequenas baratas e os perfis Conservador e Amplo não foram refeitos"
+  ]
+}

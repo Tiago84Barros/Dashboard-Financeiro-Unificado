@@ -2172,3 +2172,86 @@ contra a líder, e o retorno com IR.
   referência, não concorrentes.
 - Sobram pontos isolados de preço em papéis pouco líquidos da
   `brapi_legacy_quote`; o filtro de -5% a 100% tira os piores.
+
+### Como rodar
+
+```bash
+python scripts/comparar_estrategias_b3.py --cache-dir <pasta nova>
+```
+
+Pede o armazém local de pé (`dfu_warehouse`). Grava
+`data/oos_comparacao_estrategias_b3.json`, com a regra, a tabela por safra
+de cada estratégia, a trajetória de renda, a cobertura do rendimento e a
+escolha. Uma pasta de cache nova evita reaproveitar a aba montada antes da
+correção dos preços.
+
+### Resultado (26/11/2026): a rota de valor passa nas três; a regra escolhe a de 20 nomes
+
+Nove safras, 2017 a 2025. Excesso e IC em pontos percentuais ao ano sobre
+pesos iguais, líquidos de custo. Renda: tendência anual da renda de quem
+gasta os dividendos. Capital e renda total em R$ mil, partindo de R$ 100 mil.
+
+**Pesos iguais (benchmark):** renda +13,6% ao ano, 4 quedas, capital final
+186, renda total 67.
+
+| Estratégia | Excesso | IC 95% | Sem a melhor | Renda a.a. | Quedas | Capital | Renda total | Falhou |
+|---|---|---|---|---|---|---|---|---|
+| **rota_valor_top20** | **+17,0** | [+1,6; +40,0] | +6,6 | +21,5% | 3 | 359 | 181 | — |
+| **rota_valor** | **+16,3** | [+2,8; +38,5] | +5,8 | +21,8% | 2 | 384 | 169 | — |
+| rota_valor_top15 | +14,8 | [−1,4; +38,5] | +4,2 | +21,0% | 3 | 314 | 161 | R1 |
+| rota_valor_top10 | +12,0 | [−4,0; +36,0] | +1,0 | +22,7% | 3 | 257 | 164 | R1 |
+| **rota_mais_dividendo** | **+9,2** | [+2,9; +18,6] | +5,0 | +15,8% | 4 | 284 | 133 | — |
+| formula_magica | +4,2 | [+0,5; +7,6] | +3,3 | +21,8% | 5 | 213 | 115 | R2 |
+| dividendo_6 | +2,1 | [−3,6; +7,3] | +0,5 | +8,2% | 4 | 189 | 98 | R1, R2 |
+| **nota_fatores** (padrão atual) | **+1,7** | [+0,6; +2,8] | +1,5 | +14,6% | 3 | 204 | 81 | — |
+| dividendo_segurado | +1,7 | [−4,3; +6,7] | +0,5 | +7,8% | 4 | 187 | 94 | R1, R2 |
+| dividendo_segurado_so_solvencia | +1,7 | [−4,0; +6,5] | +0,5 | +7,7% | 4 | 188 | 94 | R1, R2 |
+| lider_segmento | +1,2 | [−6,6; +9,4] | −1,0 | +29,8% | 2 | 181 | 89 | R1, R3 |
+| tirar_30_pela_nota | +1,2 | [+0,2; +2,1] | +0,9 | +13,1% | 3 | 192 | 79 | R2 |
+| dividendo_segurado_dois_anos | +0,9 | [−6,7; +6,3] | −0,3 | +6,3% | 4 | 176 | 90 | R1, R2, R3 |
+| qualidade_constante | +0,8 | [−4,7; +6,2] | −0,9 | +16,9% | 3 | 196 | 83 | R1 |
+| lider_filtro_nota_fatores | +0,7 | [−6,7; +8,1] | −1,3 | +29,5% | 2 | 168 | 91 | R1, R3 |
+| dividendo_6_top5 | +0,4 | [−6,9; +7,2] | −1,8 | +5,8% | 5 | 135 | 125 | R1, R2, R3 |
+| lider_segurado | −0,4 | [−4,7; +3,7] | −1,8 | +20,9% | 3 | 178 | 65 | R1, R3 |
+| qualidade_3_anos | −0,8 | [−5,7; +4,2] | −2,5 | +15,0% | 4 | 183 | 67 | R1, R3 |
+| dividendo_6_top20 | −0,8 | [−7,3; +5,4] | −2,9 | +8,1% | 4 | 143 | 98 | R1, R2, R3 |
+| dividendo_6_top10 | −1,0 | [−8,8; +6,1] | −3,1 | +6,7% | 4 | 137 | 94 | R1, R2, R3 |
+| dividendo_6_top15 | −1,7 | [−8,3; +4,4] | −3,4 | +7,6% | 4 | 131 | 90 | R1, R2, R3 |
+
+Quatro candidatas: rota_valor_top20, rota_valor, rota_mais_dividendo e
+nota_fatores. Pela regra registrada, vira padrão a de maior excesso:
+**rota_valor_top20**. Cobertura do rendimento: 74% a 100% do peso por safra.
+
+**Ressalvas que a regra não pesa, mas a decisão deve pesar:**
+
+- **A rota de 20 nomes e a rota inteira são a mesma carteira de 2017 a
+  2021** (a rota tinha 20 nomes ou menos). A vantagem da de 20 (+0,7 p.p.)
+  vem toda de 2025 (+18,6 p.p.); ela perde em 2022, 2023 e 2024. Com 10 e 15
+  nomes a rota não passa. A escolha da de 20 depende do tamanho do corte.
+- **A rota depende de 2020:** +153,6% com nove nomes (PRIO3 e ROMI3 acima de
+  400%). Sem a melhor safra o excesso cai para +5,8 (rota) e +6,6 (20 nomes),
+  ainda acima de zero.
+- **Com IR, só a metade rota, metade dividendo segue com IC acima de zero:**
+  +7,5 [+0,8; +17,3]. A rota cai para +14,3 [−0,0; +37,4], a de 20 para
+  +15,1 [−0,9; +38,6] e a nota + fatores para +0,9 [−0,3; +2,1]. O giro da
+  rota é alto (63% a 66% ao ano, contra 26% da nota + fatores).
+- **Pareada contra a nota + fatores:** rota +14,5 [+0,7; +36,9]; 20 nomes
+  +15,2 [−0,3; +38,3]; metade rota, metade dividendo +7,4 [+1,3; +16,8].
+- **A líder de segmento tem a renda que mais cresce** (+29,8% ao ano, 2
+  quedas), mas não passa no retorno nem na valorização.
+- Cerca de 20 estratégias na mesma janela: alguma passar por sorte é
+  provável. As três que passam com folga são da mesma família (rota de
+  valor), o que não é prova independente.
+
+**O padrão da tela não mudou neste passo.** A troca é decisão do usuário e,
+quando vier, muda a tela e as três abas de Configurações no mesmo PR.
+
+### Leitura
+
+Pela renda e pela valorização juntas, a família da rota de valor ganha com
+folga: a renda cresce cerca de 21% ao ano (pesos iguais, 13,6%), com menos ou
+iguais quedas, e o capital quase dobra o dos pesos iguais. A regra escolhe a
+de 20 nomes, mas a diferença para a rota inteira está numa safra só; a rota
+inteira tem o IC mais longe do zero e menos quedas de renda. A metade rota,
+metade dividendo rende menos, mas é a única que aguenta o IR com IC acima de
+zero. A nota + fatores, o padrão atual, passa nas três por pouco.
