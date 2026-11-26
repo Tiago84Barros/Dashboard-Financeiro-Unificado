@@ -234,22 +234,35 @@ def _db_cols(conn, table: str) -> set[str]:
 
 
 _CHAVE_BARRA_AGREGADA = "_barra_agregada"  # = normalize.CHAVE_BARRA_AGREGADA
+_PERIODOS_DA_VELA = ("week", "month", "quarter")
+
+
+def _inicio_do_periodo(d: _date, periodo: str) -> _date:
+    """Mesmo corte que o ``date_trunc`` do Postgres (semana começa na segunda)."""
+    if periodo == "week":
+        return _date.fromordinal(d.toordinal() - d.weekday())
+    if periodo == "quarter":
+        return d.replace(month=3 * ((d.month - 1) // 3) + 1, day=1)
+    return d.replace(day=1)
 
 
 def _sem_barra_que_pisa_no_diario(conn, rows: list[dict]) -> list[dict]:
     """Tira do lote de ``historical_prices`` a vela agregada que pisaria no diário.
 
-    ``normalize.price_rows`` marca a vela mensal da brapi (datada no 1º dia
-    útil, com o fechamento do fim do mês). Ela só entra se o mês dela ainda
-    não tem pregão em OUTRA data: mês vazio recebe a vela (histórico só
-    mensal continua inteiro, e o leitor faz ``resample("ME").last()``); mês
-    com a mesma vela gravada antes a atualiza (o mês corrente fecha); mês com
-    pregão diário em outra data fica como está. Limite: a tabela não diz se a
-    linha da data da vela veio de vela ou de pregão; mês só com ela recebe a
-    vela (numa série diária completa, foi o único pregão do mês e os números
-    batem). A marca sai de todas as linhas — não é
-    coluna. Ponto único: todo caminho que grava preço da brapi passa aqui
-    (``ingest_ticker``, ``renormalize``, ``ingest_benchmark``,
+    ``normalize.price_rows`` marca a vela agregada da brapi com o período que
+    ela resume (a mensal vem datada no 1º dia útil, com o fechamento do fim do
+    mês; a semanal, na segunda-feira). Ela só entra se o período DELA ainda
+    não tem pregão em OUTRA data: período vazio recebe a vela (histórico só
+    mensal continua inteiro, e o leitor faz ``resample("ME").last()``);
+    período com a mesma vela gravada antes a atualiza (o mês corrente fecha);
+    período com pregão diário em outra data fica como está. A comparação é
+    por período, não por mês: duas velas semanais do mesmo mês são duas
+    semanas e não travam a terceira (achado do Codex no #808). Limite: a
+    tabela não diz se a linha da data da vela veio de vela ou de pregão;
+    período só com ela recebe a vela (numa série diária completa, foi o único
+    pregão do período e os números batem). A marca sai de todas as linhas —
+    não é coluna. Ponto único: todo caminho que grava preço da brapi passa
+    aqui (``ingest_ticker``, ``renormalize``, ``ingest_benchmark``,
     ``backfill_series``)."""
     marcadas = [r for r in rows if r.get(_CHAVE_BARRA_AGREGADA)]
     limpas = [{k: v for k, v in r.items() if k != _CHAVE_BARRA_AGREGADA}
@@ -259,28 +272,39 @@ def _sem_barra_que_pisa_no_diario(conn, rows: list[dict]) -> list[dict]:
     def _dia(v):
         return v if isinstance(v, _date) else _date.fromisoformat(str(v)[:10])
 
-    tickers = sorted({str(r["ticker"]) for r in marcadas})
-    ini = min(_dia(r["date"]) for r in marcadas).replace(day=1)
-    res = conn.execute(text(
-        "SELECT ticker, date_trunc('month', date)::date AS mes, "
-        "       min(date) AS primeira, max(date) AS ultima "
-        "FROM market.historical_prices "
-        "WHERE ticker = ANY(:t) AND date >= :ini "
-        "GROUP BY 1, 2"), {"t": tickers, "ini": ini})
-    ocupados = {(str(t), m): (p, u) for t, m, p, u in res.fetchall()}
+    def _periodo(r):
+        p = r.get(_CHAVE_BARRA_AGREGADA)
+        return p if p in _PERIODOS_DA_VELA else "month"  # marca antiga (True)
+
+    ocupados: dict[tuple, tuple] = {}
+    for periodo in sorted({_periodo(r) for r in marcadas}):
+        do_periodo = [r for r in marcadas if _periodo(r) == periodo]
+        tickers = sorted({str(r["ticker"]) for r in do_periodo})
+        ini = min(_inicio_do_periodo(_dia(r["date"]), periodo) for r in do_periodo)
+        # `periodo` vem da lista fechada acima, nunca do payload
+        res = conn.execute(text(
+            f"SELECT ticker, date_trunc('{periodo}', date)::date AS inicio, "
+            "       min(date) AS primeira, max(date) AS ultima "
+            "FROM market.historical_prices "
+            "WHERE ticker = ANY(:t) AND date >= :ini "
+            "GROUP BY 1, 2"), {"t": tickers, "ini": ini})
+        for t, inicio, p, u in res.fetchall():
+            ocupados[(periodo, str(t), inicio)] = (p, u)
     saida: list[dict] = []
     puladas = 0
     for r, limpa in zip(rows, limpas):
         if r.get(_CHAVE_BARRA_AGREGADA):
             d = _dia(r["date"])
-            ja = ocupados.get((str(r["ticker"]), d.replace(day=1)))
+            periodo = _periodo(r)
+            ja = ocupados.get((periodo, str(r["ticker"]),
+                               _inicio_do_periodo(d, periodo)))
             if ja is not None and (ja[0] != d or ja[1] != d):
                 puladas += 1
                 continue
         saida.append(limpa)
     if puladas:
         logger.info("upsert historical_prices: %d vela(s) agregada(s) puladas "
-                    "— o mês já tem pregão diário", puladas)
+                    "— o período já tem pregão diário", puladas)
     return saida
 
 

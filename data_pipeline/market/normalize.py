@@ -162,15 +162,21 @@ def asset_row(quote: dict) -> dict | None:
 # o fechamento do FIM do mês e o volume do mês inteiro. Gravada como se fosse
 # o pregão daquele dia, ela pisava na linha diária pela chave (ticker, date):
 # IVVB11 em 03/08/2026 ficou com 449,35, o oficial é 435,83 (26/11/2026).
-_INTERVALOS_AGREGADOS = frozenset({"5d", "1wk", "1mo", "3mo"})
+# Cada intervalo agregado aponta o período que a vela resume, no nome do
+# `date_trunc` do Postgres: o upsert compara a vela com os pregões do MESMO
+# período (duas velas semanais no mesmo mês são duas semanas, não pregões
+# diários; achado do Codex no #808).
+_INTERVALOS_AGREGADOS = {"5d": "week", "1wk": "week", "1mo": "month",
+                         "3mo": "quarter"}
 
-# Marca que `price_rows` põe na linha de vela agregada. Não é coluna: o
-# `repository._upsert` a retira e decide, com ela, se a linha entra.
+# Marca que `price_rows` põe na linha de vela agregada; o valor é o período
+# ("week", "month" ou "quarter"). Não é coluna: o `repository._upsert` a
+# retira e decide, com ela, se a linha entra.
 CHAVE_BARRA_AGREGADA = "_barra_agregada"
 
 
-def _vela_agregada(quote: dict, datas: list) -> bool:
-    """A vela do payload resume mais de um pregão?
+def _vela_agregada(quote: dict, datas: list) -> str | None:
+    """Período que a vela do payload resume, ou ``None`` se é pregão diário.
 
     Lê o ``usedInterval`` que a brapi devolve. Payload antigo sem o campo:
     infere pelo espaçamento — 3 velas ou mais com mediana de 25 dias ou mais
@@ -178,20 +184,21 @@ def _vela_agregada(quote: dict, datas: list) -> bool:
     linha segue como pregão (o comportamento de antes)."""
     intervalo = str((quote or {}).get("usedInterval") or "").strip().lower()
     if intervalo:
-        return intervalo in _INTERVALOS_AGREGADOS
+        return _INTERVALOS_AGREGADOS.get(intervalo)
     ds = sorted(set(datas))
     if len(ds) < 3:
-        return False
+        return None
     gaps = sorted((b - a).days for a, b in zip(ds, ds[1:]))
-    return gaps[len(gaps) // 2] >= 25
+    return "month" if gaps[len(gaps) // 2] >= 25 else None
 
 
 def price_rows(quote: dict) -> list[dict]:
     """Linhas de ``market.historical_prices`` a partir de ``historicalDataPrice``.
 
     Vela de intervalo agregado (mensal etc., ver ``_vela_agregada``) sai com
-    ``CHAVE_BARRA_AGREGADA = True``: o upsert só a grava no mês que ainda não
-    tem pregão de outra data, para não pisar no preço diário."""
+    ``CHAVE_BARRA_AGREGADA`` = período da vela: o upsert só a grava no
+    período (semana, mês, trimestre) que ainda não tem pregão de outra data,
+    para não pisar no preço diário."""
     tk = _ticker(quote)
     out: list[dict] = []
     for it in (quote or {}).get("historicalDataPrice") or []:
@@ -211,9 +218,10 @@ def price_rows(quote: dict) -> list[dict]:
             "adjusted_close": _f(it.get("adjustedClose")),
             "volume": int(_f(it.get("volume")) or 0) if it.get("volume") is not None else None,
         })
-    if out and _vela_agregada(quote, [r["date"] for r in out]):
+    periodo = _vela_agregada(quote, [r["date"] for r in out]) if out else None
+    if periodo:
         for r in out:
-            r[CHAVE_BARRA_AGREGADA] = True
+            r[CHAVE_BARRA_AGREGADA] = periodo
     return out
 
 

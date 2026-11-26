@@ -42,10 +42,23 @@ def test_chave_da_marca_e_a_mesma_nos_dois_modulos():
     assert repo._CHAVE_BARRA_AGREGADA == nz.CHAVE_BARRA_AGREGADA
 
 
-@pytest.mark.parametrize("intervalo", ["1mo", "1wk", "5d", "3mo", "1MO"])
-def test_intervalo_agregado_marca_a_vela(intervalo):
+@pytest.mark.parametrize("intervalo, periodo", [
+    ("1mo", "month"), ("1wk", "week"), ("5d", "week"), ("3mo", "quarter"),
+    ("1MO", "month")])
+def test_intervalo_agregado_marca_a_vela_com_o_periodo(intervalo, periodo):
     rows = nz.price_rows(_mensal(_vela(2026, 8, 3, 50.0), intervalo=intervalo))
-    assert rows and all(r[nz.CHAVE_BARRA_AGREGADA] is True for r in rows)
+    assert rows and all(r[nz.CHAVE_BARRA_AGREGADA] == periodo for r in rows)
+
+
+@pytest.mark.parametrize("dia, periodo, inicio", [
+    (date(2026, 8, 13), "week", date(2026, 8, 10)),      # quinta -> segunda
+    (date(2026, 8, 10), "week", date(2026, 8, 10)),
+    (date(2026, 1, 1), "week", date(2025, 12, 29)),      # semana cruza o ano
+    (date(2026, 8, 13), "month", date(2026, 8, 1)),
+    (date(2026, 8, 13), "quarter", date(2026, 7, 1)),
+    (date(2026, 12, 31), "quarter", date(2026, 10, 1))])
+def test_inicio_do_periodo_segue_o_date_trunc(dia, periodo, inicio):
+    assert repo._inicio_do_periodo(dia, periodo) == inicio
 
 
 def test_intervalo_diario_nao_marca():
@@ -200,3 +213,34 @@ def test_mes_so_com_o_pregao_da_data_da_vela_recebe_a_vela(banco):
     assert _gravar(banco, _mensal(_vela(2026, 11, 3, 100.0, 300))) == 1
     _gravar(banco, _diario(_vela(2026, 11, 3, 100.5, 310), _vela(2026, 11, 4, 101.0, 20)))
     assert _serie(banco) == {date(2026, 11, 3): (100.5, 310), date(2026, 11, 4): (101.0, 20)}
+
+
+def _semanal(*velas):
+    return _mensal(*velas, intervalo="1wk")
+
+
+def test_velas_semanais_do_mesmo_mes_nao_travam_a_seguinte(banco):
+    """Achado do Codex no #808: com o corte por mês, as semanas de 03 e 10/08
+    gravadas travavam a de 17/08 e a atualização das anteriores."""
+    _gravar(banco, _semanal(_vela(2026, 8, 3, 100.0, 50), _vela(2026, 8, 10, 101.0, 60)))
+    n = _gravar(banco, _semanal(_vela(2026, 8, 10, 102.0, 70), _vela(2026, 8, 17, 103.0, 80)))
+    assert n == 2
+    assert _serie(banco) == {date(2026, 8, 3): (100.0, 50), date(2026, 8, 10): (102.0, 70),
+                             date(2026, 8, 17): (103.0, 80)}
+
+
+def test_vela_semanal_nao_pisa_no_pregao_da_mesma_semana(banco):
+    _gravar(banco, _diario(_vela(2026, 8, 10, 100.0, 5), _vela(2026, 8, 11, 100.5, 6)))
+    n = _gravar(banco, _semanal(_vela(2026, 8, 10, 104.0, 40), _vela(2026, 8, 17, 105.0, 45)))
+    assert n == 1                                        # só a semana vazia entra
+    assert _serie(banco) == {date(2026, 8, 10): (100.0, 5), date(2026, 8, 11): (100.5, 6),
+                             date(2026, 8, 17): (105.0, 45)}
+
+
+def test_vela_trimestral_respeita_o_trimestre(banco):
+    _gravar(banco, _diario(_vela(2026, 8, 3, 100.0, 5), _vela(2026, 9, 1, 101.0, 6)))
+    n = _gravar(banco, _mensal(_vela(2026, 4, 1, 90.0, 900), _vela(2026, 7, 1, 99.0, 950),
+                               intervalo="3mo"))
+    assert n == 1                                        # 2º tri vazio; 3º tem pregão
+    s = _serie(banco)
+    assert s[date(2026, 4, 1)] == (90.0, 900) and date(2026, 7, 1) not in s
