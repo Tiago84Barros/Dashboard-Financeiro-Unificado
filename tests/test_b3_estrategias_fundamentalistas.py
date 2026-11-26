@@ -441,6 +441,55 @@ def test_regra_da_secao_23_registrada():
     assert fe.DY_ALVO_BAZIN == 0.06 and fe.ANOS_DY_BAZIN == 3
 
 
+# ── §28: o dividendo de 6% com poucos nomes ─────────────────────────────────
+def _caso_topn():
+    df = pd.DataFrame([_empresa(t) for t in ("AAAA3", "BBBB3", "CCCC3", "DDDD3")]
+                      + [_empresa("QUEB3", **{"P_FCO": -3.0})])
+    hist = {
+        "AAAA3": _hist_dy({2021: 0.07, 2022: 0.07, 2023: 0.07}),  # 7%
+        "BBBB3": _hist_dy({2021: 0.09, 2022: 0.09, 2023: 0.09}),  # 9%
+        "CCCC3": _hist_dy({2021: 0.07, 2022: 0.07, 2023: 0.07}),  # 7%, empata com AAAA3
+        "DDDD3": _hist_dy({2021: 0.05, 2022: 0.05, 2023: 0.05}),  # 5%: não passa
+        "QUEB3": _hist_dy({2021: 0.20, 2022: 0.20, 2023: 0.20}),  # falha a solvência
+    }
+    return df, ["AAAA3", "BBBB3", "CCCC3", "DDDD3", "QUEB3"], hist
+
+
+def test_dy_de_quem_passa_exclui_solvencia_e_quem_fica_abaixo():
+    df, universo, hist = _caso_topn()
+    dy = fe.dy_de_quem_passa(df, universo, hist, 2023)
+    assert set(dy) == {"AAAA3", "BBBB3", "CCCC3"}
+    assert dy["BBBB3"] == pytest.approx(0.09)
+
+
+def test_dividendo_topn_fica_com_os_de_maior_dy_e_desempata_por_ticker():
+    df, universo, hist = _caso_topn()
+    assert fe.carteira_dividendo_topn(df, universo, hist, 2023, 1) == ["BBBB3"]
+    # AAAA3 e CCCC3 empatam em 7%: fica a de ticker menor.
+    assert fe.carteira_dividendo_topn(df, universo, hist, 2023, 2) == ["AAAA3", "BBBB3"]
+
+
+def test_dividendo_topn_com_menos_nomes_fica_com_todos_e_iguala_a_23():
+    """Gêmeo: o filtro é o mesmo da §23; o corte só tira, nunca põe."""
+    df, universo, hist = _caso_topn()
+    inteiro = fe.carteira_dividendo_bazin(df, universo, hist, 2023)
+    assert inteiro == ["AAAA3", "BBBB3", "CCCC3"]
+    for n in (3, 5, 20):
+        assert fe.carteira_dividendo_topn(df, universo, hist, 2023, n) == inteiro
+    for n in fe.TAMANHOS_DIVIDENDO_TOPN:
+        assert set(fe.carteira_dividendo_topn(df, universo, hist, 2023, n)) <= set(inteiro)
+    assert fe.carteira_dividendo_topn(df, universo, hist, 2023, 0) == []
+
+
+def test_regra_da_28_registrada():
+    regra = fe.REGRA_DE_DECISAO_DIVIDENDO_TOPN
+    assert fe.TAMANHOS_DIVIDENDO_TOPN == (5, 10, 15, 20)
+    assert "(a)" in regra and "(b)" in regra and "(c)" in regra
+    assert "MENOR N" in regra and "MAIOR DY médio" in regra
+    assert fe.rotulo_dividendo_topn(5) == "dividendo_6_top5"
+    assert fe.VERSAO >= "fundamentalistas-1.8.0"
+
+
 # ── §24: o dividendo de 6% em outra janela ──────────────────────────────────
 def _resumo(media, lo, sem_melhor, n=4):
     return {"media": media, "ic95": [lo, 0.5], "n_safras": n,
