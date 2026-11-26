@@ -2090,3 +2090,85 @@ carteira inteira.
   média segue a que refaz a carteira inteira todo abril, e nenhuma passa.
 
 Nada muda na tela.
+
+## 29. Qual estratégia vira o padrão da Criação de Portfólio B3? (26/11/2026, regra registrada antes de medir)
+
+### Que pergunta responde
+
+Pedido do usuário: comparar todas as estratégias medidas até aqui, com os
+dados já corrigidos (leitor da CVM do #805 e preços limpos em 26/11/2026),
+e decidir qual vira o modelo padrão da criação de portfólio B3. O padrão tem
+de render na **valorização** das ações e no **crescimento contínuo dos
+dividendos**, não só no retorno total.
+
+### O que se mede
+
+Todas as estratégias na mesma rodada (perfil Equilibrado, nove safras,
+abril/2017 a março/2026, mesma régua de custos da §19):
+
+- a líder de cada segmento (carteira padrão das medições, sem portão);
+- a nota + fatores (o padrão da tela desde 20/11/2026) e o corte de 30% só
+  pela nota;
+- a líder com o filtro da nota + fatores (§18);
+- rota de valor, fórmula mágica, qualidade constante, qualidade de três anos
+  e líder segurado (§19); rota de valor com 10, 15 e 20 nomes (§20);
+- dividendo de 6% (§23) e com 5, 10, 15 e 20 nomes (§28); metade rota,
+  metade dividendo (§25); dividendo segurado (§26) e só solvência; solvência
+  em dois anos (§27).
+
+Para cada uma, além do retorno, o **rendimento de dividendos** de cada safra
+e a **trajetória de renda** de quem gasta os dividendos. A régua mora em
+`core/b3_comparacao_estrategias.py`:
+
+- rendimento do papel na safra = `(a1/a0)/(c1/c0) - 1`, com o preço ajustado
+  (`a`) e o de fechamento (`c`) do armazém na véspera e no fim da vigência
+  (tolerância de 45 dias). As duas séries da brapi já descontam
+  desdobramento; só o ajustado desconta proventos. Os proventos por
+  pagamento da brapi não servem: não descontam desdobramento (BBAS3 sai com o
+  dobro antes do desdobramento de 2024);
+- rendimento fora de [-5%, 100%) sai como dado ruim; entre -5% e 0 vira 0;
+  papel sem dado sai e os pesos dos outros se renormalizam, com a cobertura
+  registrada;
+- trajetória: R$ 100 mil em abril/2017; renda = capital × rendimento;
+  capital cresce só pela valorização (retorno líquido menos o rendimento).
+  Mede a tendência da renda (reta do log), os anos de queda, a renda total
+  e o capital final.
+
+O benchmark é o de sempre: pesos iguais no universo da safra, com a renda
+pela média simples dos rendimentos do universo.
+
+### Regra de decisão (registrada antes de medir)
+
+`core/b3_comparacao_estrategias.py`, versão 1.0.0, commit anterior à
+medição. Uma estratégia é candidata só se passar nas três:
+
+- **R1 — retorno:** excesso líquido médio sobre pesos iguais acima de zero,
+  com IC 95% acima de zero, e média sem a melhor safra acima de zero (testes
+  a e b da §19);
+- **R2 — dividendo crescendo sem parar:** tendência da renda maior ou igual
+  à dos pesos iguais E anos de queda da renda menores ou iguais aos dos pesos
+  iguais;
+- **R3 — valorização:** capital final (só preço) maior ou igual ao dos pesos
+  iguais.
+
+Entre as candidatas, vira padrão a de maior excesso médio. **Sem candidata,
+a nota + fatores continua o padrão**, e a saída diz qual regra cada uma não
+cumpriu. Só informativos: renda total, a pareada contra a nota + fatores e
+contra a líder, e o retorno com IR.
+
+### Limites declarados antes
+
+- Nove safras. Com cerca de 20 estratégias, a chance de alguma passar R1 por
+  sorte é alta; R2 e R3 são contra o mesmo benchmark e não corrigem isso.
+- As estratégias se sobrepõem (top 5 dentro do top 10, segurado dentro do
+  dividendo): não são testes independentes.
+- O rendimento pelas pontas mede o provento reinvestido no ano inteiro; papel
+  que sai da bolsa no meio da vigência fica sem ponta e sai do cálculo da
+  renda (a régua do retorno já trata a saída).
+- Nas estratégias com aporte (§26, §27) os pesos derivam; o rendimento usa
+  pesos iguais na composição da safra.
+- Pequenas baratas (§23) e os perfis Conservador e Amplo ficam de fora: pedem
+  outra rodada da aba. Carteiras sorteadas (§22) e portão de IA (§21) são
+  referência, não concorrentes.
+- Sobram pontos isolados de preço em papéis pouco líquidos da
+  `brapi_legacy_quote`; o filtro de -5% a 100% tira os piores.
