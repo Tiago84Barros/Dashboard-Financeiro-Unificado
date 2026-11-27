@@ -25,6 +25,7 @@ import core.data_reconciliacao as _recon
 import core.market_read as _mr
 import core.pesos_por_score as _pps
 import views.portfolio_b3_nota_fatores as _nota_fatores
+import views.portfolio_b3_rota_valor as _rota_valor
 from core.b3_evidence import sinal_significante, teste_t_unilateral
 from core.b3_methodology import (
     MODEL_SCHEMA_VERSION,
@@ -3695,8 +3696,8 @@ def render(show_header: bool = True) -> None:
             df_set["ticker"].isin(set(df_set_vivas["ticker"]))
         ].copy()
         st.session_state["pb3_precos_all"] = df_precos_all
-        # Carteira ampla "nota + fatores" (estratégia padrão desde 20/11/2026):
-        # o histórico de fundamentos não fica na sessão, então ela se forma
+        # Carteira ampla "nota + fatores" (opção do seletor; padrão de 20/11 a
+        # 26/11/2026): o histórico de fundamentos não fica na sessão, então ela se forma
         # aqui, no Rodar. Falha nela não derruba a rodada: a seção diz que falta.
         try:
             from core.b3_portfolio_presets import PRESETS as _PRESETS_NF
@@ -3709,6 +3710,19 @@ def render(show_header: bool = True) -> None:
         except Exception as exc:  # noqa: BLE001 -- seção opcional, nomeada na tela
             logger.warning("carteira nota + fatores indisponivel (%s)", exc)
             st.session_state.pop(_nota_fatores.CHAVE_ESTADO, None)
+            _perfil_rodada = None
+        # Carteira "rota de valor" (estratégia padrão desde 26/11/2026): lê o
+        # quadro de decisão enriquecido, gêmeo do `quadro_decisao_pit` que a
+        # medição da §29 usou, com a Selic do ano anterior à safra.
+        try:
+            _ano_rv = int(pd.Timestamp.now().year)
+            st.session_state[_rota_valor.CHAVE_ESTADO] = _rota_valor.formar_hoje(
+                resultados, df_mult_todos,
+                selic=_rota_valor.selic_da_safra(selic_macro, _ano_rv, taxa_selic_aa),
+                perfil=_perfil_rodada or "")
+        except Exception as exc:  # noqa: BLE001 -- seção opcional, nomeada na tela
+            logger.warning("carteira rota de valor indisponivel (%s)", exc)
+            st.session_state.pop(_rota_valor.CHAVE_ESTADO, None)
         st.session_state["pb3_quality_summary"] = quality_summary
         st.session_state["pb3_quality_audit"]   = audit_recon
         st.session_state["pb3_hist_audit"]      = hist_audit
@@ -3793,7 +3807,7 @@ def render(show_header: bool = True) -> None:
             "pb3_resultados", "pb3_df_set", "pb3_precos_all",
             "pb3_quality_summary", "pb3_quality_audit", "pb3_hist_audit",
             "pb3_entry_guard", "pb3_entry_guard_df", "pb3_nota_fatores",
-            "pb3_fonte_reserva",
+            "pb3_rota_valor", "pb3_fonte_reserva",
         ):
             st.session_state.pop(_k, None)
         st.info(
@@ -4047,13 +4061,20 @@ def render(show_header: bool = True) -> None:
     # ── EVIDÊNCIA NO UNIVERSO (amplitude real, sem multiplicidade) ───────────
     _render_evidencia_universo(resultados)
 
-    # ── ESTRATÉGIA: nota + fatores é a padrão (decisão de 20/11/2026) ─────────
-    # A escolha vem antes do portão qualitativo: a carteira ampla não passa
-    # por ele, e abrir a aba na padrão não gasta chamada de LLM. A líder de
-    # cada segmento continua inteira atrás da outra opção.
+    # ── ESTRATÉGIA: rota de valor é a padrão (decisão de 26/11/2026) ─────────
+    # A escolha vem antes do portão qualitativo: a rota de valor e a nota +
+    # fatores não passam por ele, e abrir a aba na padrão não gasta chamada
+    # de LLM. A líder de cada segmento continua inteira atrás da terceira opção.
     st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
                 unsafe_allow_html=True)
-    if _nota_fatores.escolher_estrategia() == _nota_fatores.ESTRATEGIA_NOTA_FATORES:
+    _estrategia = _nota_fatores.escolher_estrategia()
+    if _estrategia == _nota_fatores.ESTRATEGIA_ROTA_VALOR:
+        _rota_rota_valor(
+            aprovados or resultados, df_precos_all,
+            selic_hist=selic_hist, taxa_selic_aa=taxa_selic_aa,
+        )
+        return
+    if _estrategia == _nota_fatores.ESTRATEGIA_NOTA_FATORES:
         _rota_nota_fatores(
             aprovados or resultados, df_precos_all,
             selic_hist=selic_hist, taxa_selic_aa=taxa_selic_aa,
@@ -5249,8 +5270,9 @@ def _render_analises_da_carteira(
         selic_mensal=selic_mensal,
     )
 
-    # A nota + fatores, padrão da aba desde 20/11/2026, tem rota própria
-    # (`_rota_nota_fatores`); aqui só a líder de cada segmento.
+    # A rota de valor (padrão desde 26/11/2026) e a nota + fatores têm rotas
+    # próprias (`_rota_rota_valor`, `_rota_nota_fatores`); aqui só a líder de
+    # cada segmento.
 
     # ── Metodologia e referências científicas ────────────────────────────────
     _render_metodologia_portfolio()
@@ -5270,6 +5292,33 @@ def _selic_mensal() -> dict[tuple[int, int], float]:
         return {}
 
 
+def _rota_rota_valor(
+    base_safras: list[dict],
+    df_precos_all: pd.DataFrame,
+    *,
+    selic_hist: dict[int, float],
+    taxa_selic_aa: float,
+) -> None:
+    """Estratégia padrão da aba (26/11/2026): a carteira rota de valor.
+
+    Mostra a medição da §29 e a lista de hoje; depois, as safras ano a ano
+    (referência de pesos iguais, Selic e Ibovespa) e a metodologia. Como na
+    medição, não passa pelo portão qualitativo, pela guarda de entrada nem
+    pelos tetos, e por isso não chama LLM. `base_safras` tem o mesmo papel
+    que em `_rota_nota_fatores`.
+    """
+    _estado_rv = st.session_state.get(_rota_valor.CHAVE_ESTADO) or {}
+    _rota_valor.render_rota_valor(perfil_ativo=_estado_rv.get("perfil") or None)
+    render_safras(
+        base_safras,
+        df_precos_all,
+        selic_por_ano=selic_hist,
+        taxa_selic_aa=taxa_selic_aa,
+        selic_mensal=_selic_mensal(),
+    )
+    _render_metodologia_portfolio()
+
+
 def _rota_nota_fatores(
     base_safras: list[dict],
     df_precos_all: pd.DataFrame,
@@ -5277,7 +5326,7 @@ def _rota_nota_fatores(
     selic_hist: dict[int, float],
     taxa_selic_aa: float,
 ) -> None:
-    """Estratégia padrão da aba: a carteira ampla nota + fatores.
+    """Opção do seletor: a carteira ampla nota + fatores.
 
     Mostra a lista de hoje e a medição dela; depois, as safras ano a ano
     (onde a nota + fatores aparece ao lado da líder, de pesos iguais, da Selic

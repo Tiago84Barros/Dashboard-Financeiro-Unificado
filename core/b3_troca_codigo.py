@@ -65,6 +65,13 @@ PARES_CONHECIDOS: dict[str, str] = {
     "ELET3": "AXIA3", "CARD3": "CSUD3", "CCRO3": "MOTV3", "ALSO3": "ALOS3",
     "EMBR3": "EMBJ3", "CRDE3": "FIEI3", "GUAR3": "RIAA3", "RRRP3": "BRAV3",
     "ARZZ3": "AZZA3", "WIZS3": "WIZC3", "ODPV3": "SAUD3", "NINJ3": "ARND3",
+    # Conferidas em 27/11/2026 no COTAHIST (`market.b3_security_history`):
+    # o código antigo para num pregão e o novo abre no seguinte, com o mesmo
+    # preço (diferença de 0,2% a 2,5%), e a `market.historical_prices` só
+    # tem o novo, com o histórico inteiro. Sem elas o pregão diário perdia o
+    # passado de ISA Energia, Dexco e Yduqs. IGTA3 → IGTI3 fica de fora: foi
+    # incorporação pela Jereissati (JPSA3), não troca de nome.
+    "TRPL3": "ISAE3", "TRPL4": "ISAE4", "DTEX3": "DXCO3", "ESTC3": "YDUQ3",
 }
 
 # Razão de base do adjusted_close abaixo disto é arredondamento, não base. A

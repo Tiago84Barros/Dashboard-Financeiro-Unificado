@@ -18,7 +18,7 @@ mesmo ano e entrando duas vezes no benchmark. A leitura já deduplica
 * ``public.setores`` fica com UMA classificação para os dois códigos
   (LISTAGEM preenchida prevalece; empate, a do código novo).
 
-Os pares vêm da mesma regra que o app usa (``mapa_de_trocas``): os 12 pares
+Os pares vêm da mesma regra que o app usa (``mapa_de_trocas``): os 16 pares
 conferidos em ``PARES_CONHECIDOS``, as trocas já gravadas (inclusive as que a
 ingestão provou e deixou pendentes — ela não migra sozinha) e o alias legado
 quando os dois códigos são da mesma companhia. Companhias diferentes vetam

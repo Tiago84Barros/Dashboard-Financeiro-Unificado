@@ -352,8 +352,8 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
     subtitle=(
         "Subaba Criação de Portfólio de Empresas B3: setores, subsetores e segmentos "
         "entram no motor; o app testa desempenho e mostra a estratégia escolhida no "
-        "seletor: nota + fatores (padrão) ou a líder de cada segmento, que pode ser "
-        "salva como carteira modelo."
+        "seletor: rota de valor (padrão), nota + fatores ou a líder de cada "
+        "segmento, que pode ser salva como carteira modelo."
     ),
     tela="Empresas B3",
     abas=("Criação de Portfólio",),
@@ -362,7 +362,7 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
         ("Segmentação", ("setor_cp", "subsetor_cp", "segmento_cp")),
         ("Motor", ("variacao_cp", "score_cp", "lideres_cp")),
         ("Simulação", ("backtest_cp", "comparacao_cp", "aprovacao_cp")),
-        ("Portfólio", ("pesos_cp", "salvar_cp", "ampla_cp")),
+        ("Portfólio", ("pesos_cp", "salvar_cp", "rota_valor_cp", "ampla_cp")),
     ),
     default="setores_cp",
     nodes={
@@ -524,13 +524,46 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
             ("b3_portfolio_models", "b3_portfolio_model_items", "Parâmetros e métricas JSON"),
             "Esse registro vira a base da Avaliação de Portfólio e aparece no Dashboard Geral.",
         ),
+        "rota_valor_cp": _node(
+            "rota_valor_cp", "Rota de valor (estratégia padrão)", "Portfólio",
+            "Estratégia padrão da aba desde 26/11/2026, por escolha do usuário depois "
+            "da comparação das 21 estratégias (§29 do guia): o seletor \"Estratégia\", "
+            "logo depois dos testes complementares, abre nela. Compra em pesos iguais "
+            "todo nome com nota de hoje que a rota de valor classifica como "
+            "oportunidade: desconto de 20% ou mais sobre o valor intrínseco (média de "
+            "Graham e Bazin disponíveis) e solvência dentro dos limites (dívida/PL até "
+            "2,5, liquidez corrente de 1 ou mais, FCO positivo). A Selic da ressalva de "
+            "ROIC é a do ano anterior à safra, como na medição. Seis cards mostram a "
+            "medição gravada: excesso líquido sobre pesos iguais com intervalo de 95%, "
+            "o mesmo depois do IR, a tendência da renda, os anos de queda da renda, o "
+            "capital final só pelo preço e a renda total, sempre ao lado de pesos "
+            "iguais; uma tabela abre a renda safra a safra. A lista de hoje sai depois "
+            "de rodar a aba, com a nota da rota, o desconto, a folga de solvência e o "
+            "motivo; de janeiro a março é prévia. Depois vêm o desempenho safra a "
+            "safra e a metodologia. Não chama LLM e não pode ser salva como "
+            "carteira modelo. A tela avisa quando a medição é de outra versão ou "
+            "de outro perfil.",
+            ("core/b3_estrategias_fundamentalistas.py: carteira_rota_valor, a regra da medição",
+             "core/b3_value_route.py: rank_value_opportunities",
+             "data/oos_comparacao_estrategias_b3.json (scripts/comparar_estrategias_b3.py)",
+             "Sem guarda de entrada, piso de qualidade, portão de LLM nem tetos de setor",
+             "Nove safras; vantagem concentrada em 2020; giro de ~63% ao ano"),
+            "Na comparação da §29 (renda medida pelo pregão diário) ela tem o maior "
+            "retorno sobre pesos iguais com intervalo acima de zero (+16,3 pp ao ano), "
+            "a renda em dinheiro crescendo mais (25,0% contra 18,5% ao ano) e capital "
+            "final quase o dobro, mas falha a regra da renda: caiu em 3 anos, contra 2 "
+            "de pesos iguais (a de 2024 foi de cerca de 1%). A regra escolheria a "
+            "nota + fatores; o usuário manteve a rota, fora da regra, e a tela diz "
+            "isso. Com IR o intervalo encosta no zero, e sem 2020 a vantagem cai "
+            "para +5,8 pp: a tela diz as duas coisas.",
+        ),
         "ampla_cp": _node(
-            "ampla_cp", "Nota + fatores (estratégia padrão)", "Portfólio",
-            "Estratégia padrão da aba desde 20/11/2026: o seletor \"Estratégia\", logo "
-            "depois dos testes complementares, abre nela; \"Líder de cada segmento\" "
-            "leva à carteira concentrada, com o portão de LLM e o botão de salvar. A "
-            "rota padrão mostra esta seção, o desempenho safra a safra e a metodologia, "
-            "e não chama LLM. Em vez de escolher o "
+            "ampla_cp", "Nota + fatores", "Portfólio",
+            "Estratégia padrão da aba de 20/11/2026 a 26/11/2026; hoje é a segunda "
+            "opção do seletor \"Estratégia\". \"Líder de cada segmento\", a "
+            "terceira, leva à carteira concentrada, com o portão de LLM e o botão de "
+            "salvar. Esta rota mostra esta seção, o desempenho safra a safra e a "
+            "metodologia, e não chama LLM. Em vez de escolher o "
             "líder de cada segmento, junta todo nome com nota de hoje, tira os 30% de "
             "pior sinal e divide igualmente entre o resto. O sinal é a média do "
             "percentil da nota com o percentil de três fatores: momento 12-1, baixa "
@@ -549,8 +582,11 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
              "Nove safras: efeito pequeno, um ano ruim apaga a vantagem"),
             "Tirar os piores foi a única estratégia com ganho medido fora do zero na B3 "
             "(+2,5 pp ao ano sobre pesos iguais); a líder de cada segmento tem intervalo "
-            "que cruza o zero. Por isso é a padrão. A concentrada segue no seletor, e a "
-            "tela mostra as duas na mesma régua.",
+            "que cruza o zero. Por isso foi a padrão até a comparação da §29. Ali ela "
+            "passa nas três regras e é a escolha da regra; a rota de valor rende "
+            "muito mais (+16,3 pp ao ano contra +1,7), mas teve uma queda de renda a "
+            "mais, e o usuário ficou com a rota. Segue no seletor, na mesma régua da "
+            "líder.",
         ),
     },
 )

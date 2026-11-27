@@ -1,8 +1,10 @@
 """
 views/portfolio_b3_nota_fatores.py — carteira ampla "nota + fatores" na aba B3.
 
-Estratégia padrão da aba desde 20/11/2026 (antes, alternativa medida à
-carteira concentrada): em vez de escolher o líder de cada segmento, tira
+Estratégia padrão da aba de 20/11/2026 a 26/11/2026; desde então é a
+segunda opção do seletor, depois da rota de valor
+(`views/portfolio_b3_rota_valor.py`, escolha do usuário após a §29 do guia).
+Em vez de escolher o líder de cada segmento, tira
 os 30% de pior sinal do universo comprável e divide igualmente entre o resto. A regra mora em `core/b3_nota_fatores.py` (a mesma que a
 medição usa); a evidência vem gravada em `data/oos_nota_fatores_b3.json` por
 `scripts/medir_nota_fatores_b3.py`.
@@ -45,21 +47,25 @@ CHAVE_FILTRO_LIDER = "pb3_filtro_nf"
 CAMINHO_MEDICAO_FILTRO = (Path(__file__).resolve().parents[1] / "data"
                           / "oos_lider_filtro_nota_fatores_b3.json")
 
-#: Estratégia da aba (decisão do usuário de 20/11/2026): a nota + fatores é a
-#: padrão, por ser a única variante da B3 com vantagem medida sobre pesos
-#: iguais cujo IC 95% fica fora do zero; a líder de cada segmento segue como
-#: opção, com o portão, a guarda e o botão de salvar a carteira-modelo.
+#: Estratégia da aba. Decisão do usuário de 26/11/2026: a rota de valor
+#: inteira é a padrão, por passar as três regras da comparação da §29
+#: (retorno sobre pesos iguais com IC acima de zero, renda crescendo sem mais
+#: quedas, capital pelo preço acima de pesos iguais). A nota + fatores (padrão
+#: de 20/11 a 26/11) e a líder de cada segmento seguem como opção; só a líder
+#: tem o portão, a guarda e o botão de salvar a carteira-modelo.
+ESTRATEGIA_ROTA_VALOR = "rota_valor"
 ESTRATEGIA_NOTA_FATORES = "nota_fatores"
 ESTRATEGIA_LIDER = "lider"
 ESTRATEGIAS = {
-    ESTRATEGIA_NOTA_FATORES: "🧺 Nota + fatores (padrão)",
+    ESTRATEGIA_ROTA_VALOR: "💎 Rota de valor (padrão)",
+    ESTRATEGIA_NOTA_FATORES: "🧺 Nota + fatores",
     ESTRATEGIA_LIDER: "🏆 Líder de cada segmento",
 }
 CHAVE_ESTRATEGIA = "pb3_estrategia"
 
 
 def escolher_estrategia() -> str:
-    """Seletor da estratégia; abre na nota + fatores."""
+    """Seletor da estratégia; abre na rota de valor."""
     escolha = st.radio(
         "Estratégia",
         options=list(ESTRATEGIAS),
@@ -67,12 +73,13 @@ def escolher_estrategia() -> str:
         format_func=ESTRATEGIAS.get,
         horizontal=True,
         key=CHAVE_ESTRATEGIA,
-        help="Nota + fatores é a padrão: tira os 30% piores do universo e divide "
-             "igual entre o resto. Líder de cada segmento escolhe uma ou poucas "
+        help="Rota de valor é a padrão: compra em partes iguais quem está "
+             "barato frente ao valor e aguenta as dívidas. Nota + fatores tira "
+             "os 30% piores do universo e divide igual entre o resto. Líder de cada segmento escolhe uma ou poucas "
              "empresas por segmento aprovado e é a que pode ser salva como "
              "carteira-modelo.",
     )
-    return escolha if escolha in ESTRATEGIAS else ESTRATEGIA_NOTA_FATORES
+    return escolha if escolha in ESTRATEGIAS else ESTRATEGIA_ROTA_VALOR
 
 
 def formar_hoje(resultados: list[dict], precos: pd.DataFrame,
@@ -207,7 +214,7 @@ def _render_acumulado(dados: dict) -> None:
 
 
 def render_nota_fatores(perfil_ativo: str | None = None) -> None:
-    """Seção "Carteira padrão: nota + fatores" da aba de Criação de Portfólio B3.
+    """Seção "Carteira nota + fatores" da aba de Criação de Portfólio B3.
 
     Desenhada logo abaixo do seletor de estratégia (``escolher_estrategia``),
     que já traz o divisor.
@@ -218,15 +225,15 @@ def render_nota_fatores(perfil_ativo: str | None = None) -> None:
 
     st.markdown(
         '<div style="font-size:0.75rem;font-weight:700;color:var(--app-text);'
-        'margin:18px 0 8px;">🧺 Carteira padrão: nota + fatores</div>',
+        'margin:18px 0 8px;">🧺 Carteira nota + fatores</div>',
         unsafe_allow_html=True)
     st.caption(
-        "A estratégia padrão desta aba. Em vez de escolher o líder de cada "
+        "Foi a estratégia padrão desta aba até 26/11/2026. Em vez de escolher o líder de cada "
         "segmento, a carteira **tira os 30% piores** do universo e divide "
         "igualmente entre o resto. O sinal junta a nota do motor com três "
         "fatores de mercado: momento, baixa volatilidade e ROE. A carteira é "
-        "refeita uma vez por ano, em abril. A líder de cada segmento continua "
-        "no seletor acima.")
+        "refeita uma vez por ano, em abril. A rota de valor (padrão) e a líder "
+        "de cada segmento continuam no seletor acima.")
 
     dados = oos.carregar(CAMINHO_MEDICAO)
     motivos = oos.vencida(dados, SCORE_VERSION, PRESETS_VERSION,

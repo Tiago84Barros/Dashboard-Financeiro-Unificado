@@ -154,6 +154,39 @@ def nota_medicao_nota_fatores() -> str:
         return f"carteira ampla nota + fatores: medicao nao lida ({type(exc).__name__})"
 
 
+def nota_medicao_rota_valor() -> str:
+    """Nota da carteira "rota de valor", a estrategia padrao da Criacao de
+    Portfolio B3 desde 26/11/2026 (escolha do usuario apos a comparacao da
+    secao 29 do guia).
+
+    A lista de hoje sai dos mesmos multiplos e notas que esta secao ja mede; o
+    que e proprio dela e a comparacao fora da amostra gravada em
+    data/oos_comparacao_estrategias_b3.json. A nota diz de quando e de que
+    versao ela e, e se a tela a mostra como vencida -- a mesma regra da tela
+    (core.b3_comparacao_estrategias.motivos_vencida)."""
+    try:
+        import json
+
+        import core.b3_comparacao_estrategias as ce
+        from core.b3_methodology import SCORE_VERSION
+        from core.b3_portfolio_presets import VERSION as PRESETS_VERSION
+        caminho = (Path(__file__).resolve().parents[1] / "data"
+                   / "oos_comparacao_estrategias_b3.json")
+        dados = json.loads(caminho.read_text(encoding="utf-8")) if caminho.exists() else None
+        if not dados or "rota_valor" not in (dados.get("estrategias") or {}):
+            return ("carteira padrao rota de valor: sem medicao gravada "
+                    "(data/oos_comparacao_estrategias_b3.json)")
+        motivos = ce.motivos_vencida(dados, SCORE_VERSION, PRESETS_VERSION)
+        base = (f"carteira padrao rota de valor: comparacao {dados.get('versao_regua')} "
+                f"de {str(dados.get('medido_em') or '')[:10]}, "
+                f"{len(dados.get('safras') or [])} safras, perfil "
+                f"{dados.get('perfil')} (data/oos_comparacao_estrategias_b3.json); "
+                "a lista de hoje usa os mesmos multiplos e notas medidos acima")
+        return base + ("; VENCIDA: " + "; ".join(motivos) if motivos else "")
+    except Exception as exc:  # noqa: BLE001
+        return f"carteira padrao rota de valor: medicao nao lida ({type(exc).__name__})"
+
+
 def nota_medicao_filtro_lider() -> str:
     """Nota do filtro nota + fatores na rota "Lider de cada segmento".
 
@@ -634,6 +667,7 @@ def confianca_b3(engine=None) -> ConfiancaSecao:
     notas.append(NOTA_COTACAO_ACAO)
     notas.append(nota_selic_mensal(engine))
     notas.append(NOTA_DETALHE_DO_CHAT)
+    notas.append(nota_medicao_rota_valor())
     notas.append(nota_medicao_nota_fatores())
     notas.append(nota_medicao_filtro_lider())
     notas.append(nota_medicao_acumulado_safras())
