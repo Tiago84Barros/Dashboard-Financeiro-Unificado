@@ -2369,3 +2369,79 @@ Passar não muda a tela; só abre a próxima etapa.
 - A rota troca muitos nomes por ano; com poucos que continuam, o 2º passo
   tem pouco onde escolher.
 
+
+### Como rodar
+
+```bash
+python scripts/medir_estrategias_fundamentalistas_b3.py --cache-dir <pasta> --aporte-na-queda
+```
+
+Pede o armazém local de pé (`dfu_warehouse`). Grava
+`data/oos_aporte_na_queda_b3.json`, com a regra, os oito braços, as
+diferenças pareadas, a renda de cada braço e o diagnóstico por safra (quantos
+continuam, quantos entraram, quantas caídas, a fração do dinheiro que foi a
+elas).
+
+### Resultado (27/11/2026): concentrar nas caídas atrapalha
+
+Leitura principal, líquida, `rota_valor_queda` − `rota_valor_aporte_em_todas`:
+
+| Safra | 2017 | 2018 | 2019 | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 |
+|---|---|---|---|---|---|---|---|---|---|
+| Diferença (p.p.) | 0,0 | 0,0 | 0,0 | −9,5 | +0,5 | +0,1 | −0,1 | −2,3 | −2,9 |
+
+Média **−1,6 p.p. ao ano, IC 95% [−3,8; −0,02]**, sem a melhor safra −1,8.
+Pela regra: **atrapalha**.
+
+Os braços, contra pesos iguais no universo (líquido):
+
+| Braço | Excesso médio (p.p.) | IC 95% | Renda (cresc./ano) | Quedas de renda | Capital final (base 100) |
+|---|---|---|---|---|---|
+| Queda, terço negativo (sob a regra) | +16,4 | [1,1; 41,2] | 27,0% | 3 | 366 |
+| **Aportar em todas (controle)** | **+18,0** | [1,6; 44,9] | 27,5% | 2 | 389 |
+| Terço, sem exigir negativo | +16,2 | [1,1; 41,0] | 27,2% | 3 | 362 |
+| Limiar −20% | +18,2 | [1,3; 46,0] | 27,1% | 2 | 387 |
+| Queda, aporte 20% | +15,8 | [1,3; 39,4] | 26,6% | 3 | 360 |
+| Aportar em todas, aporte 20% | +17,6 | [1,8; 43,6] | 27,3% | 3 | 385 |
+| Equilíbrio da §26 | +16,0 | [1,2; 39,5] | 25,0% | 2 | 363 |
+| Rota na régua da §19 | +16,3 | [2,8; 38,5] | 25,0% | 2 | 371 |
+| Pesos iguais no universo | — | — | 18,1% | 3 | 185 |
+
+Informativos (diferença pareada líquida):
+
+| Comparação | Média (p.p.) | IC 95% |
+|---|---|---|
+| Terço sem exigir negativo − todas | −1,7 | [−4,1; 0,0] |
+| Limiar −20% − todas | +0,3 | [−0,4; 1,3] |
+| Aporte 20%: queda − todas | −1,8 | [−4,4; −0,02] |
+| Queda − todas, com IR | −1,6 | [−3,8; −0,01] |
+| Queda − equilíbrio da §26 | +0,4 | [−0,9; 2,1] |
+| Aportar em todas − régua da §19 | +1,7 | [−1,7; 6,5] |
+
+O 2º passo só agiu em **3 das 9 safras**: 2020 (2 caídas, 30% do dinheiro),
+2023 (10 caídas, 27%) e 2024 (5 caídas, 56%). Nas outras, os nomes que
+entraram na lista levaram todo o dinheiro. A diferença de 2025 vem dos pesos
+herdados de 2024.
+
+O braço passa, formalmente, nos testes da §19 e em R2 e R3 da §29: isso mede
+a rota, não a concentração. A pergunta da §30 é a diferença contra o
+controle, e ela é negativa.
+
+### Leitura
+
+- **Concentrar o aporte nas que caíram não rendeu mais.** Perdeu 1,6 p.p.
+  ao ano para aportar em todas, com a mesma carteira. O IC fica abaixo de
+  zero por pouco (−0,02).
+- **A perda vem quase toda de 2020.** As duas caídas de abril de 2020
+  ficaram para trás na recuperação (−9,5 p.p.). Sem 2020, a média é −0,6
+  p.p.: atrapalha pouco, mas em nenhuma safra ajuda de forma que se veja.
+- **A regra quase não age.** A rota troca muitos nomes por ano; quem entra
+  absorve o aporte. A ideia só muda a carteira em um terço das safras.
+- **O limiar de −20% ficou levemente à frente (+0,3), com IC que cruza o
+  zero.** É informativo, num período com muitos braços medidos: não sustenta
+  troca de regra.
+- **Bate com o limite declarado antes:** comprar quem caiu em 12 meses vai
+  contra o momento, e o momento costuma vencer nesse prazo.
+- **Nada muda na tela.** A rota de valor inteira segue o padrão, com o
+  aporte espalhado. Aportar em todas também não se separa da régua da §19
+  (+1,7, IC cruza o zero).
