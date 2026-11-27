@@ -2284,3 +2284,88 @@ iguais. A regra escolhe a de 20 nomes, mas a diferença para a rota inteira
 está numa safra só; a rota inteira tem o IC mais longe do zero. A metade rota,
 metade dividendo rende menos, mas é a única que aguenta o IR com IC acima de
 zero. A nota + fatores, o padrão até esta decisão, passa nas três por pouco.
+
+## 30. Aporte na queda sobre a rota de valor (27/11/2026, regra registrada antes de medir)
+
+### Que pergunta responde
+
+A rota de valor inteira virou o padrão (§29). Ela tem muitos nomes, e o
+usuário quer manter isso: carteira com poucos nomes é insegura. A ideia do
+usuário (27/11/2026) muda só onde vai o aporte:
+
+- manter na carteira todos os nomes que passam na avaliação;
+- não espalhar o aporte por todos;
+- concentrar o aporte nos que caíram de forma substancial, sem perder
+  qualidade.
+
+Pergunta: **concentrar o aporte nos que caíram rende mais que aportar em
+todos, com a mesma carteira?**
+
+### O que se mede
+
+| Parte | Regra |
+|---|---|
+| Lista | a rota de valor inteira de cada abril, sem mudança |
+| Saída | quem sai da lista é vendido, como na rota. "Sem perder qualidade" = seguir na lista deste abril. Ninguém é vendido por ter subido |
+| Dinheiro de abril | o que sobra das vendas + aporte de 10% do patrimônio de abril (nenhum na primeira safra) |
+| 1º passo | quem entrou na lista recebe primeiro, até o alvo 1/N de (patrimônio + aporte), em partes iguais |
+| 2º passo (sob a regra) | a sobra vai às "caídas": entre os que continuam, o terço de pior retorno total no último ano (a safra anterior, abril/N-1 a março/N; arredondado para cima), só os de retorno negativo. Dentro delas, de baixo para cima (`encher_por_baixo`) |
+| Sem caídas | a sobra vai em partes iguais a todos os que continuam, e a safra é contada |
+| Controle | a mesma cadeia, com a sobra do 2º passo em partes iguais entre todos os que continuam ("aportar em todas") |
+| Retorno da safra | valor em março de N+1 sobre (patrimônio de abril + aporte), líquido de custo. O aporte não conta como ganho |
+
+O retorno do último ano é o da safra anterior na própria régua: só usa o que
+se sabia em abril de N. A cadeia é `simular_aportes` com o comprador
+`comprar_na_queda`, em `core/b3_estrategias_fundamentalistas.py`.
+
+### Regra de decisão (registrada antes de medir)
+
+`REGRA_DE_DECISAO_APORTE_NA_QUEDA`, versão `fundamentalistas-1.9.0`, commit de
+27/11/2026 anterior à medição. Um braço sob a regra (`rota_valor_queda`).
+Candidato só se, **líquido**, passar:
+
+- nos três testes da §19: (a) excesso sobre pesos iguais > 0 com IC 95% acima
+  de zero; (b) média sem a melhor safra > 0; (c) diferença pareada contra a
+  carteira padrão com média > 0;
+- nas regras R2 e R3 da §29 contra pesos iguais, com a renda pesada pelas
+  frações reais depois da compra.
+
+Leitura principal, a diferença pareada líquida contra o controle:
+
+| Diferença contra "aportar em todas" | Leitura |
+|---|---|
+| média > 0, IC 95% acima de zero | concentrar ajuda |
+| média > 0, IC cruza o zero | não se separa do ruído |
+| média ≤ 0 | atrapalha |
+
+Só informativos:
+
+- o terço de pior retorno sem exigir retorno negativo;
+- o limiar de −20% no último ano;
+- aporte de 20%;
+- o equilíbrio da §26 (`encher_por_baixo` em todos os nomes);
+- a rota na régua da §19 (volta a 1/N todo abril, vendendo o excesso);
+- a fração do dinheiro que foi às caídas e o peso maior e menor;
+- o excesso com IR.
+
+Passar não muda a tela; só abre a próxima etapa.
+
+### Limites declarados antes
+
+- **O equilíbrio de hoje já compra quem ficou para trás.** A rota na régua da
+  §19 volta a 1/N todo abril, e o `encher_por_baixo` da §26 aporta primeiro
+  nos menores. Concentrar nas caídas é uma versão mais forte do que já
+  existe; a diferença tende a ser pequena.
+- **Vai contra o momento.** Comprar quem caiu em 12 meses é apostar na
+  reversão; na literatura, perdedores de 3 a 12 meses costumam seguir
+  perdendo, e a reversão aparece em 3 a 5 anos.
+- **O aporte de 10% mexe pouco.** Na §26, 5%, 10% e 20% deram resultados
+  parecidos.
+- **Nove safras.** Diferenças pequenas não se separam do ruído.
+- **Muitos braços no mesmo período** (§19 a §30): um falso positivo fica mais
+  provável do que o IC sugere.
+- O retorno do último ano é o total (com proventos), winsorizado como na
+  régua, não só o preço.
+- A rota troca muitos nomes por ano; com poucos que continuam, o 2º passo
+  tem pouco onde escolher.
+
