@@ -39,11 +39,12 @@ PADRAO_ATUAL = NOTA_FATORES
 
 
 def pontas_de_preco(tickers, safras):
-    """{(ticker, safra): {"fator", "caixa"} | None} de `market.historical_prices`.
+    """{(ticker, safra): {"fator", "caixa", "preco"} | None} de `market.historical_prices`.
 
-    A série diária vai da ponta inicial (último pregão até a véspera da
+    A série (diária desde 2025, mensal antes) vai da ponta inicial (último pregão até a véspera da
     vigência) à final (último pregão até o fim dela), as duas com a
-    tolerância da régua; `ce.rendimentos_do_ano` tira dela o fator e o caixa.
+    tolerância da régua; `ce.rendimentos_do_ano` tira dela o fator, o caixa e
+    a valorização só pelo preço.
     """
     import pandas as pd
     from sqlalchemy import text
@@ -85,7 +86,7 @@ def pontas_de_preco(tickers, safras):
                 saida[(tk, s)] = None
                 continue
             h = g[(g["date"] >= d0) & (g["date"] <= d1)]
-            saida[(tk, s)] = ce.rendimentos_do_ano(zip(h["c"], h["a"]))
+            saida[(tk, s)] = ce.rendimentos_do_ano(zip(h["date"], h["c"], h["a"]))
     return saida
 
 
@@ -242,7 +243,8 @@ def main() -> int:
         liq = 0.5 * (float(t["liquido"]) + float(a_r[s]["liquido"]))
         ir = 0.5 * (float(t["liquido_com_ir"]) + float(a_r[s]["liquido_com_ir"]))
         ew = float(t["equal_weight"])
-        linhas.append({"safra": s, "liquido": liq, "liquido_com_ir": ir,
+        bru = 0.5 * (float(t["bruto"]) + float(a_r[s]["bruto"]))
+        linhas.append({"safra": s, "liquido": liq, "bruto": bru, "liquido_com_ir": ir,
                        "equal_weight": ew, "excesso_ew": liq - ew,
                        "excesso_ew_com_ir": ir - ew})
     meio = {}
@@ -269,21 +271,15 @@ def main() -> int:
         todos |= {str(t).upper() for t in por_ano[s]["universo"]}
     rend = pontas_de_preco(todos, safras)
 
-    def y_de(s, campo):
-        return {tk: (None if v is None else v[campo])
-                for (tk, ss), v in rend.items() if ss == s}
-
-    # Fator e caixa têm o mesmo None por ticker: a renormalização é a mesma.
-    y_por_safra = {s: y_de(s, "fator") for s in safras}
-    caixa_por_safra = {s: y_de(s, "caixa") for s in safras}
+    rend_por_safra = {s: {tk: v for (tk, ss), v in rend.items() if ss == s}
+                      for s in safras}
     ew_linhas, ew_cob = [], {}
     for s in safras:
-        uni = [str(t).upper() for t in por_ano[s]["universo"]]
-        y, cob = ce.rendimento_medio(uni, y_por_safra[s])
-        yc, _ = ce.rendimento_medio(uni, caixa_por_safra[s])
-        ew_cob[str(s)] = cob
-        ew_linhas.append({"safra": s, "retorno": base_ew[s], "rendimento": y,
-                          "renda_caixa": yc})
+        uni = list(dict.fromkeys(str(t).upper() for t in por_ano[s]["universo"]))
+        lin = ce.linha_de_renda(s, {t: 1.0 for t in uni}, rend_por_safra[s],
+                                liquido=base_ew[s])
+        ew_cob[str(s)] = lin.pop("cobertura")
+        ew_linhas.append(lin)
     renda_ew = ce.trajetoria_de_renda(ew_linhas)
 
     def pareada(a, b):
@@ -298,12 +294,11 @@ def main() -> int:
             if s not in base_ew or t.get("liquido") is None:
                 continue
             ps = pesos[rotulo].get(s, {})
-            y, c = ce.rendimento_da_carteira(ps, y_por_safra.get(s, {}))
-            yc, _ = ce.rendimento_da_carteira(ps, caixa_por_safra.get(s, {}))
-            cob[str(s)] = c
+            linha = ce.linha_de_renda(s, ps, rend_por_safra.get(s, {}),
+                                      liquido=t["liquido"], bruto=t.get("bruto"))
+            cob[str(s)] = linha.pop("cobertura")
             nomes[str(s)] = len(ps)
-            lin.append({"safra": s, "retorno": float(t["liquido"]), "rendimento": y,
-                        "renda_caixa": yc})
+            lin.append(linha)
         renda = ce.trajetoria_de_renda(lin)
         vs = m["vs_equal_weight"]
         tabela[rotulo] = {
@@ -359,9 +354,12 @@ def main() -> int:
                             f"datas ex (r_i > 1 + {ce.LIMIAR_DATA_EX}) da série diária; "
                             f"razão diária fora de [{ce.RAZAO_DIA_MIN}, {ce.RAZAO_DIA_MAX}) "
                             "tira o ticker-ano"),
-            "trajetoria": ("renda = capital x renda_caixa; capital x (1 + retorno) / "
-                           "(1 + fator); safra sem rendimento deixa a trajetória "
-                           "insuficiente (R2 e R3 reprovam)"),
+            "valorizacao": ("valorização só pelo preço, P_fim/P_0 - 1 da série "
+                            "diária de cada papel (sem saltos de desdobramento), "
+                            "ponderada papel a papel depois"),
+            "trajetoria": ("renda = capital x renda_caixa; capital x (1 + valorização) "
+                           "x (1 + líquido) / (1 + bruto); safra sem rendimento deixa "
+                           "a trajetória insuficiente (R2 e R3 reprovam)"),
         },
         "fonte": {**fonte,
                   "fundamentos": f"aba de Criação de Portfólio B3 sobre {_fonte_efetiva_b3()}"},

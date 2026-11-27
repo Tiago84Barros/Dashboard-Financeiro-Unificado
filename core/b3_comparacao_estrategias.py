@@ -38,10 +38,21 @@ e o ticker-ano sai. A régua 1.0.0 usava o fator como caixa e subtraía o fator
 do retorno (``1 + retorno - y``), o que não isola o preço; corrigido pelos
 achados da revisão do PR #810.
 
+**Valorização da carteira** (régua 1.2.0, 27/11/2026): a valorização só pelo
+preço sai **papel a papel**, da mesma série diária (``preco`` de
+`rendimentos_do_ano`), e só depois é ponderada (`linha_de_renda`). Dividir o
+retorno total da carteira pelo fator médio (régua 1.1.0) não isola o preço
+quando os papéis têm valorização e proventos diferentes: com pesos iguais, A
++100% sem provento e B 0% com fator de 20% dão 145,45 em vez de 150. O custo
+de transação entra como ``(1 + líquido) / (1 + bruto)`` da própria régua.
+Na mesma versão, o salto de desdobramento (``SALTO_DE_PRECO``) passou a
+valer só entre pregões a até ``PASSO_DIARIO_DIAS``: a série é mensal até 2024,
+e a regra tirava do índice quedas reais de um mês (março de 2020).
+
 **Trajetória de renda** (`trajetoria_de_renda`): o investidor que gasta os
 dividendos. Começa com ``CAPITAL_INICIAL`` na primeira safra medida; em cada
 safra recebe ``renda = capital × caixa`` e o capital cresce só pela
-valorização, ``capital × (1 + retorno líquido) / (1 + fator)``. Safra sem
+valorização, ``capital × (1 + valorização) × fator_custo``. Safra sem
 rendimento deixa a trajetória ``insuficiente`` (métricas None, R2 e R3
 reprovam) em vez de virar renda zero. Mede:
 
@@ -80,7 +91,7 @@ from __future__ import annotations
 
 import math
 
-VERSAO = "1.1.0"
+VERSAO = "1.2.0"
 
 CAPITAL_INICIAL = 100_000.0
 TOLERANCIA_PONTA_DIAS = 45
@@ -95,8 +106,11 @@ RAZAO_DIA_MAX = 2.0
 # Salto do fechamento acompanhado pelo ajustado (razão ~1) de SALTO_DE_PRECO
 # vezes ou mais, para cima ou para baixo, é desdobramento/grupamento (3:2 já
 # conta) ou degrau da série: não entra no índice de preço que pesa o caixa
-# recebido dentro do ano.
+# recebido dentro do ano. Só vale entre pregões a até PASSO_DIARIO_DIAS
+# corridos: `market.historical_prices` é mensal até 2024 e, num passo de um
+# mês, queda ou alta de 45% é mercado (março de 2020), não desdobramento.
 SALTO_DE_PRECO = 1.45
+PASSO_DIARIO_DIAS = 7
 
 
 def rendimento_por_razao(c0, a0, c1, a1) -> float | None:
@@ -121,8 +135,10 @@ def rendimento_por_razao(c0, a0, c1, a1) -> float | None:
 def rendimentos_do_ano(serie) -> dict | None:
     """Fator e caixa dos proventos de um papel na safra, da série diária.
 
-    ``serie``: [(fechamento, ajustado), ...] em ordem de data, da véspera da
-    vigência ao fim dela. Devolve ``{"fator", "caixa"}`` ou None (dado ruim):
+    ``serie``: [(data, fechamento, ajustado), ...] em ordem de data, da
+    véspera da vigência ao fim dela (sem a data, [(fechamento, ajustado)],
+    todo passo conta como diário). Devolve ``{"fator", "caixa", "preco"}`` ou None
+    (dado ruim):
 
     - ``fator`` = ``rendimento_por_razao`` nas pontas: o provento
       **reinvestido**, ``Π r_i - 1``, que separa o retorno total do preço:
@@ -131,14 +147,26 @@ def rendimentos_do_ano(serie) -> dict | None:
       capital do início: ``Σ (1 - 1/r_i) × P_{i-1}/P_0`` nas datas ex, com
       ``r_i`` a razão diária ajustado/bruto (o provento por ação é
       ``P_{i-1} × (1 - 1/r_i)``, a convenção do ajuste retroativo) e ``P``
-      o fechamento sem os saltos de desdobramento (``SALTO_DE_PRECO``).
+      o fechamento sem os saltos de desdobramento (``SALTO_DE_PRECO``, só
+      em passo diário: a até ``PASSO_DIARIO_DIAS`` corridos);
+    - ``preco`` = a valorização só pelo preço, ``P_fim/P_0 - 1``, no mesmo
+      índice sem os saltos de desdobramento.
 
     O caixa vem da própria série que desconta desdobramento, não dos
     pagamentos da brapi (que não descontam; ver o cabeçalho do módulo).
     """
+    datas: list = []
+    pts: list[tuple[float, float]] = []
     try:
-        pts = [(float(c), float(a)) for c, a in serie]
+        for item in serie:
+            if len(item) == 3:
+                datas.append(item[0])
+                item = item[1:]
+            c, a = item
+            pts.append((float(c), float(a)))
     except (TypeError, ValueError):
+        return None
+    if datas and len(datas) != len(pts):
         return None
     if len(pts) < 2 or any(not (math.isfinite(c) and math.isfinite(a) and c > 0 and a > 0)
                            for c, a in pts):
@@ -147,7 +175,7 @@ def rendimentos_do_ano(serie) -> dict | None:
     if fator is None:
         return None
     caixa, indice = 0.0, 1.0
-    for (c0, a0), (c1, a1) in zip(pts, pts[1:]):
+    for i, ((c0, a0), (c1, a1)) in enumerate(zip(pts, pts[1:])):
         cr = c1 / c0
         r = (a1 / a0) / cr
         if not (RAZAO_DIA_MIN <= r < RAZAO_DIA_MAX):
@@ -155,9 +183,20 @@ def rendimentos_do_ano(serie) -> dict | None:
         if r > 1.0 + LIMIAR_DATA_EX:
             caixa += (1.0 - 1.0 / r) * indice
         salto = cr >= SALTO_DE_PRECO or cr <= 1.0 / SALTO_DE_PRECO
+        if salto and datas:
+            salto = _dias(datas[i], datas[i + 1]) <= PASSO_DIARIO_DIAS
         if not (abs(r - 1.0) <= LIMIAR_DATA_EX and salto):
             indice *= cr
-    return {"fator": fator, "caixa": caixa}
+    return {"fator": fator, "caixa": caixa, "preco": indice - 1.0}
+
+
+def _dias(d0, d1) -> float:
+    """Dias corridos entre duas datas (date, datetime ou Timestamp)."""
+    delta = d1 - d0
+    try:
+        return delta.total_seconds() / 86400.0
+    except AttributeError:
+        return float(delta.days)
 
 
 def rendimento_da_carteira(pesos: dict[str, float],
@@ -181,6 +220,33 @@ def rendimento_medio(tickers, rendimento: dict[str, float | None]) -> tuple[floa
     return rendimento_da_carteira({t: 1.0 for t in lista}, rendimento)
 
 
+def linha_de_renda(safra: int, pesos: dict[str, float],
+                   rendimentos: dict[str, dict | None], *, liquido,
+                   bruto=None) -> dict:
+    """Uma safra da trajetória a partir dos papéis (régua 1.2.0).
+
+    ``pesos``: {ticker: peso} no início da safra; ``rendimentos``: {ticker:
+    `rendimentos_do_ano` | None}. Fator, caixa e valorização são ponderados
+    papel a papel, renormalizados sobre os mesmos papéis com dado (os três
+    têm o mesmo None). ``fator_custo`` = ``(1 + liquido) / (1 + bruto)``, o
+    custo de transação da própria régua (1 sem ``bruto``: pesos iguais, que
+    é bruto de custo). Devolve a linha de `trajetoria_de_renda` + ``cobertura``.
+    """
+    com = {t: {"fator": v["fator"], "caixa": v["caixa"], "preco": v["preco"]}
+           for t, v in ((str(t).upper(), (rendimentos or {}).get(str(t).upper()))
+                        for t in pesos) if v is not None}
+    pes = {str(t).upper(): w for t, w in pesos.items()}
+    y, cob = rendimento_da_carteira(pes, {t: v["fator"] for t, v in com.items()})
+    yc, _ = rendimento_da_carteira(pes, {t: v["caixa"] for t, v in com.items()})
+    vp, _ = rendimento_da_carteira(pes, {t: v["preco"] for t, v in com.items()})
+    liq = None if liquido is None else float(liquido)
+    custo = 1.0
+    if liq is not None and bruto is not None and 1.0 + float(bruto) > 0:
+        custo = (1.0 + liq) / (1.0 + float(bruto))
+    return {"safra": int(safra), "retorno": liq, "rendimento": y, "renda_caixa": yc,
+            "valorizacao": vp, "fator_custo": custo, "cobertura": cob}
+
+
 def _tendencia_log(rendas: list[float]) -> float | None:
     """``exp(b) - 1`` da reta de log(renda) contra o índice do ano."""
     if len(rendas) < 2 or any(r is None or r <= 0 for r in rendas):
@@ -197,12 +263,14 @@ def _tendencia_log(rendas: list[float]) -> float | None:
 def trajetoria_de_renda(linhas: list[dict], capital: float = CAPITAL_INICIAL) -> dict:
     """Investidor que gasta os dividendos.
 
-    ``linhas``: [{"safra", "retorno", "rendimento", "renda_caixa"}] em ordem
-    de safra; ``retorno`` é o total líquido da safra, ``rendimento`` o fator
-    dos proventos reinvestidos e ``renda_caixa`` o provento recebido em
-    fração do capital do início (`rendimentos_do_ano`). O capital cresce só
-    pelo preço, ``capital × (1 + retorno) / (1 + rendimento)``, e a renda do
-    ano é ``capital × renda_caixa``.
+    ``linhas``: [{"safra", "valorizacao", "renda_caixa", "fator_custo",
+    "retorno", "rendimento"}] em ordem de safra (`linha_de_renda`):
+    ``valorizacao`` é a valorização só pelo preço, ponderada papel a papel;
+    ``renda_caixa`` o provento recebido em fração do capital do início;
+    ``fator_custo`` o custo de transação (1 sem custo); ``retorno`` e
+    ``rendimento`` (o fator reinvestido) só informam. O capital cresce só pelo
+    preço, ``capital × (1 + valorizacao) × fator_custo``, e a renda do ano é
+    ``capital × renda_caixa``.
 
     Ano sem rendimento (None) não vira zero: a separação entre preço e
     provento é desconhecida, a trajetória sai ``insuficiente`` e as métricas
@@ -212,19 +280,20 @@ def trajetoria_de_renda(linhas: list[dict], capital: float = CAPITAL_INICIAL) ->
     anos, faltam = [], []
     for t in sorted(linhas, key=lambda r: int(r["safra"])):
         s = int(t["safra"])
-        y, yc = t.get("rendimento"), t.get("renda_caixa")
-        ret = float(t["retorno"])
-        if y is None or yc is None or v is None:
-            if y is None or yc is None:
+        y, yc, vp = t.get("rendimento"), t.get("renda_caixa"), t.get("valorizacao")
+        custo = float(t.get("fator_custo", 1.0))
+        ret = None if t.get("retorno") is None else float(t["retorno"])
+        info = {"rendimento": y, "renda_caixa": yc, "valorizacao": vp,
+                "fator_custo": custo, "retorno": ret}
+        if yc is None or vp is None or v is None:
+            if yc is None or vp is None:
                 faltam.append(s)
-            anos.append({"safra": s, "capital_inicio": v, "renda": None,
-                         "rendimento": y, "renda_caixa": yc, "retorno": ret})
+            anos.append({"safra": s, "capital_inicio": v, "renda": None, **info})
             v = None
             continue
-        y, yc = float(y), float(yc)
-        anos.append({"safra": s, "capital_inicio": v, "renda": v * yc,
-                     "rendimento": y, "renda_caixa": yc, "retorno": ret})
-        v = v * (1.0 + ret) / (1.0 + y)
+        yc, vp = float(yc), float(vp)
+        anos.append({"safra": s, "capital_inicio": v, "renda": v * yc, **info})
+        v = v * (1.0 + vp) * custo
     if faltam:
         return {"anos": anos, "insuficiente": True, "safras_sem_rendimento": faltam,
                 "capital_final": None, "renda_total": None,

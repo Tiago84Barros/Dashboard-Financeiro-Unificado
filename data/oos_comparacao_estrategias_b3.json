@@ -1,8 +1,8 @@
 {
-  "versao_regua": "1.1.0",
+  "versao_regua": "1.2.0",
   "versao_metodologia": "2.33.0",
   "versao_presets": "b3-presets-1.0.0",
-  "medido_em": "2026-11-27T03:23:35",
+  "medido_em": "2026-11-27T07:44:51",
   "perfil": "Equilibrado (padrão)",
   "safras": [
     2017,
@@ -24,7 +24,8 @@
     "capital_inicial": 100000.0,
     "rendimento": "fator dos proventos reinvestidos, (a1/a0)/(c1/c0) - 1 em market.historical_prices, véspera e fim da vigência, tolerância 45 dias, válido em [-0.05, 1.0); separa o preço: 1 + retorno = (1 + valorização) x (1 + fator)",
     "renda_caixa": "provento recebido por quem não reinveste, em fração do capital do início: soma de (1 - 1/r_i) x P_(i-1)/P_0 nas datas ex (r_i > 1 + 0.0005) da série diária; razão diária fora de [0.95, 2.0) tira o ticker-ano",
-    "trajetoria": "renda = capital x renda_caixa; capital x (1 + retorno) / (1 + fator); safra sem rendimento deixa a trajetória insuficiente (R2 e R3 reprovam)"
+    "valorizacao": "valorização só pelo preço, P_fim/P_0 - 1 da série diária de cada papel (sem saltos de desdobramento), ponderada papel a papel depois",
+    "trajetoria": "renda = capital x renda_caixa; capital x (1 + valorização) x (1 + líquido) / (1 + bruto); safra sem rendimento deixa a trajetória insuficiente (R2 e R3 reprovam)"
   },
   "fonte": {
     "precos": "mensal ajustado de market.historical_prices: os da aba, conferidos ponto a ponto contra uma releitura do armazém",
@@ -40,7 +41,7 @@
       "pontos_que_a_aba_tem_e_o_longo_nao": 0,
       "maior_diferenca_relativa": 0.0
     },
-    "fundamentos": "aba de Criação de Portfólio B3 sobre banco publicado (nuvem)"
+    "fundamentos": "aba de Criação de Portfólio B3 sobre armazem local"
   },
   "pesos_iguais": {
     "renda": {
@@ -48,83 +49,101 @@
         {
           "safra": 2017,
           "capital_inicio": 100000.0,
-          "renda": 3898.08467904909,
+          "renda": 3905.2462600323674,
           "rendimento": 0.040984447126867836,
-          "renda_caixa": 0.0389808467904909,
+          "renda_caixa": 0.039052462600323676,
+          "valorizacao": 0.28061016426488583,
+          "fator_custo": 1.0,
           "retorno": 0.25369392765126486
         },
         {
           "safra": 2018,
-          "capital_inicio": 120433.49265317827,
-          "renda": 4585.2192513866,
+          "capital_inicio": 128061.0164264886,
+          "renda": 4890.465733658592,
           "rendimento": 0.04033324424753253,
-          "renda_caixa": 0.03807262539990444,
+          "renda_caixa": 0.03818855940805285,
+          "valorizacao": 0.13465458953301,
+          "fator_custo": 1.0,
           "retorno": 0.15782033945560164
         },
         {
           "safra": 2019,
-          "capital_inicio": 134034.3088299394,
-          "renda": 4845.332281464863,
+          "capital_inicio": 145305.02002857748,
+          "renda": 5337.657075237098,
           "rendimento": 0.03447139698040247,
-          "renda_caixa": 0.03614994044258133,
+          "renda_caixa": 0.03673415463682761,
+          "valorizacao": -0.12102755311760836,
+          "fator_custo": 1.0,
           "retorno": -0.07373992027676457
         },
         {
           "safra": 2020,
-          "capital_inicio": 120013.59336262092,
-          "renda": 3946.4120891249286,
+          "capital_inicio": 127719.10899881367,
+          "renda": 4274.525900235344,
           "rendimento": 0.02710097098766588,
-          "renda_caixa": 0.032883042483369776,
+          "renda_caixa": 0.03346817820562034,
+          "valorizacao": 0.6025095177000526,
+          "fator_custo": 1.0,
           "retorno": 0.5408524351647683
         },
         {
           "safra": 2021,
-          "capital_inicio": 180043.87378569558,
-          "renda": 10301.367578185462,
+          "capital_inicio": 204671.08776276934,
+          "renda": 11519.36428900022,
           "rendimento": 0.06534459197302342,
-          "renda_caixa": 0.05721587389553213,
+          "renda_caixa": 0.05628232309173102,
+          "valorizacao": -0.028166870440720058,
+          "fator_custo": 1.0,
           "retorno": 0.03917631051626266
         },
         {
           "safra": 2022,
-          "capital_inicio": 175621.418554507,
-          "renda": 9075.732854351454,
+          "capital_inicio": 198906.14375079417,
+          "renda": 10266.605734903638,
           "rendimento": 0.06235126730256177,
-          "renda_caixa": 0.05167782454470182,
+          "renda_caixa": 0.05161532741676637,
+          "valorizacao": -0.22206806849505012,
+          "fator_custo": 1.0,
           "retorno": -0.1487468884801675
         },
         {
           "safra": 2023,
-          "capital_inicio": 140723.96164561005,
-          "renda": 7764.090916865871,
+          "capital_inicio": 154735.44059625652,
+          "renda": 8566.508904739569,
           "rendimento": 0.053771439979517,
-          "renda_caixa": 0.05517248680376442,
+          "renda_caixa": 0.05536229367835475,
+          "valorizacao": 0.22295339443784798,
+          "fator_custo": 1.0,
           "retorno": 0.25203074042736257
         },
         {
           "safra": 2024,
-          "capital_inicio": 167200.13392889986,
-          "renda": 8156.0231247136235,
+          "capital_inicio": 189234.2323170279,
+          "renda": 9220.091628408647,
           "rendimento": 0.0550654120552258,
-          "renda_caixa": 0.048780003538644826,
+          "renda_caixa": 0.048723169774917065,
+          "valorizacao": -0.14639479916000034,
+          "fator_custo": 1.0,
           "retorno": -0.07589156652218879
         },
         {
           "safra": 2025,
-          "capital_inicio": 146446.89521319294,
-          "renda": 19802.74329967021,
+          "capital_inicio": 161531.32488277977,
+          "renda": 21894.583433326203,
           "rendimento": 0.062011087473671136,
-          "renda_caixa": 0.135221325592748,
+          "renda_caixa": 0.13554388567799272,
+          "valorizacao": 0.27801021413128874,
+          "fator_custo": 1.0,
           "retorno": 0.3410817301465795
         }
       ],
       "insuficiente": false,
       "safras_sem_rendimento": [],
-      "capital_final": 184929.5717564461,
-      "renda_total": 72375.0060748121,
-      "crescimento_renda_aa": 0.18145652647847266,
+      "capital_final": 206438.68310235214,
+      "renda_total": 79875.04895954167,
+      "crescimento_renda_aa": 0.19363778258804176,
       "quedas_de_renda": 3,
-      "renda_ultimo_sobre_primeiro": 5.080121375018704
+      "renda_ultimo_sobre_primeiro": 5.60645397894696
     },
     "cobertura_do_rendimento": {
       "2017": 0.7114093959731543,
@@ -168,80 +187,98 @@
             "renda": 2747.8488471539354,
             "rendimento": 0.026703561328946135,
             "renda_caixa": 0.027478488471539355,
+            "valorizacao": 0.10579044419633658,
+            "fator_custo": 0.9985000000000002,
             "retorno": 0.12942928714664648
           },
           {
             "safra": 2018,
-            "capital_inicio": 110005.3929573142,
-            "renda": 3484.410798125364,
+            "capital_inicio": 110413.17585300423,
+            "renda": 3497.3272841887747,
             "rendimento": 0.03391395227318041,
             "renda_caixa": 0.031674908879034985,
+            "valorizacao": 0.08304979095718956,
+            "fator_custo": 0.9975959508947164,
             "retorno": 0.08007148616958082
           },
           {
             "safra": 2019,
-            "capital_inicio": 114916.41833137983,
-            "renda": 4363.643565484202,
+            "capital_inicio": 119295.48370162839,
+            "renda": 4529.926858186702,
             "rendimento": 0.036128973889177296,
             "renda_caixa": 0.03797232483265306,
+            "valorizacao": -0.09618796154751752,
+            "fator_custo": 0.9980336946496168,
             "retorno": -0.1105800247996207
           },
           {
             "safra": 2020,
-            "capital_inicio": 98645.01477915855,
-            "renda": 3914.6766706521676,
+            "capital_inicio": 107608.68589445452,
+            "renda": 4270.39534814444,
             "rendimento": 0.0348865921104161,
             "renda_caixa": 0.03968448562166215,
+            "valorizacao": 0.7647574037660011,
+            "fator_custo": 0.9977062980291214,
             "retorno": 0.7031604049930413
           },
           {
             "safra": 2021,
-            "capital_inicio": 162344.6323516488,
-            "renda": 12421.354397831215,
+            "capital_inicio": 189467.64373998478,
+            "renda": 14496.59724331795,
             "rendimento": 0.08374752939709805,
             "renda_caixa": 0.07651225801494793,
+            "valorizacao": 0.11725470467101287,
+            "fator_custo": 0.9979117369515735,
             "retorno": 0.18255895305716918
           },
           {
             "safra": 2022,
-            "capital_inicio": 177146.51545735827,
-            "renda": 10810.796494816077,
+            "capital_inicio": 211241.5652774454,
+            "renda": 12891.529746237573,
             "rendimento": 0.07649181389004407,
             "renda_caixa": 0.06102742956532155,
+            "valorizacao": -0.17979730288120357,
+            "fator_custo": 0.9981172108873491,
             "retorno": -0.11899543865027207
           },
           {
             "safra": 2023,
-            "capital_inicio": 144977.3106784478,
-            "renda": 15082.086824846501,
+            "capital_inicio": 172934.6878450063,
+            "renda": 17990.511514529335,
             "rendimento": 0.10787945579848274,
             "renda_caixa": 0.10403067041502648,
+            "valorizacao": 0.13396750315889017,
+            "fator_custo": 0.9983798545395784,
             "retorno": 0.23467502459316614
           },
           {
             "safra": 2024,
-            "capital_inicio": 161569.8022835462,
-            "renda": 12944.686700699505,
+            "capital_inicio": 195784.60190781835,
+            "renda": 15685.915911874432,
             "rendimento": 0.08609879743667449,
             "renda_caixa": 0.08011823074451924,
+            "valorizacao": 0.04331436028776795,
+            "fator_custo": 0.9987830201006709,
             "retorno": 0.11780745347299715
           },
           {
             "safra": 2025,
-            "capital_inicio": 166286.8329059508,
-            "renda": 26357.31162916816,
+            "capital_inicio": 204016.30043240587,
+            "renda": 32337.6247773523,
             "rendimento": 0.1065367732484165,
             "renda_caixa": 0.15850510331191067,
+            "valorizacao": 0.11133933747021253,
+            "fator_custo": 0.9986317130285516,
             "retorno": 0.17957378354823028
           }
         ],
         "insuficiente": false,
         "safras_sem_rendimento": [],
-        "capital_final": 177262.6029131431,
-        "renda_total": 92126.81592877713,
-        "crescimento_renda_aa": 0.31602790031583705,
+        "capital_final": 226421.10661691971,
+        "renda_total": 108447.67753098544,
+        "crescimento_renda_aa": 0.35497739234329684,
         "quedas_de_renda": 3,
-        "renda_ultimo_sobre_primeiro": 9.59198016166994
+        "renda_ultimo_sobre_primeiro": 11.768341919842412
       },
       "cobertura_do_rendimento": {
         "2017": 1.0,
@@ -269,12 +306,11 @@
         "testes": {
           "r1_retorno": false,
           "r2_dividendo_crescente": true,
-          "r3_valorizacao": false
+          "r3_valorizacao": true
         },
         "candidata": false,
         "falhou": [
-          "r1_retorno",
-          "r3_valorizacao"
+          "r1_retorno"
         ]
       },
       "vs_nota_fatores": {
@@ -374,83 +410,101 @@
           {
             "safra": 2017,
             "capital_inicio": 100000.0,
-            "renda": 4896.935345700459,
+            "renda": 4906.667750626452,
             "rendimento": 0.0518811631606526,
-            "renda_caixa": 0.048969353457004594,
+            "renda_caixa": 0.04906667750626452,
+            "valorizacao": 0.29882513624753604,
+            "fator_custo": 0.9987285714285715,
             "retorno": 0.27133326903721655
           },
           {
             "safra": 2018,
-            "capital_inicio": 120862.82306046461,
-            "renda": 5205.663120858864,
+            "capital_inicio": 129717.37728600214,
+            "renda": 5587.036195029622,
             "rendimento": 0.04686170947630504,
             "renda_caixa": 0.043070838402099895,
+            "valorizacao": 0.10840167436418417,
+            "fator_custo": 0.9992315242633374,
             "retorno": 0.14446744731852945
           },
           {
             "safra": 2019,
-            "capital_inicio": 132131.65151767535,
-            "renda": 5397.576221999446,
+            "capital_inicio": 143668.467537133,
+            "renda": 5978.613749329505,
             "rendimento": 0.03890674223093567,
-            "renda_caixa": 0.04084998681241344,
+            "renda_caixa": 0.04161395922027395,
+            "valorizacao": -0.07512938214293813,
+            "fator_custo": 0.9992701253867184,
             "retorno": -0.04443738427131794
           },
           {
             "safra": 2020,
-            "capital_inicio": 121531.66536743347,
-            "renda": 4806.553703249717,
+            "capital_inicio": 132777.76243500708,
+            "renda": 5359.946312196611,
             "rendimento": 0.032023956349897485,
-            "renda_caixa": 0.039549805301505536,
+            "renda_caixa": 0.04036780115812113,
+            "valorizacao": 0.6130776957085905,
+            "fator_custo": 0.9993046060639507,
             "retorno": 0.5569124730556005
           },
           {
             "safra": 2021,
-            "capital_inicio": 183342.80373780912,
-            "renda": 10790.316583423499,
+            "capital_inicio": 214031.90700773348,
+            "renda": 12742.594100976092,
             "rendimento": 0.06661774990850246,
-            "renda_caixa": 0.05885323210642224,
+            "renda_caixa": 0.05953595554571063,
+            "valorizacao": -0.012632664202326654,
+            "fator_custo": 0.9990847546565513,
             "retorno": 0.05871244080412086
           },
           {
             "safra": 2022,
-            "capital_inicio": 181983.94623170095,
-            "renda": 11519.389731703537,
+            "capital_inicio": 211134.69672582782,
+            "renda": 13346.531895807284,
             "rendimento": 0.07720069018733118,
-            "renda_caixa": 0.06329893361602959,
+            "renda_caixa": 0.06321335196336123,
+            "valorizacao": -0.19154045263015118,
+            "fator_custo": 0.9993975564085996,
             "retorno": -0.11433070835582093
           },
           {
             "safra": 2023,
-            "capital_inicio": 149626.33631585704,
-            "renda": 10300.371202826931,
+            "capital_inicio": 170591.02792617193,
+            "renda": 11763.722471771494,
             "rendimento": 0.06767052016389577,
-            "renda_caixa": 0.06884062964078151,
+            "renda_caixa": 0.06895862352657009,
+            "valorizacao": 0.19416657354622482,
+            "fator_custo": 0.999409304822278,
             "retorno": 0.2424571583621602
           },
           {
             "safra": 2024,
-            "capital_inicio": 174121.42521889886,
-            "renda": 9962.754040028189,
+            "capital_inicio": 203593.77035787396,
+            "renda": 11649.081413200642,
             "rendimento": 0.06474568524755706,
             "renda_caixa": 0.05721727827292587,
+            "valorizacao": -0.11219602462790157,
+            "fator_custo": 0.9993513828706704,
             "retorno": -0.03718754235711197
           },
           {
             "safra": 2025,
-            "capital_inicio": 157451.94337586072,
-            "renda": 24730.94146573146,
+            "capital_inicio": 180634.1202573221,
+            "renda": 28452.835904072104,
             "rendimento": 0.07506608747999191,
-            "renda_caixa": 0.15706977592963142,
+            "renda_caixa": 0.15751639758612412,
+            "valorizacao": 0.3042329831218717,
+            "fator_custo": 0.9994722992450515,
             "retorno": 0.36511481822508873
           }
         ],
         "insuficiente": false,
         "safras_sem_rendimento": [],
-        "capital_final": 199931.87727142897,
-        "renda_total": 87610.5014155221,
-        "crescimento_renda_aa": 0.1930664972359426,
+        "capital_final": 235464.65703550895,
+        "renda_total": 99787.0297930098,
+        "crescimento_renda_aa": 0.21128511182876308,
         "quedas_de_renda": 3,
-        "renda_ultimo_sobre_primeiro": 5.050289562725264
+        "renda_ultimo_sobre_primeiro": 5.7988103841837315
       },
       "cobertura_do_rendimento": {
         "2017": 0.7428571428571429,
@@ -578,83 +632,101 @@
           {
             "safra": 2017,
             "capital_inicio": 100000.0,
-            "renda": 4897.345157192331,
+            "renda": 4907.466858315363,
             "rendimento": 0.05213304570493203,
-            "renda_caixa": 0.04897345157192331,
+            "renda_caixa": 0.04907466858315363,
+            "valorizacao": 0.30212558174008974,
+            "fator_custo": 0.9987095238095239,
             "retorno": 0.28015265571170134
           },
           {
             "safra": 2018,
-            "capital_inicio": 121672.12701260566,
-            "renda": 5437.861164436917,
+            "capital_inicio": 130044.52196798443,
+            "renda": 5821.847925022894,
             "rendimento": 0.04900286706456826,
-            "renda_caixa": 0.04469274350627186,
+            "renda_caixa": 0.044768113542346444,
+            "valorizacao": 0.12728283862076456,
+            "fator_custo": 0.9992408907716716,
             "retorno": 0.15445857064326218
           },
           {
             "safra": 2019,
-            "capital_inicio": 133903.7616085488,
-            "renda": 5566.483238597206,
+            "capital_inicio": 146485.67476758498,
+            "renda": 6210.760059825339,
             "rendimento": 0.039657363352591124,
-            "renda_caixa": 0.041570775695384386,
+            "renda_caixa": 0.04239841247056661,
+            "valorizacao": -0.07816554295433958,
+            "fator_custo": 0.9993388418012065,
             "retorno": -0.04829421784888943
           },
           {
             "safra": 2020,
-            "capital_inicio": 122575.94537078329,
-            "renda": 4774.065677737072,
+            "capital_inicio": 134946.26260831507,
+            "renda": 5369.733889852149,
             "rendimento": 0.0314580524192613,
-            "renda_caixa": 0.03894781854054539,
+            "renda_caixa": 0.03979164584526462,
+            "valorizacao": 0.6280179868449997,
+            "fator_custo": 0.9993161028320263,
             "retorno": 0.5525527068778491
           },
           {
             "safra": 2021,
-            "capital_inicio": 184501.55615845302,
-            "renda": 10800.490277684474,
+            "capital_inicio": 219544.69403465776,
+            "renda": 13006.21216496624,
             "rendimento": 0.06630693498884024,
-            "renda_caixa": 0.05853874895455533,
+            "renda_caixa": 0.059241751307882,
+            "valorizacao": -0.015612877541463423,
+            "fator_custo": 0.9990562335349364,
             "retorno": 0.05406301948156189
           },
           {
             "safra": 2022,
-            "capital_inicio": 182383.00905870157,
-            "renda": 11078.834068293812,
+            "capital_inicio": 215913.0056633658,
+            "renda": 13096.792459877704,
             "rendimento": 0.07437937053277999,
-            "renda_caixa": 0.06074488037823739,
+            "renda_caixa": 0.06065772842001547,
+            "valorizacao": -0.22591822354064822,
+            "fator_custo": 0.9994093628426817,
             "retorno": -0.14480847430640387
           },
           {
             "safra": 2023,
-            "capital_inicio": 145174.42167579403,
-            "renda": 9185.978562273276,
+            "capital_inicio": 167035.60724315833,
+            "renda": 10613.95852715997,
             "rendimento": 0.06244039866862049,
-            "renda_caixa": 0.06327546172553426,
+            "renda_caixa": 0.06354308941870662,
+            "valorizacao": 0.19206803724685576,
+            "fator_custo": 0.9993953795887773,
             "retorno": 0.23690131140931192
           },
           {
             "safra": 2024,
-            "capital_inicio": 169013.1820842833,
-            "renda": 9418.999611807269,
+            "capital_inicio": 198997.4177854455,
+            "renda": 11090.00243505893,
             "rendimento": 0.06347527211992651,
             "renda_caixa": 0.055729378594328895,
+            "valorizacao": -0.14788154183874233,
+            "fator_custo": 0.9992977287174066,
             "retorno": -0.0678229571394342
           },
           {
             "safra": 2025,
-            "capital_inicio": 148146.56476753028,
-            "renda": 22731.766563919402,
+            "capital_inicio": 169450.2891204656,
+            "renda": 26079.792418079272,
             "rendimento": 0.07267517253886682,
-            "renda_caixa": 0.1534410642568041,
+            "renda_caixa": 0.15390822024233092,
+            "valorizacao": 0.3031553500706351,
+            "fator_custo": 0.9994133820094568,
             "retorno": 0.3734038021051851
           }
         ],
         "insuficiente": false,
         "safras_sem_rendimento": [],
-        "capital_final": 189680.02665613656,
-        "renda_total": 83891.82432194176,
-        "crescimento_renda_aa": 0.17413646654589132,
+        "capital_final": 220690.51382385625,
+        "renda_total": 96196.56673815787,
+        "crescimento_renda_aa": 0.19280086966599086,
         "quedas_de_renda": 2,
-        "renda_ultimo_sobre_primeiro": 4.641650901516532
+        "renda_ultimo_sobre_primeiro": 5.314308414307244
       },
       "cobertura_do_rendimento": {
         "2017": 0.7142857142857143,
@@ -831,80 +903,98 @@
             "renda": 3326.7116227129222,
             "rendimento": 0.032198963731178365,
             "renda_caixa": 0.033267116227129225,
+            "valorizacao": 0.04504143424926174,
+            "fator_custo": 1.0,
             "retorno": 0.08688227602256071
           },
           {
             "safra": 2018,
-            "capital_inicio": 105297.74919495307,
-            "renda": 3323.933704565988,
+            "capital_inicio": 104504.14342492618,
+            "renda": 3298.8819538182443,
             "rendimento": 0.033170544863027694,
             "renda_caixa": 0.03156699673049901,
+            "valorizacao": 0.12455758597833279,
+            "fator_custo": 0.9989700000000006,
             "retorno": 0.12215729954054377
           },
           {
             "safra": 2019,
-            "capital_inicio": 114367.02146785564,
-            "renda": 4223.845508422025,
+            "capital_inicio": 117399.8806995962,
+            "renda": 4335.85619716121,
             "rendimento": 0.03611816421600525,
             "renda_caixa": 0.036932373110802684,
+            "valorizacao": -0.08245958865316154,
+            "fator_custo": 0.9979819501275071,
             "retorno": -0.10988196821512008
           },
           {
             "safra": 2020,
-            "capital_inicio": 98251.48478802647,
-            "renda": 3899.059635377394,
+            "capital_inicio": 107501.75224287019,
+            "renda": 4266.151741185669,
             "rendimento": 0.0348865921104161,
             "renda_caixa": 0.03968448562166215,
+            "valorizacao": 0.7647574037660011,
+            "fator_custo": 0.997749795626032,
             "retorno": 0.7032346586936715
           },
           {
             "safra": 2021,
-            "capital_inicio": 161704.03156718647,
-            "renda": 12372.340585325855,
+            "capital_inicio": 189287.6167610417,
+            "renda": 14482.822972655404,
             "rendimento": 0.08374752939709805,
             "renda_caixa": 0.07651225801494793,
+            "valorizacao": 0.11725470467101287,
+            "fator_custo": 0.9979117369515735,
             "retorno": 0.18255895305716918
           },
           {
             "safra": 2022,
-            "capital_inicio": 176447.5074573836,
-            "renda": 10768.137833332026,
+            "capital_inicio": 211040.84931310746,
+            "renda": 12879.280566861304,
             "rendimento": 0.07649181389004407,
             "renda_caixa": 0.06102742956532155,
+            "valorizacao": -0.17979730288120357,
+            "fator_custo": 0.9981172108873492,
             "retorno": -0.11899543865027196
           },
           {
             "safra": 2023,
-            "capital_inicio": 144405.24015412838,
-            "renda": 15022.573944676877,
+            "capital_inicio": 172770.3700290845,
+            "renda": 17973.417421977858,
             "rendimento": 0.10787945579848274,
             "renda_caixa": 0.10403067041502648,
+            "valorizacao": 0.13396750315889017,
+            "fator_custo": 0.9983798545395784,
             "retorno": 0.23467502459316614
           },
           {
             "safra": 2024,
-            "capital_inicio": 160932.25892538903,
-            "renda": 13903.100761934242,
+            "capital_inicio": 195598.57272779956,
+            "renda": 16897.95870438812,
             "rendimento": 0.09311308799571612,
             "renda_caixa": 0.08639101231021655,
+            "valorizacao": -0.03394024723205072,
+            "fator_custo": 0.9988746867673305,
             "retorno": 0.05127152835224047
           },
           {
             "safra": 2025,
-            "capital_inicio": 154772.18565910653,
-            "renda": 27379.676178367627,
+            "capital_inicio": 188747.26972535253,
+            "renda": 33389.97315715104,
             "rendimento": 0.1209851332898639,
             "renda_caixa": 0.17690307894645058,
+            "valorizacao": 0.11627427803702674,
+            "fator_custo": 0.9985453680898646,
             "retorno": 0.19630318059096763
           }
         ],
         "insuficiente": false,
         "safras_sem_rendimento": [],
-        "capital_final": 165171.19850431388,
-        "renda_total": 94219.37977471495,
-        "crescimento_renda_aa": 0.3116603755082781,
+        "capital_final": 210387.24043248632,
+        "renda_total": 110851.05433791177,
+        "crescimento_renda_aa": 0.3515420093105086,
         "quedas_de_renda": 4,
-        "renda_ultimo_sobre_primeiro": 8.230252358345263
+        "renda_ultimo_sobre_primeiro": 10.036930441816184
       },
       "cobertura_do_rendimento": {
         "2017": 1.0,
@@ -932,13 +1022,12 @@
         "testes": {
           "r1_retorno": false,
           "r2_dividendo_crescente": false,
-          "r3_valorizacao": false
+          "r3_valorizacao": true
         },
         "candidata": false,
         "falhou": [
           "r1_retorno",
-          "r2_dividendo_crescente",
-          "r3_valorizacao"
+          "r2_dividendo_crescente"
         ]
       },
       "vs_nota_fatores": {
@@ -1068,10 +1157,10 @@
         "media_sem_melhor_safra": 0.05846022425471936
       },
       "com_ir_vs_equal_weight": {
-        "media": 0.14348378222181646,
+        "media": 0.1434837822218165,
         "ic95": [
           -0.00043165150068784813,
-          0.37436960707447814
+          0.3743696070744782
         ],
         "n_safras": 9,
         "safras_negativas": [
@@ -1079,7 +1168,7 @@
         ],
         "ic_cruza_zero": true,
         "melhor_safra": 2020,
-        "media_sem_melhor_safra": 0.03704785380292169
+        "media_sem_melhor_safra": 0.037047853802921735
       },
       "giro_medio_anual": 0.6282719163235507,
       "renda": {
@@ -1090,80 +1179,98 @@
             "renda": 6890.470285278291,
             "rendimento": 0.07062889449470622,
             "renda_caixa": 0.06890470285278291,
+            "valorizacao": 0.4007836714720032,
+            "fator_custo": 0.9984999999999999,
             "retorno": 0.3846713180282506
           },
           {
             "safra": 2018,
-            "capital_inicio": 129332.51896603816,
-            "renda": 7430.100186058495,
+            "capital_inicio": 139868.24959647952,
+            "renda": 8035.373590947955,
             "rendimento": 0.06325308531536034,
             "renda_caixa": 0.057449589982930656,
+            "valorizacao": 0.3548606381312382,
+            "fator_custo": 0.9983974085737806,
             "retorno": 0.33067570276536196
           },
           {
             "safra": 2019,
-            "capital_inicio": 161861.40716864477,
-            "renda": 8189.5684426612315,
+            "capital_inicio": 189198.2916447265,
+            "renda": 10512.235078137404,
             "rendimento": 0.04389153089253508,
-            "renda_caixa": 0.05059617722295254,
+            "renda_caixa": 0.05556199787404587,
+            "valorizacao": -0.005013613120417052,
+            "fator_custo": 0.9980848922196767,
             "retorno": -0.027243785469592274
           },
           {
             "safra": 2020,
-            "capital_inicio": 150831.4657762512,
-            "renda": 10744.805819458828,
+            "capital_inicio": 187889.2060951367,
+            "renda": 13384.694133114992,
             "rendimento": 0.053543799034268445,
             "renda_caixa": 0.07123716370560278,
+            "valorizacao": 1.4214727802492388,
+            "fator_custo": 0.9981230847488368,
             "retorno": 1.535823644737743
           },
           {
             "safra": 2021,
-            "capital_inicio": 363043.28081705933,
-            "renda": 20776.055075515684,
+            "capital_inicio": 454114.66076113464,
+            "renda": 25987.84139824554,
             "rendimento": 0.06496174694785203,
             "renda_caixa": 0.05722748821781643,
+            "valorizacao": -0.06879522886518392,
+            "fator_custo": 0.9980860365775089,
             "retorno": -0.005502991628116072
           },
           {
             "safra": 2022,
-            "capital_inicio": 339021.9955945127,
-            "renda": 32449.167533175547,
+            "capital_inicio": 422064.37387475075,
+            "renda": 40397.48970750352,
             "rendimento": 0.12122838557201711,
             "renda_caixa": 0.09571404792267928,
+            "valorizacao": -0.2122938048176363,
+            "fator_custo": 0.9975909090909093,
             "retorno": -0.10544780810890186
           },
           {
             "safra": 2023,
-            "capital_inicio": 270482.689486714,
-            "renda": 21450.537278959084,
+            "capital_inicio": 331661.7891455636,
+            "renda": 26411.030606782624,
             "rendimento": 0.08113377554250421,
-            "renda_caixa": 0.07930465834861762,
+            "renda_caixa": 0.0796324191424748,
+            "valorizacao": 0.2084654244867169,
+            "fator_custo": 0.9990951387357798,
             "retorno": 0.2699621283800453
           },
           {
             "safra": 2024,
-            "capital_inicio": 317724.5774771391,
-            "renda": 20267.08027770879,
+            "capital_inicio": 400439.13477801916,
+            "renda": 25543.29336220868,
             "rendimento": 0.07094818574735051,
             "renda_caixa": 0.06378820435811909,
+            "valorizacao": -0.12563702219817816,
+            "fator_custo": 0.9985092558265743,
             "retorno": -0.052815130302686475
           },
           {
             "safra": 2025,
-            "capital_inicio": 281006.97729583184,
-            "renda": 43092.51941948886,
+            "capital_inicio": 349607.20131615555,
+            "renda": 54045.37944388977,
             "rendimento": 0.0758073719719306,
-            "renda_caixa": 0.15335035390997764,
+            "renda_caixa": 0.15458886212991832,
+            "valorizacao": 0.3596652673704399,
+            "fator_custo": 0.9986599810969466,
             "retorno": 0.41880703329134406
           }
         ],
         "insuficiente": false,
         "safras_sem_rendimento": [],
-        "capital_final": 370600.4310608775,
-        "renda_total": 171290.3043183048,
-        "crescimento_renda_aa": 0.249700707675643,
+        "capital_final": 474711.7925163568,
+        "renda_total": 211207.80760610878,
+        "crescimento_renda_aa": 0.2766728702726977,
         "quedas_de_renda": 2,
-        "renda_ultimo_sobre_primeiro": 6.253930085375653
+        "renda_ultimo_sobre_primeiro": 7.843496482287927
       },
       "cobertura_do_rendimento": {
         "2017": 0.8,
@@ -1342,83 +1449,101 @@
           {
             "safra": 2017,
             "capital_inicio": 100000.0,
-            "renda": 3363.8136533065126,
+            "renda": 3399.9625858887703,
             "rendimento": 0.03347165744044129,
-            "renda_caixa": 0.033638136533065126,
+            "renda_caixa": 0.0339996258588877,
+            "valorizacao": 0.3139055065524335,
+            "fator_custo": 0.9988199999999999,
             "retorno": 0.29853387110446294
           },
           {
             "safra": 2018,
-            "capital_inicio": 125647.74870754471,
-            "renda": 6950.653619593979,
+            "capital_inicio": 131235.50980547015,
+            "renda": 7259.760565800567,
             "rendimento": 0.05887350047805235,
             "renda_caixa": 0.05531856870569314,
+            "valorizacao": 0.1883024359786726,
+            "fator_custo": 0.9986270875358008,
             "retorno": 0.23861892995095246
           },
           {
             "safra": 2019,
-            "capital_inicio": 146976.6501707925,
-            "renda": 7231.988202155181,
+            "capital_inicio": 155733.3737551978,
+            "renda": 8036.201397487007,
             "rendimento": 0.048292537734028945,
-            "renda_caixa": 0.04920501449550887,
+            "renda_caixa": 0.05160230722362289,
+            "valorizacao": -0.11212199910553865,
+            "fator_custo": 0.9990584955378572,
             "retorno": -0.09130613788704989
           },
           {
             "safra": 2020,
-            "capital_inicio": 127404.11199798816,
-            "renda": 3869.81915996657,
+            "capital_inicio": 138142.0526346011,
+            "renda": 4362.3171933488675,
             "rendimento": 0.02622660982547749,
-            "renda_caixa": 0.03037436625301135,
+            "renda_caixa": 0.03157848830354079,
+            "valorizacao": 0.6270179566199475,
+            "fator_custo": 0.9987637199932196,
             "retorno": 0.626625930954819
           },
           {
             "safra": 2021,
-            "capital_inicio": 201942.56346699395,
-            "renda": 16045.500010557853,
+            "capital_inicio": 224481.73440077368,
+            "renda": 17836.366984052707,
             "rendimento": 0.08579922982128382,
             "renda_caixa": 0.07945576076229405,
+            "valorizacao": 0.028267372336851476,
+            "fator_custo": 0.9985833191786837,
             "retorno": 0.12488784561329003
           },
           {
             "safra": 2022,
-            "capital_inicio": 209212.4666485549,
-            "renda": 22643.803492331375,
+            "capital_inicio": 230500.2346414664,
+            "renda": 24947.853738206908,
             "rendimento": 0.13715650814045596,
             "renda_caixa": 0.10823352859927568,
+            "valorizacao": -0.20020634710717666,
+            "fator_custo": 0.9987665814975951,
             "retorno": -0.09183906494782135
           },
           {
             "safra": 2023,
-            "capital_inicio": 167082.18083966387,
-            "renda": 15834.709397896871,
+            "capital_inicio": 184125.24071833302,
+            "renda": 17449.913958152505,
             "rendimento": 0.0998655478683242,
             "renda_caixa": 0.0947719817775915,
+            "valorizacao": 0.11984568472627893,
+            "fator_custo": 0.9992115800736312,
             "retorno": 0.20458679254631207
           },
           {
             "safra": 2024,
-            "capital_inicio": 182990.537979274,
-            "renda": 14059.74416325382,
+            "capital_inicio": 206029.29049947622,
+            "renda": 15829.884684460714,
             "rendimento": 0.0830271876721588,
             "renda_caixa": 0.07683317573964542,
+            "valorizacao": -0.0434094358354017,
+            "fator_custo": 0.998757755768141,
             "retorno": 0.03584590586577363
           },
           {
             "safra": 2025,
-            "capital_inicio": 175018.68996051894,
-            "renda": 33338.9343489339,
+            "capital_inicio": 196840.84669008522,
+            "renda": 37809.23312370131,
             "rendimento": 0.0886330599368134,
-            "renda_caixa": 0.1904878522199804,
+            "renda_caixa": 0.1920802199313327,
+            "valorizacao": 0.2827909504947404,
+            "fator_custo": 0.9992789259212154,
             "retorno": 0.31549836962605204
           }
         ],
         "insuficiente": false,
         "safras_sem_rendimento": [],
-        "capital_final": 211491.64927116357,
-        "renda_total": 123338.96604799606,
-        "crescimento_renda_aa": 0.27596364035975207,
+        "capital_final": 252323.58153788323,
+        "renda_total": 136931.49423109935,
+        "crescimento_renda_aa": 0.2897811826157113,
         "quedas_de_renda": 3,
-        "renda_ultimo_sobre_primeiro": 9.911052687524139
+        "renda_ultimo_sobre_primeiro": 11.120485054931201
       },
       "cobertura_do_rendimento": {
         "2017": 0.84,
@@ -1605,80 +1730,98 @@
             "renda": 4760.9786288512105,
             "rendimento": 0.04427144921180003,
             "renda_caixa": 0.047609786288512104,
+            "valorizacao": 0.20431364037778443,
+            "fator_custo": 0.9987857142857143,
             "retorno": 0.23797217723223896
           },
           {
             "safra": 2018,
-            "capital_inicio": 118548.88670629091,
-            "renda": 4209.378787520818,
+            "capital_inicio": 120285.12595287545,
+            "renda": 4271.028363975645,
             "rendimento": 0.03915615012714676,
             "renda_caixa": 0.03550753536766401,
+            "valorizacao": 0.02107453086863678,
+            "fator_custo": 0.9986870955056143,
             "retorno": 0.0581534417209546
           },
           {
             "safra": 2019,
-            "capital_inicio": 120716.13343682814,
-            "renda": 4957.271094666198,
+            "capital_inicio": 122658.8275196744,
+            "renda": 5510.7946390452125,
             "rendimento": 0.03961930529234469,
-            "renda_caixa": 0.04106552250748144,
+            "renda_caixa": 0.04492782745833181,
+            "valorizacao": 0.07012567675225359,
+            "fator_custo": 0.9988657806514676,
             "retorno": 0.07312771855917921
           },
           {
             "safra": 2020,
-            "capital_inicio": 124606.98662374364,
-            "renda": 5126.458513678854,
+            "capital_inicio": 131111.48276820447,
+            "renda": 5503.157210880589,
             "rendimento": 0.0372869723020731,
-            "renda_caixa": 0.04114101987843125,
+            "renda_caixa": 0.0419731139843012,
+            "valorizacao": 0.4143409451202149,
+            "fator_custo": 0.9985871824113848,
             "retorno": 0.43724976047024766
           },
           {
             "safra": 2021,
-            "capital_inicio": 172653.63053816595,
-            "renda": 14999.145032222235,
+            "capital_inicio": 185174.35073395816,
+            "renda": 16086.872510290223,
             "rendimento": 0.08497969688870631,
             "renda_caixa": 0.08687419422035611,
+            "valorizacao": 0.04352868822975218,
+            "fator_custo": 0.9985544493788608,
             "retorno": 0.12247589561824035
           },
           {
             "safra": 2022,
-            "capital_inicio": 178620.42868249907,
-            "renda": 13236.756337617342,
+            "capital_inicio": 192955.41670619624,
+            "renda": 14249.517475079852,
             "rendimento": 0.08822682854957731,
-            "renda_caixa": 0.07410550089511826,
+            "renda_caixa": 0.07384875593711315,
+            "valorizacao": -0.13885303270054622,
+            "fator_custo": 0.998307824711617,
             "retorno": -0.06480359070854547
           },
           {
             "safra": 2023,
-            "capital_inicio": 153502.17357958038,
-            "renda": 10800.323482105145,
+            "capital_inicio": 165881.79504561506,
+            "renda": 11671.346434427514,
             "rendimento": 0.07166529304613208,
             "renda_caixa": 0.0703594172658794,
+            "valorizacao": 0.10868693230208129,
+            "fator_custo": 0.9990720630738136,
             "retorno": 0.1806812719735209
           },
           {
             "safra": 2024,
-            "capital_inicio": 169117.30064289525,
-            "renda": 9117.415013326396,
+            "capital_inicio": 183740.32068582857,
+            "renda": 9905.768079350892,
             "rendimento": 0.060069845263346015,
             "renda_caixa": 0.053911781814555734,
+            "valorizacao": -0.11065759070637647,
+            "fator_custo": 0.9988845183285254,
             "retorno": -0.05330578604338809
           },
           {
             "safra": 2025,
-            "capital_inicio": 151030.02006326913,
-            "renda": 21498.397816970577,
+            "capital_inicio": 163225.78078779316,
+            "renda": 23234.405768413395,
             "rendimento": 0.08186551245588489,
             "renda_caixa": 0.1423451960607866,
+            "valorizacao": 0.30359957373450863,
+            "fator_custo": 0.9986724549239401,
             "retorno": 0.36842795929912575
           }
         ],
         "insuficiente": false,
         "safras_sem_rendimento": [],
-        "capital_final": 191034.55999713542,
-        "renda_total": 88706.12470695877,
-        "crescimento_renda_aa": 0.19831008739146383,
-        "quedas_de_renda": 4,
-        "renda_ultimo_sobre_primeiro": 4.51554175998433
+        "capital_final": 212498.581811281,
+        "renda_total": 95193.86911031454,
+        "crescimento_renda_aa": 0.2075733016304513,
+        "quedas_de_renda": 5,
+        "renda_ultimo_sobre_primeiro": 4.880174346428371
       },
       "cobertura_do_rendimento": {
         "2017": 0.9285714285714285,
@@ -1874,80 +2017,98 @@
             "renda": 4760.9786288512105,
             "rendimento": 0.04427144921180003,
             "renda_caixa": 0.047609786288512104,
+            "valorizacao": 0.20431364037778443,
+            "fator_custo": 0.9987857142857143,
             "retorno": 0.23797217723223896
           },
           {
             "safra": 2018,
-            "capital_inicio": 118548.88670629091,
-            "renda": 3254.3187391615993,
+            "capital_inicio": 120285.12595287545,
+            "renda": 3301.9807296940508,
             "rendimento": 0.031545895728602134,
             "renda_caixa": 0.027451280476587604,
+            "valorizacao": 0.015083068159332304,
+            "fator_custo": 0.9995567398891689,
             "retorno": 0.04181310243702896
           },
           {
             "safra": 2019,
-            "capital_inicio": 119728.8302550049,
-            "renda": 4564.461225690435,
+            "capital_inicio": 122045.27291494669,
+            "renda": 4652.7717243424295,
             "rendimento": 0.036049486287618095,
             "renda_caixa": 0.03812332598563604,
+            "valorizacao": -0.03780835281568445,
+            "fator_custo": 0.999877865752219,
             "retorno": -0.006427716019616336
           },
           {
             "safra": 2020,
-            "capital_inicio": 114820.04374233197,
-            "renda": 4723.813702045625,
+            "capital_inicio": 117416.59983730289,
+            "renda": 4928.340328620196,
             "rendimento": 0.0372869723020731,
-            "renda_caixa": 0.04114101987843125,
+            "renda_caixa": 0.0419731139843012,
+            "valorizacao": 0.4143409451202149,
+            "fator_custo": 0.9981645590394193,
             "retorno": 0.43664148574889605
           },
           {
             "safra": 2021,
-            "capital_inicio": 159025.65311280094,
-            "renda": 7415.987133065314,
+            "capital_inicio": 165762.29842036247,
+            "renda": 7730.143207528747,
             "rendimento": 0.048545204107651674,
             "renda_caixa": 0.04663390458019352,
+            "valorizacao": 0.042011819944877266,
+            "fator_custo": 0.9995562029649221,
             "retorno": 0.08393289486871214
           },
           {
             "safra": 2022,
-            "capital_inicio": 164392.66124309963,
-            "renda": 11601.430826528787,
+            "capital_inicio": 172649.61884685323,
+            "renda": 12184.136415410718,
             "rendimento": 0.0795363926582651,
             "renda_caixa": 0.07057146431477795,
+            "valorizacao": -0.10044384273789346,
+            "fator_custo": 0.9996520738792948,
             "retorno": -0.02269970613391037
           },
           {
             "safra": 2023,
-            "capital_inicio": 148824.06673358736,
-            "renda": 10471.174610513553,
+            "capital_inicio": 155253.99196305664,
+            "renda": 10923.58040272219,
             "rendimento": 0.07166529304613208,
             "renda_caixa": 0.0703594172658794,
+            "valorizacao": 0.10868693230208129,
+            "fator_custo": 0.9982276899549672,
             "retorno": 0.17968341049302627
           },
           {
             "safra": 2024,
-            "capital_inicio": 163824.73496803117,
-            "renda": 7819.74584589317,
+            "capital_inicio": 171823.00776599877,
+            "renda": 8201.522507997537,
             "rendimento": 0.05312798712760413,
             "renda_caixa": 0.047732388197784165,
+            "valorizacao": -0.13630275908480993,
+            "fator_custo": 0.9994879973348268,
             "retorno": -0.08704197409921222
           },
           {
             "safra": 2025,
-            "capital_inicio": 142019.8764616168,
-            "renda": 18568.501505949538,
+            "capital_inicio": 148327.07497216316,
+            "renda": 19393.14118286867,
             "rendimento": 0.06383832517041085,
             "renda_caixa": 0.13074579395911515,
+            "valorizacao": 0.2786223313322741,
+            "fator_custo": 0.9996925579574989,
             "retorno": 0.3460642660325086
           }
         ],
         "insuficiente": false,
         "safras_sem_rendimento": [],
-        "capital_final": 179696.36574308557,
-        "renda_total": 73180.41221769924,
-        "crescimento_renda_aa": 0.19389420749681863,
+        "capital_final": 189596.00269204553,
+        "renda_total": 76076.59512803574,
+        "crescimento_renda_aa": 0.2004004115547593,
         "quedas_de_renda": 3,
-        "renda_ultimo_sobre_primeiro": 3.900143847196807
+        "renda_ultimo_sobre_primeiro": 4.073351866220851
       },
       "cobertura_do_rendimento": {
         "2017": 0.9285714285714285,
@@ -2142,80 +2303,98 @@
             "renda": 2747.8488471539413,
             "rendimento": 0.026703561328948855,
             "renda_caixa": 0.02747848847153941,
+            "valorizacao": 0.10579044419638098,
+            "fator_custo": 0.9984999999999999,
             "retorno": 0.12942928714669644
           },
           {
             "safra": 2018,
-            "capital_inicio": 110005.39295731876,
-            "renda": 4270.25125219721,
+            "capital_inicio": 110413.17585300864,
+            "renda": 4286.080798132471,
             "rendimento": 0.04213346105522296,
             "renda_caixa": 0.03881856277586349,
+            "valorizacao": 0.09416096443817233,
+            "fator_custo": 0.9978823529411766,
             "retorno": 0.10113196974389349
           },
           {
             "safra": 2019,
-            "capital_inicio": 116233.15012540866,
-            "renda": 4224.524515644963,
+            "capital_inicio": 120553.95448793838,
+            "renda": 4381.565290476568,
             "rendimento": 0.03348947252904043,
             "renda_caixa": 0.036345263903515924,
+            "valorizacao": -0.1412549645047402,
+            "fator_custo": 0.9988157129192535,
             "retorno": -0.12673509485470413
           },
           {
             "safra": 2020,
-            "capital_inicio": 98213.22182471653,
-            "renda": 3456.1649460366143,
+            "capital_inicio": 103402.50647562055,
+            "renda": 3638.7780746179105,
             "rendimento": 0.028175728358355405,
             "renda_caixa": 0.0351904242812125,
+            "valorizacao": 0.6156940392913098,
+            "fator_custo": 0.9989582757653579,
             "retorno": 0.5461142579762515
           },
           {
             "safra": 2021,
-            "capital_inicio": 147687.6553266135,
-            "renda": 8740.993636795374,
+            "capital_inicio": 166892.77581215918,
+            "renda": 10068.79288964606,
             "rendimento": 0.06614624086247052,
-            "renda_caixa": 0.05918567545448896,
+            "renda_caixa": 0.06033090911603428,
+            "valorizacao": 0.06570877310593773,
+            "fator_custo": 0.9989043650791893,
             "retorno": 0.14301779661319247
           },
           {
             "safra": 2022,
-            "capital_inicio": 158336.2693675438,
-            "renda": 8205.957406525253,
+            "capital_inicio": 177664.2267151701,
+            "renda": 9207.650798590666,
             "rendimento": 0.06302808864999528,
             "renda_caixa": 0.051826138378168275,
+            "valorizacao": -0.1656395762401283,
+            "fator_custo": 0.9993274418569662,
             "retorno": -0.12357872583062834
           },
           {
             "safra": 2023,
-            "capital_inicio": 130541.494084657,
-            "renda": 9536.27306130707,
+            "capital_inicio": 148136.30216049217,
+            "renda": 10877.987473116556,
             "rendimento": 0.07241873092218859,
-            "renda_caixa": 0.07305166168178477,
+            "renda_caixa": 0.07343228711981246,
+            "valorizacao": 0.20889492629484915,
+            "fator_custo": 0.9994010478793115,
             "retorno": 0.26979219875371063
           },
           {
             "safra": 2024,
-            "capital_inicio": 154567.02314385274,
-            "renda": 8773.84383263856,
+            "capital_inicio": 178973.96300296034,
+            "renda": 10159.279576957146,
             "rendimento": 0.06334372586185417,
             "renda_caixa": 0.056764008610510036,
+            "valorizacao": -0.09991132380587699,
+            "fator_custo": 0.9995127587228545,
             "retorno": -0.013064033824298549
           },
           {
             "safra": 2025,
-            "capital_inicio": 143460.43580756386,
-            "renda": 18935.131423185234,
+            "capital_inicio": 161013.9465475974,
+            "renda": 21251.993427192225,
             "rendimento": 0.07472132056243108,
             "renda_caixa": 0.1319885257325204,
+            "valorizacao": 0.2584359822972232,
+            "fator_custo": 0.9993339074082991,
             "retorno": 0.32067134702834266
           }
         ],
         "insuficiente": false,
         "safras_sem_rendimento": [],
-        "capital_final": 176291.3635174714,
-        "renda_total": 68890.98892148423,
-        "crescimento_renda_aa": 0.22904409320285768,
-        "quedas_de_renda": 4,
-        "renda_ultimo_sobre_primeiro": 6.8908926496437815
+        "capital_final": 202490.77648022058,
+        "renda_total": 76619.97717588354,
+        "crescimento_renda_aa": 0.2527116420471964,
+        "quedas_de_renda": 3,
+        "renda_ultimo_sobre_primeiro": 7.7340474710622376
       },
       "cobertura_do_rendimento": {
         "2017": 1.0,
@@ -2242,13 +2421,12 @@
       "decisao": {
         "testes": {
           "r1_retorno": false,
-          "r2_dividendo_crescente": false,
+          "r2_dividendo_crescente": true,
           "r3_valorizacao": false
         },
         "candidata": false,
         "falhou": [
           "r1_retorno",
-          "r2_dividendo_crescente",
           "r3_valorizacao"
         ]
       },
@@ -2387,8 +2565,8 @@
       "com_ir_vs_equal_weight": {
         "media": 0.10213056993121396,
         "ic95": [
-          -0.06026265336589925,
-          0.3479933016686626
+          -0.060262653365899296,
+          0.3479933016686627
         ],
         "n_safras": 9,
         "safras_negativas": [
@@ -2411,80 +2589,98 @@
             "renda": 6890.470285278291,
             "rendimento": 0.07062889449470622,
             "renda_caixa": 0.06890470285278291,
+            "valorizacao": 0.4007836714720032,
+            "fator_custo": 0.9984999999999999,
             "retorno": 0.3846713180282506
           },
           {
             "safra": 2018,
-            "capital_inicio": 129332.51896603816,
-            "renda": 7264.396611656148,
+            "capital_inicio": 139868.24959647952,
+            "renda": 7856.171414350572,
             "rendimento": 0.061250815155774956,
             "renda_caixa": 0.05616836871138131,
+            "valorizacao": 0.3642702482688899,
+            "fator_custo": 0.998470135846508,
             "retorno": 0.3267194437143588
           },
           {
             "safra": 2019,
-            "capital_inicio": 161684.6509480537,
-            "renda": 6166.680968945356,
+            "capital_inicio": 190526.16584374462,
+            "renda": 7266.7014098464115,
             "rendimento": 0.03477983970363377,
             "renda_caixa": 0.038140175537915454,
+            "valorizacao": -0.04696641925341933,
+            "fator_custo": 0.99825898599378,
             "retorno": -0.06664084509462687
           },
           {
             "safra": 2020,
-            "capital_inicio": 145837.63944731178,
-            "renda": 10389.059795746824,
+            "capital_inicio": 181261.70450766326,
+            "renda": 12912.569717569004,
             "rendimento": 0.053543799034268445,
             "renda_caixa": 0.07123716370560278,
+            "valorizacao": 1.4214727802492388,
+            "fator_custo": 0.998558025185236,
             "retorno": 1.5369286509834916
           },
           {
             "safra": 2021,
-            "capital_inicio": 351176.368979465,
-            "renda": 20096.941518147887,
+            "capital_inicio": 438287.37157229485,
+            "renda": 25082.085392671237,
             "rendimento": 0.06496174694785203,
             "renda_caixa": 0.05722748821781643,
+            "valorizacao": -0.06879522886518392,
+            "fator_custo": 0.9980860365775088,
             "retorno": -0.005502991628116183
           },
           {
             "safra": 2022,
-            "capital_inicio": 327940.2751900723,
-            "renda": 29093.790921935546,
+            "capital_inicio": 407354.1355168307,
+            "renda": 36139.12942850165,
             "rendimento": 0.10291268111927393,
             "renda_caixa": 0.08871673631752901,
+            "valorizacao": -0.20491310567480003,
+            "fator_custo": 0.9975000000000002,
             "retorno": -0.12057373148612627
           },
           {
             "safra": 2023,
-            "capital_inicio": 261488.7809732504,
-            "renda": 28249.26890717894,
+            "capital_inicio": 323072.22966235713,
+            "renda": 34902.27863010085,
             "rendimento": 0.12411646133428937,
             "renda_caixa": 0.10803243183908821,
+            "valorizacao": -0.06719512638117799,
+            "fator_custo": 0.9987797540068047,
             "retorno": 0.05419849333596427
           },
           {
             "safra": 2024,
-            "capital_inicio": 245224.66168590565,
-            "renda": 12984.822419415945,
+            "capital_inicio": 300995.6129391735,
+            "renda": 15937.934448226251,
             "rendimento": 0.0585591454780318,
             "renda_caixa": 0.05295072008722951,
+            "valorizacao": -0.15656741902125118,
+            "fator_custo": 0.9990433725145276,
             "retorno": -0.08821011356870334
           },
           {
             "safra": 2025,
-            "capital_inicio": 211224.25457651037,
-            "renda": 47057.78852510977,
+            "capital_inicio": 253626.6481367498,
+            "renda": 56504.44451221117,
             "rendimento": 0.10396611593994196,
             "renda_caixa": 0.22278591357539546,
+            "valorizacao": 0.2522658993798706,
+            "fator_custo": 0.99799791606764,
             "retorno": 0.3408453665174751
           }
         ],
         "insuficiente": false,
         "safras_sem_rendimento": [],
-        "capital_final": 256546.88033960384,
-        "renda_total": 168193.2199534147,
-        "crescimento_renda_aa": 0.2523419414425425,
+        "capital_final": 316972.12475680315,
+        "renda_total": 203491.78523875543,
+        "crescimento_renda_aa": 0.27776190587172245,
         "quedas_de_renda": 3,
-        "renda_ultimo_sobre_primeiro": 6.829401561407242
+        "renda_ultimo_sobre_primeiro": 8.200375616296425
       },
       "cobertura_do_rendimento": {
         "2017": 0.8,
@@ -2676,80 +2872,98 @@
             "renda": 6890.470285278291,
             "rendimento": 0.07062889449470622,
             "renda_caixa": 0.06890470285278291,
+            "valorizacao": 0.4007836714720032,
+            "fator_custo": 0.9984999999999999,
             "retorno": 0.3846713180282506
           },
           {
             "safra": 2018,
-            "capital_inicio": 129332.51896603816,
-            "renda": 7430.100186058495,
+            "capital_inicio": 139868.24959647952,
+            "renda": 8035.373590947955,
             "rendimento": 0.06325308531536034,
             "renda_caixa": 0.057449589982930656,
+            "valorizacao": 0.3548606381312382,
+            "fator_custo": 0.9983974085737806,
             "retorno": 0.33067570276536196
           },
           {
             "safra": 2019,
-            "capital_inicio": 161861.40716864477,
-            "renda": 6976.997467103915,
+            "capital_inicio": 189198.2916447265,
+            "renda": 9251.459619796304,
             "rendimento": 0.03926281539354466,
-            "renda_caixa": 0.043104762210762954,
+            "renda_caixa": 0.048898219637038505,
+            "valorizacao": 0.0021594257773899523,
+            "fator_custo": 0.997994696141245,
             "retorno": -0.03338522563489055
           },
           {
             "safra": 2020,
-            "capital_inicio": 150546.73875682912,
-            "renda": 10724.52267416485,
+            "capital_inicio": 189226.63196215846,
+            "renda": 13479.96855854813,
             "rendimento": 0.053543799034268445,
             "renda_caixa": 0.07123716370560278,
+            "valorizacao": 1.4214727802492388,
+            "fator_custo": 0.9982027834182507,
             "retorno": 1.536026126549297
           },
           {
             "safra": 2021,
-            "capital_inicio": 362386.89184453344,
-            "renda": 20738.491583324154,
+            "capital_inicio": 457383.6411272492,
+            "renda": 26174.916933631634,
             "rendimento": 0.06496174694785203,
             "renda_caixa": 0.05722748821781643,
+            "valorizacao": -0.06879522886518392,
+            "fator_custo": 0.9980860365775089,
             "retorno": -0.005502991628116072
           },
           {
             "safra": 2022,
-            "capital_inicio": 338409.0375503612,
-            "renda": 30274.904215145027,
+            "capital_inicio": 425102.6377112904,
+            "renda": 38030.726754451825,
             "rendimento": 0.10556561976689813,
             "renda_caixa": 0.0894624577236345,
+            "valorizacao": -0.2631360195593829,
+            "fator_custo": 0.9973333333333333,
             "retorno": -0.17081780187915885
           },
           {
             "safra": 2023,
-            "capital_inicio": 253809.2218163678,
-            "renda": 24122.38112185613,
+            "capital_inicio": 312407.5075284943,
+            "renda": 29691.643621143994,
             "rendimento": 0.1047573094400279,
             "renda_caixa": 0.09504138954930799,
+            "valorizacao": 0.00662764855170426,
+            "fator_custo": 0.9986058263693898,
             "retorno": 0.1048464807856293
           },
           {
             "safra": 2024,
-            "capital_inicio": 253829.70822514017,
-            "renda": 14968.581573796382,
+            "capital_inicio": 314039.59770993155,
+            "renda": 18519.216558976976,
             "rendimento": 0.06705091658718557,
             "renda_caixa": 0.05897096001276435,
+            "valorizacao": -0.17278838342199027,
+            "fator_custo": 0.9985883600976572,
             "retorno": -0.09595885890554579
           },
           {
             "safra": 2025,
-            "capital_inicio": 215052.9984093581,
-            "renda": 45360.49808240876,
+            "capital_inicio": 259410.4914252555,
+            "renda": 54716.69395863663,
             "rendimento": 0.09123250090066747,
             "renda_caixa": 0.21092706643440545,
+            "valorizacao": 0.5536656350379562,
+            "fator_custo": 0.9985763810112704,
             "retorno": 0.5646177383291475
           }
         ],
         "insuficiente": false,
         "safras_sem_rendimento": [],
-        "capital_final": 308344.6797217235,
-        "renda_total": 167486.947189136,
-        "crescimento_renda_aa": 0.2452064532021736,
-        "quedas_de_renda": 3,
-        "renda_ultimo_sobre_primeiro": 6.583077236298792
+        "capital_final": 402463.3945331949,
+        "renda_total": 204790.46988141173,
+        "crescimento_renda_aa": 0.2662237476017897,
+        "quedas_de_renda": 2,
+        "renda_ultimo_sobre_primeiro": 7.940922998469435
       },
       "cobertura_do_rendimento": {
         "2017": 0.8,
@@ -2912,10 +3126,10 @@
         "media_sem_melhor_safra": 0.06635153065180156
       },
       "com_ir_vs_equal_weight": {
-        "media": 0.15131678955988034,
+        "media": 0.1513167895598803,
         "ic95": [
-          -0.008889389684516106,
-          0.38570132946076374
+          -0.008889389684516169,
+          0.3857013294607637
         ],
         "n_safras": 9,
         "safras_negativas": [
@@ -2924,7 +3138,7 @@
         ],
         "ic_cruza_zero": true,
         "melhor_safra": 2020,
-        "media_sem_melhor_safra": 0.04585998705824356
+        "media_sem_melhor_safra": 0.045859987058243505
       },
       "giro_medio_anual": 0.6623156863038941,
       "renda": {
@@ -2935,80 +3149,98 @@
             "renda": 6890.470285278291,
             "rendimento": 0.07062889449470622,
             "renda_caixa": 0.06890470285278291,
+            "valorizacao": 0.4007836714720032,
+            "fator_custo": 0.9984999999999999,
             "retorno": 0.3846713180282506
           },
           {
             "safra": 2018,
-            "capital_inicio": 129332.51896603816,
-            "renda": 7430.100186058495,
+            "capital_inicio": 139868.24959647952,
+            "renda": 8035.373590947955,
             "rendimento": 0.06325308531536034,
             "renda_caixa": 0.057449589982930656,
+            "valorizacao": 0.3548606381312382,
+            "fator_custo": 0.9983974085737806,
             "retorno": 0.33067570276536196
           },
           {
             "safra": 2019,
-            "capital_inicio": 161861.40716864477,
-            "renda": 8189.5684426612315,
+            "capital_inicio": 189198.2916447265,
+            "renda": 10512.235078137404,
             "rendimento": 0.04389153089253508,
-            "renda_caixa": 0.05059617722295254,
+            "renda_caixa": 0.05556199787404587,
+            "valorizacao": -0.005013613120417052,
+            "fator_custo": 0.9980848922196767,
             "retorno": -0.027243785469592274
           },
           {
             "safra": 2020,
-            "capital_inicio": 150831.4657762512,
-            "renda": 10744.805819458828,
+            "capital_inicio": 187889.2060951367,
+            "renda": 13384.694133114992,
             "rendimento": 0.053543799034268445,
             "renda_caixa": 0.07123716370560278,
+            "valorizacao": 1.4214727802492388,
+            "fator_custo": 0.9981230847488368,
             "retorno": 1.535823644737743
           },
           {
             "safra": 2021,
-            "capital_inicio": 363043.28081705933,
-            "renda": 20776.055075515684,
+            "capital_inicio": 454114.66076113464,
+            "renda": 25987.84139824554,
             "rendimento": 0.06496174694785203,
             "renda_caixa": 0.05722748821781643,
+            "valorizacao": -0.06879522886518392,
+            "fator_custo": 0.9980860365775089,
             "retorno": -0.005502991628116072
           },
           {
             "safra": 2022,
-            "capital_inicio": 339021.9955945127,
-            "renda": 43636.02340192164,
+            "capital_inicio": 422064.37387475075,
+            "renda": 54324.53095917687,
             "rendimento": 0.16332130733249578,
             "renda_caixa": 0.12871148175917327,
+            "valorizacao": -0.2552534170459927,
+            "fator_custo": 0.9974500000000004,
             "retorno": -0.11877527225026174
           },
           {
             "safra": 2023,
-            "capital_inicio": 256811.737123593,
-            "renda": 23479.29914273423,
+            "capital_inicio": 313529.4561792572,
+            "renda": 28664.77978827267,
             "rendimento": 0.09690522281349621,
             "renda_caixa": 0.09142611395301845,
+            "valorizacao": 0.09526895286654923,
+            "fator_custo": 0.9987464933861415,
             "retorno": 0.1826827365677146
           },
           {
             "safra": 2024,
-            "capital_inicio": 276894.3038351103,
-            "renda": 16778.64311560453,
+            "capital_inicio": 342968.6261453508,
+            "renda": 20782.47222221245,
             "rendimento": 0.06904541751447019,
             "renda_caixa": 0.06059584066271064,
+            "valorizacao": -0.1526906315134054,
+            "fator_custo": 0.9985094630491711,
             "retorno": -0.07530763939287854
           },
           {
             "safra": 2025,
-            "capital_inicio": 239505.30375711372,
-            "renda": 42428.783583972065,
+            "capital_inicio": 290167.37920199207,
+            "renda": 52164.687627433785,
             "rendimento": 0.08270476064493067,
-            "renda_caixa": 0.17715174953703652,
+            "renda_caixa": 0.17977447282632267,
+            "valorizacao": 0.575708703024563,
+            "fator_custo": 0.9987729439545315,
             "retorno": 0.6050368495118843
           }
         ],
         "insuficiente": false,
         "safras_sem_rendimento": [],
-        "capital_final": 355050.4737364614,
-        "renda_total": 180353.74905320499,
-        "crescimento_renda_aa": 0.2465426331379712,
+        "capital_final": 456658.2310795007,
+        "renda_total": 220747.08508281995,
+        "crescimento_renda_aa": 0.2702951803148925,
         "quedas_de_renda": 2,
-        "renda_ultimo_sobre_primeiro": 6.157603447564749
+        "renda_ultimo_sobre_primeiro": 7.570555487175571
       },
       "cobertura_do_rendimento": {
         "2017": 0.8,
@@ -3194,80 +3426,98 @@
             "renda": 7612.491227580778,
             "rendimento": 0.07534895946277356,
             "renda_caixa": 0.07612491227580778,
+            "valorizacao": 0.21917548860896996,
+            "fator_custo": 0.998590909090909,
             "retorno": 0.26515840228698484
           },
           {
             "safra": 2018,
-            "capital_inicio": 117650.96261580396,
-            "renda": 7778.251486632039,
+            "capital_inicio": 121745.75595113846,
+            "renda": 8048.970328534128,
             "rendimento": 0.07479339458663858,
             "renda_caixa": 0.06611294386117664,
+            "valorizacao": 0.0720104523309348,
+            "fator_custo": 0.9986350264866333,
             "retorno": 0.15113476676144622
           },
           {
             "safra": 2019,
-            "capital_inicio": 126007.57884457395,
-            "renda": 7583.026760619838,
+            "capital_inicio": 130334.57649662673,
+            "renda": 8598.509544976234,
             "rendimento": 0.058696116667737774,
-            "renda_caixa": 0.06017913232007451,
+            "renda_caixa": 0.06597258974635006,
+            "valorizacao": 0.013194863242102431,
+            "fator_custo": 0.998567031900344,
             "retorno": -0.007484667497412167
           },
           {
             "safra": 2020,
-            "capital_inicio": 118130.64395514234,
-            "renda": 5789.842543325386,
+            "capital_inicio": 131865.09377635,
+            "renda": 6462.998121095638,
             "rendimento": 0.04696237072618511,
             "renda_caixa": 0.04901219827028081,
+            "valorizacao": 0.37941790991481117,
+            "fator_custo": 0.9983970298939542,
             "retorno": 0.4015611628637523
           },
           {
             "safra": 2021,
-            "capital_inicio": 158140.6623017156,
-            "renda": 9916.295646408946,
+            "capital_inicio": 181605.49647882357,
+            "renda": 11387.670747584547,
             "rendimento": 0.06940127571583266,
             "renda_caixa": 0.06270554013166901,
+            "valorizacao": -0.002870769345078651,
+            "fator_custo": 0.9986360870307824,
             "retorno": 0.06792873358515905
           },
           {
             "safra": 2022,
-            "capital_inicio": 157922.90607390858,
-            "renda": 17736.278719328147,
+            "capital_inicio": 180837.16596731177,
+            "renda": 20309.773028800377,
             "rendimento": 0.13843711290092378,
             "renda_caixa": 0.11230972859014825,
+            "valorizacao": -0.12658507519703033,
+            "fator_custo": 0.9982658874884051,
             "retorno": 0.002137571294018148
           },
           {
             "safra": 2023,
-            "capital_inicio": 139015.56418986246,
-            "renda": 11452.001042845419,
+            "capital_inicio": 157671.98378875325,
+            "renda": 13042.058545389697,
             "rendimento": 0.0883723234833293,
-            "renda_caixa": 0.08237927249070247,
+            "renda_caixa": 0.08271639787866986,
+            "valorizacao": 0.0903912386885284,
+            "fator_custo": 0.9990017216591717,
             "retorno": 0.17313485168863485
           },
           {
             "safra": 2024,
-            "capital_inicio": 149842.10803554504,
-            "renda": 9318.635139708727,
+            "capital_inicio": 171752.5215549755,
+            "renda": 10681.237094689768,
             "rendimento": 0.06890836312579436,
             "renda_caixa": 0.06218969595314417,
+            "valorizacao": -0.08950534044430969,
+            "fator_custo": 0.9990867231983499,
             "retorno": 0.004318384109373685
           },
           {
             "safra": 2025,
-            "capital_inicio": 140787.7316758261,
-            "renda": 25877.62131601749,
+            "capital_inicio": 156236.93563978068,
+            "renda": 28717.276767912084,
             "rendimento": 0.07687794622191477,
             "renda_caixa": 0.18380593967947845,
+            "valorizacao": 0.33449917107026106,
+            "fator_custo": 0.9990727933847123,
             "retorno": 0.41887161600607814
           }
         ],
         "insuficiente": false,
         "safras_sem_rendimento": [],
-        "capital_final": 185498.938907181,
-        "renda_total": 103064.44388246677,
-        "crescimento_renda_aa": 0.1308922862135542,
-        "quedas_de_renda": 4,
-        "renda_ultimo_sobre_primeiro": 3.399363039297886
+        "capital_final": 208304.74032031678,
+        "renda_total": 114860.98540656325,
+        "crescimento_renda_aa": 0.14525916066193623,
+        "quedas_de_renda": 3,
+        "renda_ultimo_sobre_primeiro": 3.772388815880229
       },
       "cobertura_do_rendimento": {
         "2017": 0.8636363636363636,
@@ -3458,80 +3708,98 @@
             "renda": 10408.190035059166,
             "rendimento": 0.10130639922437451,
             "renda_caixa": 0.10408190035059166,
+            "valorizacao": 0.1741752323260507,
+            "fator_custo": 0.9984999999999999,
             "retorno": 0.23731755041463365
           },
           {
             "safra": 2018,
-            "capital_inicio": 112349.98282821644,
-            "renda": 7790.650607800679,
+            "capital_inicio": 117241.39694775616,
+            "renda": 8129.834445876232,
             "rendimento": 0.07994688996505499,
             "renda_caixa": 0.0693426951360786,
+            "valorizacao": 0.13704963217209049,
+            "fator_custo": 0.998202960793617,
             "retorno": 0.18040887337380673
           },
           {
             "safra": 2019,
-            "capital_inicio": 122801.33207116583,
-            "renda": 7979.341454606371,
+            "capital_inicio": 133069.72525898044,
+            "renda": 11730.292621780896,
             "rendimento": 0.06043344099853971,
-            "renda_caixa": 0.06497764576350185,
+            "renda_caixa": 0.08815147546860407,
+            "valorizacao": 0.268852445743017,
+            "fator_custo": 0.9977183950152777,
             "retorno": 0.11272537213141698
           },
           {
             "safra": 2020,
-            "capital_inicio": 128856.89251600081,
-            "renda": 11464.194885404524,
+            "capital_inicio": 168460.60682452866,
+            "renda": 14987.67500473511,
             "rendimento": 0.08974259555692504,
             "renda_caixa": 0.08896842583706539,
+            "valorizacao": 0.621257361318176,
+            "fator_custo": 0.9975978928509642,
             "retorno": 0.564034359384521
           },
           {
             "safra": 2021,
-            "capital_inicio": 184939.6436922298,
-            "renda": 17558.242237442344,
+            "capital_inicio": 272461.94020869065,
+            "renda": 25867.643362766572,
             "rendimento": 0.10890446681528282,
             "renda_caixa": 0.09494039183217076,
+            "valorizacao": -0.018646496445022292,
+            "fator_custo": 0.9982014580015631,
             "retorno": 0.09371540775866927
           },
           {
             "safra": 2022,
-            "capital_inicio": 182406.4595866433,
-            "renda": 21689.027677044727,
+            "capital_inicio": 266900.58278850414,
+            "renda": 31735.7956523987,
             "rendimento": 0.14952363960156023,
             "renda_caixa": 0.11890493201937517,
+            "valorizacao": -0.19880439982660558,
+            "fator_custo": 0.9988000000000002,
             "retorno": -0.08037850936603985
           },
           {
             "safra": 2023,
-            "capital_inicio": 145925.57689763966,
-            "renda": 11492.477081171022,
+            "capital_inicio": 213582.96512672774,
+            "renda": 16820.88489099659,
             "rendimento": 0.08818784812170498,
             "renda_caixa": 0.07875574197135082,
+            "valorizacao": -0.06006519517355487,
+            "fator_custo": 0.9999885352909021,
             "retorno": 0.019055835575567892
           },
           {
             "safra": 2024,
-            "capital_inicio": 136655.00028689843,
-            "renda": 10608.811747492795,
+            "capital_inicio": 200751.76105371586,
+            "renda": 15584.776528669125,
             "rendimento": 0.09145821510172243,
             "renda_caixa": 0.07763207877662927,
+            "valorizacao": -0.15203875603890285,
+            "fator_custo": 0.9980476329717781,
             "retorno": -0.06136614802059803
           },
           {
             "safra": 2025,
-            "capital_inicio": 117520.76949604823,
-            "renda": 24892.7569854411,
+            "capital_inicio": 169897.36215154544,
+            "renda": 35986.9473850587,
             "rendimento": 0.09724122831613716,
             "renda_caixa": 0.21181581002393068,
+            "valorizacao": 0.1459147652875058,
+            "fator_custo": 0.9987647566876486,
             "retorno": 0.25956256002456524
           }
         ],
         "insuficiente": false,
         "safras_sem_rendimento": [],
-        "capital_final": 134906.30634583707,
-        "renda_total": 123883.69271146273,
-        "crescimento_renda_aa": 0.10115299690170865,
+        "capital_final": 194447.40895148183,
+        "renda_total": 171252.0399273411,
+        "crescimento_renda_aa": 0.1499982569267937,
         "quedas_de_renda": 3,
-        "renda_ultimo_sobre_primeiro": 2.3916508923829998
+        "renda_ultimo_sobre_primeiro": 3.457560561811373
       },
       "cobertura_do_rendimento": {
         "2017": 0.8,
@@ -3723,80 +3991,98 @@
             "renda": 8594.662313800987,
             "rendimento": 0.08561954007892596,
             "renda_caixa": 0.08594662313800987,
+            "valorizacao": 0.1483738853915821,
+            "fator_custo": 0.9985999999999999,
             "retorno": 0.22566155848253588
           },
           {
             "safra": 2018,
-            "capital_inicio": 112899.7326626443,
-            "renda": 7694.502269053462,
+            "capital_inicio": 114676.61619520339,
+            "renda": 7815.6029488396025,
             "rendimento": 0.0784101003249007,
             "renda_caixa": 0.06815341442876048,
+            "valorizacao": 0.08190967156361281,
+            "fator_custo": 0.9981801733320566,
             "retorno": 0.10651277780971857
           },
           {
             "safra": 2019,
-            "capital_inicio": 115841.82748740954,
-            "renda": 7268.836277148747,
+            "capital_inicio": 123843.95474194411,
+            "renda": 9000.927030265344,
             "rendimento": 0.05933878379768375,
-            "renda_caixa": 0.06274794204139064,
+            "renda_caixa": 0.07267958334357731,
+            "valorizacao": 0.08326365822017862,
+            "fator_custo": 0.9985082765592873,
             "retorno": 0.003403237982127605
           },
           {
             "safra": 2020,
-            "capital_inicio": 109725.11020311413,
-            "renda": 6412.498726690787,
+            "capital_inicio": 133955.53232625546,
+            "renda": 7828.56065384859,
             "rendimento": 0.058756132921336024,
             "renda_caixa": 0.05844148814086853,
+            "valorizacao": 0.32563164809282413,
+            "fator_custo": 0.9978742921415275,
             "retorno": 0.34225180793155263
           },
           {
             "safra": 2021,
-            "capital_inicio": 139105.4303876806,
-            "renda": 10636.360412722577,
+            "capital_inicio": 177198.21904253302,
+            "renda": 13549.033398453568,
             "rendimento": 0.08583892095288215,
             "renda_caixa": 0.07646258225203371,
+            "valorizacao": -0.011705318853369161,
+            "fator_custo": 0.9984288052276545,
             "retorno": 0.07625663573196828
           },
           {
             "safra": 2022,
-            "capital_inicio": 137877.85612778665,
-            "renda": 13904.358624476945,
+            "capital_inicio": 174848.90338491046,
+            "renda": 17632.721642459317,
             "rendimento": 0.12029470365604378,
             "renda_caixa": 0.10084548030388751,
+            "valorizacao": -0.09398276622602225,
+            "fator_custo": 0.9985677562658429,
             "retorno": 0.004248793564502584
           },
           {
             "safra": 2023,
-            "capital_inicio": 123595.75585220418,
-            "renda": 9694.218531207205,
+            "capital_inicio": 158189.22927827542,
+            "renda": 12407.553538817527,
             "rendimento": 0.08679325441013463,
             "renda_caixa": 0.07843488204238626,
+            "valorizacao": -0.019201013787153345,
+            "fator_custo": 0.9990648028403882,
             "retorno": 0.06048628606314521
           },
           {
             "safra": 2024,
-            "capital_inicio": 120603.99120531106,
-            "renda": 8176.588065945589,
+            "capital_inicio": 155006.73814986338,
+            "renda": 10508.99089350794,
             "rendimento": 0.07660875929408878,
             "renda_caixa": 0.0677969939819497,
+            "valorizacao": -0.1181371260911901,
+            "fator_custo": 0.9985670584287236,
             "retorno": -0.04709422805417518
           },
           {
             "safra": 2025,
-            "capital_inicio": 106746.52082024484,
-            "renda": 20549.279835811347,
+            "capital_inicio": 136498.81207966278,
+            "renda": 26276.75604907254,
             "rendimento": 0.10604528645787765,
             "renda_caixa": 0.19250538263832676,
+            "valorizacao": 0.32953132353103826,
+            "fator_custo": 0.998781751086045,
             "retorno": 0.422823825498543
           }
         ],
         "insuficiente": false,
         "safras_sem_rendimento": [],
-        "capital_final": 137319.41627681704,
-        "renda_total": 92931.30505685764,
-        "crescimento_renda_aa": 0.08724584587284956,
-        "quedas_de_renda": 5,
-        "renda_ultimo_sobre_primeiro": 2.3909351043163247
+        "capital_final": 181258.35914634704,
+        "renda_total": 113614.80846906542,
+        "crescimento_renda_aa": 0.12023733563035877,
+        "quedas_de_renda": 4,
+        "renda_ultimo_sobre_primeiro": 3.0573343186361503
       },
       "cobertura_do_rendimento": {
         "2017": 0.9,
@@ -3989,80 +4275,98 @@
             "renda": 7232.2671575348195,
             "rendimento": 0.07359174625582975,
             "renda_caixa": 0.07232267157534819,
+            "valorizacao": 0.13276894171382336,
+            "fator_custo": 0.9986333333333334,
             "retorno": 0.16989793163246758
           },
           {
             "safra": 2018,
-            "capital_inicio": 108970.46626080234,
-            "renda": 7204.358318426669,
+            "capital_inicio": 113122.08241601477,
+            "renda": 7478.833884229383,
             "rendimento": 0.07479339458663858,
             "renda_caixa": 0.06611294386117665,
+            "valorizacao": 0.07201045233093481,
+            "fator_custo": 0.9982386003789695,
             "retorno": 0.13725106145011767
           },
           {
             "safra": 2019,
-            "capital_inicio": 115302.8842994271,
-            "renda": 6938.827531141465,
+            "capital_inicio": 121054.45323374818,
+            "renda": 7986.275780158789,
             "rendimento": 0.05869611666773777,
-            "renda_caixa": 0.06017913232007451,
+            "renda_caixa": 0.06597258974635006,
+            "valorizacao": 0.013194863242102424,
+            "fator_custo": 0.9984841511659889,
             "retorno": -0.008123245405654567
           },
           {
             "safra": 2020,
-            "capital_inicio": 108025.56925801578,
-            "renda": 5294.570618733821,
+            "capital_inicio": 122465.82867650154,
+            "renda": 6002.319476426935,
             "rendimento": 0.04696237072618511,
             "renda_caixa": 0.04901219827028081,
+            "valorizacao": 0.37941790991481117,
+            "fator_custo": 0.9984378331836834,
             "retorno": 0.4016184429882812
           },
           {
             "safra": 2021,
-            "capital_inicio": 144618.98003203562,
-            "renda": 9068.411256199848,
+            "capital_inicio": 168667.65815568095,
+            "renda": 10576.396607395682,
             "rendimento": 0.06940127571583266,
             "renda_caixa": 0.06270554013166901,
+            "valorizacao": -0.002870769345078651,
+            "fator_custo": 0.9986360870307827,
             "retorno": 0.06792873358515927
           },
           {
             "safra": 2022,
-            "capital_inicio": 144419.842864512,
-            "renda": 16504.152181582605,
+            "capital_inicio": 167954.0646214602,
+            "renda": 19193.619014171363,
             "rendimento": 0.14303606443937744,
             "renda_caixa": 0.11427897894242992,
+            "valorizacao": -0.14276436537161105,
+            "fator_custo": 0.9983777922503098,
             "retorno": -0.030510358729525122
           },
           {
             "safra": 2023,
-            "capital_inicio": 122492.67193483195,
-            "renda": 9833.878758126155,
+            "capital_inicio": 143742.64985190146,
+            "renda": 11539.855965974923,
             "rendimento": 0.08832227169080765,
             "renda_caixa": 0.08028136379748443,
+            "valorizacao": -0.024292160951012984,
+            "fator_custo": 0.9990428756849584,
             "retorno": 0.05416106817832711
           },
           {
             "safra": 2024,
-            "capital_inicio": 118647.76569373085,
-            "renda": 7606.17698951592,
+            "capital_inicio": 140116.59278632145,
+            "renda": 8982.483552633836,
             "rendimento": 0.07239191221061485,
             "renda_caixa": 0.06410720796167355,
+            "valorizacao": -0.12211682823345418,
+            "fator_custo": 0.9989287601448672,
             "retorno": -0.05614497189749923
           },
           {
             "safra": 2025,
-            "capital_inicio": 104426.64565821664,
-            "renda": 21765.865492476063,
+            "capital_inicio": 122874.22996394346,
+            "renda": 25610.934307323787,
             "rendimento": 0.10029741904726165,
             "renda_caixa": 0.20843210423242634,
+            "valorizacao": 0.29782593982007394,
+            "fator_custo": 0.9993699476205551,
             "retorno": 0.39851683350343414
           }
         ],
         "insuficiente": false,
         "safras_sem_rendimento": [],
-        "capital_final": 132729.9503672118,
-        "renda_total": 91448.50830373737,
-        "crescimento_renda_aa": 0.11264337901864097,
-        "quedas_de_renda": 5,
-        "renda_ultimo_sobre_primeiro": 3.0095494287430533
+        "capital_final": 159368.88893102706,
+        "renda_total": 104602.98574584951,
+        "crescimento_renda_aa": 0.13326294911313408,
+        "quedas_de_renda": 3,
+        "renda_ultimo_sobre_primeiro": 3.541204127206702
       },
       "cobertura_do_rendimento": {
         "2017": 0.8,
@@ -4257,80 +4561,98 @@
             "renda": 7340.883323068868,
             "rendimento": 0.07478402319511938,
             "renda_caixa": 0.07340883323068868,
+            "valorizacao": 0.1852197160928336,
+            "fator_custo": 0.9986,
             "retorno": 0.22905043851390183
           },
           {
             "safra": 2018,
-            "capital_inicio": 114353.24790744275,
-            "renda": 7560.229859247977,
+            "capital_inicio": 118356.04084903037,
+            "renda": 7824.866284283074,
             "rendimento": 0.07479339458663858,
             "renda_caixa": 0.06611294386117664,
+            "valorizacao": 0.0720104523309348,
+            "fator_custo": 0.9984378628632892,
             "retorno": 0.1509074946394473
           },
           {
             "safra": 2019,
-            "capital_inicio": 122451.4504051779,
-            "renda": 7369.022036718242,
+            "capital_inicio": 126680.71062498189,
+            "renda": 8357.45455083802,
             "rendimento": 0.058696116667737774,
-            "renda_caixa": 0.06017913232007451,
+            "renda_caixa": 0.06597258974635006,
+            "valorizacao": 0.013194863242102431,
+            "fator_custo": 0.9985670319003439,
             "retorno": -0.0074846674974122784
           },
           {
             "safra": 2020,
-            "capital_inicio": 114796.81478085738,
-            "renda": 5626.444246836085,
+            "capital_inicio": 128168.32060408956,
+            "renda": 6281.811141416555,
             "rendimento": 0.04696237072618511,
             "renda_caixa": 0.04901219827028081,
+            "valorizacao": 0.37941790991481117,
+            "fator_custo": 0.9983970298939542,
             "retorno": 0.4015611628637523
           },
           {
             "safra": 2021,
-            "capital_inicio": 153677.68863145946,
-            "renda": 9636.442471822116,
+            "capital_inicio": 176514.27553405554,
+            "renda": 11068.422988313201,
             "rendimento": 0.06940127571583266,
             "renda_caixa": 0.06270554013166901,
+            "valorizacao": -0.002870769345078651,
+            "fator_custo": 0.9986360870307827,
             "retorno": 0.06792873358515927
           },
           {
             "safra": 2022,
-            "capital_inicio": 153466.07782063182,
-            "renda": 18930.68418723315,
+            "capital_inicio": 175767.48479126533,
+            "renda": 21681.656247556864,
             "rendimento": 0.15468025096412735,
             "renda_caixa": 0.12335419303123761,
+            "valorizacao": -0.11157505566481163,
+            "fator_custo": 0.9982944589169764,
             "retorno": 0.010244367150805456
           },
           {
             "safra": 2023,
-            "capital_inicio": 134269.41401099364,
-            "renda": 10768.417180319972,
+            "capital_inicio": 155889.88704663224,
+            "renda": 12502.380756451708,
             "rendimento": 0.08837132965501113,
             "renda_caixa": 0.08020007579267666,
+            "valorizacao": -0.013852320041308803,
+            "fator_custo": 0.9991008532913458,
             "retorno": 0.06716367431698345
           },
           {
             "safra": 2024,
-            "capital_inicio": 131653.08318970428,
-            "renda": 8384.776162959719,
+            "capital_inicio": 153592.2242115257,
+            "renda": 9782.04527522587,
             "rendimento": 0.07217013963436227,
             "renda_caixa": 0.06368841473220763,
+            "valorizacao": -0.11859471240864906,
+            "fator_custo": 0.9987715714193041,
             "retorno": -0.04623220811983353
           },
           {
             "safra": 2025,
-            "capital_inicio": 117114.31404989652,
-            "renda": 23152.281168372465,
+            "capital_inicio": 135210.6975787638,
+            "renda": 26729.747876776157,
             "rendimento": 0.09198476240943461,
             "renda_caixa": 0.19768959376313677,
+            "valorizacao": 0.24236233336045376,
+            "fator_custo": 0.9992058617292199,
             "retorno": 0.3412830050754987
           }
         ],
         "insuficiente": false,
         "safras_sem_rendimento": [],
-        "capital_final": 143851.31047030416,
-        "renda_total": 98769.18063657859,
-        "crescimento_renda_aa": 0.12144452116200077,
-        "quedas_de_renda": 4,
-        "renda_ultimo_sobre_primeiro": 3.1538821895746487
+        "capital_final": 167847.27785430333,
+        "renda_total": 111569.26844393031,
+        "crescimento_renda_aa": 0.140411241013763,
+        "quedas_de_renda": 3,
+        "renda_ultimo_sobre_primeiro": 3.641216826424336
       },
       "cobertura_do_rendimento": {
         "2017": 0.8500000000000001,
@@ -4520,80 +4842,98 @@
             "renda": 7612.491227580778,
             "rendimento": 0.07534895946277356,
             "renda_caixa": 0.07612491227580778,
+            "valorizacao": 0.21917548860896996,
+            "fator_custo": 0.9985909090909091,
             "retorno": 0.26514869468204316
           },
           {
             "safra": 2018,
-            "capital_inicio": 117650.05987582768,
-            "renda": 7964.125897215847,
+            "capital_inicio": 121745.75595113846,
+            "renda": 8241.377257860582,
             "rendimento": 0.07589090441892916,
             "renda_caixa": 0.06769334334059401,
+            "valorizacao": 0.08880460493916038,
+            "fator_custo": 0.9990867906595604,
             "retorno": 0.1660429710608058
           },
           {
             "safra": 2019,
-            "capital_inicio": 127508.30479153754,
-            "renda": 7156.267148029241,
+            "capital_inicio": 132436.28711063048,
+            "renda": 7893.203276441658,
             "rendimento": 0.05439927237670153,
-            "renda_caixa": 0.05612392980777976,
+            "renda_caixa": 0.05960000426354509,
+            "valorizacao": -0.00907038754945229,
+            "fator_custo": 0.9996258682141466,
             "retorno": -0.028912932405037783
           },
           {
             "safra": 2020,
-            "capital_inicio": 117433.37560819327,
-            "renda": 5999.294602140567,
+            "capital_inicio": 131185.93946154576,
+            "renda": 6701.868990926634,
             "rendimento": 0.04540965610373152,
             "renda_caixa": 0.051086793435596335,
+            "valorizacao": 0.38062620424360905,
+            "fator_custo": 0.9993132025567657,
             "retorno": 0.3799166139857111
           },
           {
             "safra": 2021,
-            "capital_inicio": 155009.34498933965,
-            "renda": 10026.797225751077,
+            "capital_inicio": 180994.35375749232,
+            "renda": 11707.640492623466,
             "rendimento": 0.06888211338582453,
             "renda_caixa": 0.06468511447771516,
+            "valorizacao": 0.0006812540558087097,
+            "fator_custo": 0.9996014243803475,
             "retorno": 0.12062439257036806
           },
           {
             "safra": 2022,
-            "capital_inicio": 162513.0132650165,
-            "renda": 16088.507180464238,
+            "capital_inicio": 181045.46781274115,
+            "renda": 17923.188121223575,
             "rendimento": 0.12035071632902965,
             "renda_caixa": 0.09899827009070383,
+            "valorizacao": -0.12896792245619984,
+            "fator_custo": 0.9994538143035535,
             "retorno": -0.03363595601828051
           },
           {
             "safra": 2023,
-            "capital_inicio": 140176.402272513,
-            "renda": 11398.542817874952,
+            "capital_inicio": 157610.27843532068,
+            "renda": 12863.875470895544,
             "rendimento": 0.08587108260035356,
-            "renda_caixa": 0.08131570387799913,
+            "renda_caixa": 0.08161825230309809,
+            "valorizacao": 0.10897739014966705,
+            "fator_custo": 0.99957905614619,
             "retorno": 0.16154669808963695
           },
           {
             "safra": 2024,
-            "capital_inicio": 149945.4583686039,
-            "renda": 9214.294445827956,
+            "capital_inicio": 174712.66004850945,
+            "renda": 10736.26310937261,
             "rendimento": 0.0685788023957179,
             "renda_caixa": 0.06145097388129548,
+            "valorizacao": -0.1020218071545319,
+            "fator_custo": 0.9992988995997601,
             "retorno": -0.009907995590651808
           },
           {
             "safra": 2025,
-            "capital_inicio": 138932.00865992063,
-            "renda": 23956.89429139331,
+            "capital_inicio": 156778.1643867013,
+            "renda": 27034.215855934723,
             "rendimento": 0.07469820094806946,
             "renda_caixa": 0.17243610397971912,
+            "valorizacao": 0.351742941829393,
+            "fator_custo": 0.9993479451118952,
             "retorno": 0.4176022514566604
           }
         ],
         "insuficiente": false,
         "safras_sem_rendimento": [],
-        "capital_final": 183261.05701298793,
-        "renda_total": 99417.21483627797,
-        "crescimento_renda_aa": 0.12263556944770437,
+        "capital_final": 211785.59120790026,
+        "renda_total": 110714.12380285957,
+        "crescimento_renda_aa": 0.13926845514306718,
         "quedas_de_renda": 4,
-        "renda_ultimo_sobre_primeiro": 3.1470504957161998
+        "renda_ultimo_sobre_primeiro": 3.55129681568462
       },
       "cobertura_do_rendimento": {
         "2017": 0.8636363636363636,
@@ -4621,13 +4961,12 @@
         "testes": {
           "r1_retorno": false,
           "r2_dividendo_crescente": false,
-          "r3_valorizacao": false
+          "r3_valorizacao": true
         },
         "candidata": false,
         "falhou": [
           "r1_retorno",
-          "r2_dividendo_crescente",
-          "r3_valorizacao"
+          "r2_dividendo_crescente"
         ]
       },
       "vs_nota_fatores": {
@@ -4781,80 +5120,98 @@
             "renda": 7612.491227580778,
             "rendimento": 0.07534895946277356,
             "renda_caixa": 0.07612491227580778,
+            "valorizacao": 0.21917548860896996,
+            "fator_custo": 0.9985909090909091,
             "retorno": 0.26514869468204316
           },
           {
             "safra": 2018,
-            "capital_inicio": 117650.05987582768,
-            "renda": 7964.125897215847,
+            "capital_inicio": 121745.75595113846,
+            "renda": 8241.377257860582,
             "rendimento": 0.07589090441892916,
             "renda_caixa": 0.06769334334059401,
+            "valorizacao": 0.08880460493916038,
+            "fator_custo": 0.9990867906595604,
             "retorno": 0.1660429710608058
           },
           {
             "safra": 2019,
-            "capital_inicio": 127508.30479153754,
-            "renda": 7156.267148029241,
+            "capital_inicio": 132436.28711063048,
+            "renda": 7893.203276441658,
             "rendimento": 0.05439927237670153,
-            "renda_caixa": 0.05612392980777976,
+            "renda_caixa": 0.05960000426354509,
+            "valorizacao": -0.00907038754945229,
+            "fator_custo": 0.9996258682141466,
             "retorno": -0.028912932405037783
           },
           {
             "safra": 2020,
-            "capital_inicio": 117433.37560819327,
-            "renda": 5999.294602140567,
+            "capital_inicio": 131185.93946154576,
+            "renda": 6701.868990926634,
             "rendimento": 0.04540965610373152,
             "renda_caixa": 0.051086793435596335,
+            "valorizacao": 0.38062620424360905,
+            "fator_custo": 0.9993132025567657,
             "retorno": 0.3799166139857111
           },
           {
             "safra": 2021,
-            "capital_inicio": 155009.34498933965,
-            "renda": 10026.797225751077,
+            "capital_inicio": 180994.35375749232,
+            "renda": 11707.640492623466,
             "rendimento": 0.06888211338582453,
             "renda_caixa": 0.06468511447771516,
+            "valorizacao": 0.0006812540558087097,
+            "fator_custo": 0.9996014243803475,
             "retorno": 0.12062439257036806
           },
           {
             "safra": 2022,
-            "capital_inicio": 162513.0132650165,
-            "renda": 16088.507180464238,
+            "capital_inicio": 181045.46781274115,
+            "renda": 17923.188121223575,
             "rendimento": 0.12035071632902965,
             "renda_caixa": 0.09899827009070383,
+            "valorizacao": -0.12896792245619984,
+            "fator_custo": 0.9994538143035535,
             "retorno": -0.03363595601828051
           },
           {
             "safra": 2023,
-            "capital_inicio": 140176.402272513,
-            "renda": 11185.141451492136,
+            "capital_inicio": 157610.27843532068,
+            "renda": 12681.700614566213,
             "rendimento": 0.08403420794815446,
-            "renda_caixa": 0.07979332662388794,
+            "renda_caixa": 0.08046239585681886,
+            "valorizacao": 0.1454728135519537,
+            "fator_custo": 0.9995907242641527,
             "retorno": 0.1831535403379474
           },
           {
             "safra": 2024,
-            "capital_inicio": 152993.51755188528,
-            "renda": 9225.140700306218,
+            "capital_inicio": 180464.3991429001,
+            "renda": 10881.568710418604,
             "rendimento": 0.0673425739097603,
             "renda_caixa": 0.06029759200207722,
+            "valorizacao": -0.10838183607324198,
+            "fator_custo": 0.999317102685731,
             "retorno": -0.019659947891376595
           },
           {
             "safra": 2025,
-            "capital_inicio": 140522.52447842254,
-            "renda": 23398.212541841236,
+            "capital_inicio": 160795.45439598343,
+            "renda": 26773.8302573469,
             "rendimento": 0.07325115550783788,
             "renda_caixa": 0.16650862649022555,
+            "valorizacao": 0.34034116741140547,
+            "fator_custo": 0.9993848256428841,
             "retorno": 0.4076602946150176
           }
         ],
         "insuficiente": false,
         "safras_sem_rendimento": [],
-        "capital_final": 184307.25855006799,
-        "renda_total": 98655.97797482133,
-        "crescimento_renda_aa": 0.12023093048986677,
+        "capital_final": 215388.18421023883,
+        "renda_total": 110416.86894898841,
+        "crescimento_renda_aa": 0.13875761676280618,
         "quedas_de_renda": 4,
-        "renda_ultimo_sobre_primeiro": 3.0736603619413434
+        "renda_ultimo_sobre_primeiro": 3.517091771527141
       },
       "cobertura_do_rendimento": {
         "2017": 0.8636363636363636,
@@ -4882,13 +5239,12 @@
         "testes": {
           "r1_retorno": false,
           "r2_dividendo_crescente": false,
-          "r3_valorizacao": false
+          "r3_valorizacao": true
         },
         "candidata": false,
         "falhou": [
           "r1_retorno",
-          "r2_dividendo_crescente",
-          "r3_valorizacao"
+          "r2_dividendo_crescente"
         ]
       },
       "vs_nota_fatores": {
@@ -5041,80 +5397,98 @@
             "renda": 7612.491227580778,
             "rendimento": 0.07534895946277356,
             "renda_caixa": 0.07612491227580778,
+            "valorizacao": 0.21917548860896996,
+            "fator_custo": 0.9985909090909091,
             "retorno": 0.26514869468204316
           },
           {
             "safra": 2018,
-            "capital_inicio": 117650.05987582768,
-            "renda": 9048.151490655422,
+            "capital_inicio": 121745.75595113846,
+            "renda": 9363.140523284965,
             "rendimento": 0.08479028304244667,
             "renda_caixa": 0.07690732584586173,
+            "valorizacao": 0.12129516342784465,
+            "fator_custo": 0.9998080606628402,
             "retorno": 0.20330538627181105
           },
           {
             "safra": 2019,
-            "capital_inicio": 130503.52031798672,
-            "renda": 7358.568637074097,
+            "capital_inicio": 136486.72511509556,
+            "renda": 8108.49229055081,
             "rendimento": 0.05554849390360142,
-            "renda_caixa": 0.05638597808813206,
+            "renda_caixa": 0.059408651527928,
+            "valorizacao": -0.052094936024523336,
+            "fator_custo": 0.9995528949458299,
             "retorno": -0.032727339052118
           },
           {
             "safra": 2020,
-            "capital_inicio": 119589.47228868221,
-            "renda": 5941.841514928834,
+            "capital_inicio": 129318.61303380932,
+            "renda": 6425.237011853799,
             "rendimento": 0.04487814113944015,
             "renda_caixa": 0.049685322639316985,
+            "valorizacao": 0.31701888710255943,
+            "fator_custo": 0.9998086051674009,
             "retorno": 0.28328258659538985
           },
           {
             "safra": 2021,
-            "capital_inicio": 146875.58413351615,
-            "renda": 9277.90015080404,
+            "capital_inicio": 170282.45839783642,
+            "renda": 10756.475664548887,
             "rendimento": 0.06715068716100173,
             "renda_caixa": 0.06316843065195937,
+            "valorizacao": -0.01177849333851906,
+            "fator_custo": 0.999550647225281,
             "retorno": 0.08348915277227853
           },
           {
             "safra": 2022,
-            "capital_inicio": 149124.3028096815,
-            "renda": 13477.891234711053,
+            "capital_inicio": 168201.17195450384,
+            "renda": 15202.063368886074,
             "rendimento": 0.10887363095981403,
             "renda_caixa": 0.09038024641705843,
+            "valorizacao": -0.14246443603610334,
+            "fator_custo": 0.999791370284442,
             "retorno": -0.060321195495391056
           },
           {
             "safra": 2023,
-            "capital_inicio": 126370.52832205291,
-            "renda": 11359.216681071171,
+            "capital_inicio": 144208.39441690946,
+            "renda": 13001.302048628375,
             "rendimento": 0.09342930630218092,
-            "renda_caixa": 0.08988817908652262,
+            "renda_caixa": 0.09015634700876941,
+            "valorizacao": 0.14313168937790582,
+            "fator_custo": 0.9995817693103519,
             "retorno": 0.20075261642388664
           },
           {
             "safra": 2024,
-            "capital_inicio": 138774.16824937286,
-            "renda": 9169.496075503077,
+            "capital_inicio": 164780.24054372398,
+            "renda": 10887.845973401885,
             "rendimento": 0.07282374824103394,
             "renda_caixa": 0.06607494889845622,
+            "valorizacao": -0.07469915755076854,
+            "fator_custo": 0.9996677445813698,
             "retorno": 0.026515865353583745
           },
           {
             "safra": 2025,
-            "capital_inicio": 132784.05296563526,
-            "renda": 22712.852266117272,
+            "capital_inicio": 152420.63598001454,
+            "renda": 26071.71049536842,
             "rendimento": 0.07693827989079663,
             "renda_caixa": 0.17105105439126336,
+            "valorizacao": 0.3411501637974589,
+            "fator_custo": 0.9993725211746285,
             "retorno": 0.39922308545755336
           }
         ],
         "insuficiente": false,
         "safras_sem_rendimento": [],
-        "capital_final": 172521.04021130645,
-        "renda_total": 95958.40927844575,
-        "crescimento_renda_aa": 0.10701232044330555,
+        "capital_final": 204290.69234123346,
+        "renda_total": 107428.75860410399,
+        "crescimento_renda_aa": 0.12716453861019117,
         "quedas_de_renda": 4,
-        "renda_ultimo_sobre_primeiro": 2.9836293516932346
+        "renda_ultimo_sobre_primeiro": 3.4248591841929668
       },
       "cobertura_do_rendimento": {
         "2017": 0.8636363636363636,
@@ -5278,9 +5652,9 @@
         "media_sem_melhor_safra": 0.04984104870963045
       },
       "com_ir_vs_equal_weight": {
-        "media": 0.07490709487500892,
+        "media": 0.07490709487500893,
         "ic95": [
-          0.007611417395147851,
+          0.007611417395147876,
           0.17293549132484187
         ],
         "n_safras": 9,
@@ -5290,7 +5664,7 @@
         ],
         "ic_cruza_zero": false,
         "melhor_safra": 2020,
-        "media_sem_melhor_safra": 0.031615004456635926
+        "media_sem_melhor_safra": 0.03161500445663595
       },
       "giro_medio_anual": null,
       "renda": {
@@ -5301,80 +5675,98 @@
             "renda": 7265.289900134773,
             "rendimento": 0.07307920144534227,
             "renda_caixa": 0.07265289900134773,
+            "valorizacao": 0.3065061994939259,
+            "fator_custo": 0.998543402384561,
             "retorno": 0.3249148601576177
           },
           {
             "safra": 2018,
-            "capital_inicio": 123468.5061804455,
-            "renda": 7553.812261512145,
+            "capital_inicio": 130460.31456791869,
+            "renda": 7981.571611335744,
             "rendimento": 0.06822239998377552,
             "renda_caixa": 0.06118007332552056,
+            "valorizacao": 0.23306393890762003,
+            "fator_custo": 0.9985076085039277,
             "retorno": 0.24090523476340409
           },
           {
             "safra": 2019,
-            "capital_inicio": 143427.73157542807,
-            "renda": 7912.012094446883,
+            "capital_inicio": 160625.83443711975,
+            "renda": 9721.726947494624,
             "rendimento": 0.050947922243332625,
-            "renda_caixa": 0.055163753951487315,
+            "renda_caixa": 0.06052405568234039,
+            "valorizacao": 0.0036651933701296133,
+            "fator_custo": 0.998328327603892,
             "retorno": -0.01736422648350222
           },
           {
             "safra": 2020,
-            "capital_inicio": 134104.8561754569,
-            "renda": 8114.399210159168,
+            "capital_inicio": 160945.06125213736,
+            "renda": 9738.442850978383,
             "rendimento": 0.050366557782090295,
             "renda_caixa": 0.06050787004717149,
+            "valorizacao": 0.9184118083636531,
+            "fator_custo": 0.9982205817014337,
             "retorno": 0.9686924038007476
           },
           {
             "safra": 2021,
-            "capital_inicio": 251351.50172991864,
-            "renda": 15158.730677273868,
+            "capital_inicio": 308209.49475672306,
+            "renda": 18587.773261908053,
             "rendimento": 0.06745898187984113,
             "renda_caixa": 0.06030889241935851,
+            "valorizacao": -0.03171272038512471,
+            "fator_custo": 0.9983707782838022,
             "retorno": 0.03121287097852149
           },
           {
             "safra": 2022,
-            "capital_inicio": 242816.73406055878,
-            "renda": 25302.684091047515,
+            "capital_inicio": 297949.11590368435,
+            "renda": 31047.746293456086,
             "rendimento": 0.13003285071703913,
             "renda_caixa": 0.10420486128743085,
+            "valorizacao": -0.16844282687221,
+            "fator_custo": 0.9979474278205369,
             "retorno": -0.05165511840744186
           },
           {
             "safra": 2023,
-            "capital_inicio": 203776.38293013928,
-            "renda": 16473.236416483593,
+            "capital_inicio": 247253.17573383093,
+            "renda": 20070.086409860724,
             "rendimento": 0.08474788649726708,
-            "renda_caixa": 0.08083977239958723,
+            "renda_caixa": 0.08117220881104578,
+            "valorizacao": 0.14951254997977542,
+            "fator_custo": 0.9990502792169041,
             "retorno": 0.22154849003434007
           },
           {
             "safra": 2024,
-            "capital_inicio": 229475.1950858936,
-            "renda": 14451.354963856422,
+            "capital_inicio": 283950.69829049555,
+            "renda": 17881.98646783981,
             "rendimento": 0.06991133238822064,
             "renda_caixa": 0.06297567350774978,
+            "valorizacao": -0.10727108429671013,
+            "fator_custo": 0.9988063592763196,
             "retorno": -0.024248373096656395
           },
           {
             "safra": 2025,
-            "capital_inicio": 209279.76754785518,
-            "renda": 35309.232704713,
+            "capital_inicio": 253188.42181857556,
+            "renda": 42872.7560565302,
             "rendimento": 0.07634756998797766,
-            "renda_caixa": 0.1687178513166065,
+            "renda_caixa": 0.1693314241962101,
+            "valorizacao": 0.3469667784116341,
+            "fator_custo": 0.9988663492865789,
             "retorno": 0.4188393246487111
           }
         ],
         "insuficiente": false,
         "safras_sem_rendimento": [],
-        "capital_final": 275872.1925237911,
-        "renda_total": 137540.75231962738,
-        "crescimento_renda_aa": 0.19870148832967094,
+        "capital_final": 340649.77671801514,
+        "renda_total": 165167.3797995384,
+        "crescimento_renda_aa": 0.22404523556153966,
         "quedas_de_renda": 2,
-        "renda_ultimo_sobre_primeiro": 4.85998951040591
+        "renda_ultimo_sobre_primeiro": 5.90103858838928
       },
       "cobertura_do_rendimento": {
         "2017": 0.8318181818181818,

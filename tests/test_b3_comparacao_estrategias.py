@@ -37,10 +37,12 @@ def test_trajetoria_gasta_a_renda_e_cresce_so_pelo_preco():
     fator = ce.rendimento_por_razao(10.0, 10.0, 11.0, 11.55)
     assert fator == pytest.approx(0.05)
     t = ce.trajetoria_de_renda([
-        {"safra": 2017, "retorno": 0.155, "rendimento": fator, "renda_caixa": 0.048},
-        {"safra": 2018, "retorno": 0.155, "rendimento": fator, "renda_caixa": 0.048},
+        {"safra": 2017, "retorno": 0.155, "rendimento": fator, "renda_caixa": 0.048,
+         "valorizacao": 0.10},
+        {"safra": 2018, "retorno": 0.155, "rendimento": fator, "renda_caixa": 0.048,
+         "valorizacao": 0.10},
     ], capital=100.0)
-    # O capital cresce só pelo preço: 100 x 1,155 / 1,05 = 110 (não 110,50).
+    # O capital cresce só pelo preço: 100 x 1,10 = 110 (não 110,50).
     assert t["anos"][1]["capital_inicio"] == pytest.approx(110.0)
     assert t["capital_final"] == pytest.approx(121.0)
     # A renda é o caixa recebido, não o fator.
@@ -53,9 +55,9 @@ def test_trajetoria_gasta_a_renda_e_cresce_so_pelo_preco():
 
 def test_ano_sem_rendimento_deixa_a_trajetoria_insuficiente_e_nao_vira_zero():
     t = ce.trajetoria_de_renda([
-        {"safra": 2017, "retorno": 0.0, "rendimento": 0.05, "renda_caixa": 0.05},
-        {"safra": 2018, "retorno": 0.0, "rendimento": None, "renda_caixa": None},
-        {"safra": 2019, "retorno": 0.0, "rendimento": 0.05, "renda_caixa": 0.05},
+        {"safra": 2017, "rendimento": 0.05, "renda_caixa": 0.05, "valorizacao": 0.0},
+        {"safra": 2018, "rendimento": None, "renda_caixa": None, "valorizacao": None},
+        {"safra": 2019, "rendimento": 0.05, "renda_caixa": 0.05, "valorizacao": 0.0},
     ], capital=100.0)
     assert t["insuficiente"] is True and t["safras_sem_rendimento"] == [2018]
     for k in ("capital_final", "renda_total", "crescimento_renda_aa",
@@ -64,8 +66,8 @@ def test_ano_sem_rendimento_deixa_a_trajetoria_insuficiente_e_nao_vira_zero():
     assert t["anos"][1]["renda"] is None and t["anos"][2]["capital_inicio"] is None
     # Renda zero MEDIDA continua sendo dado: tendência indefinida, queda contada.
     z = ce.trajetoria_de_renda([
-        {"safra": 2017, "retorno": 0.0, "rendimento": 0.05, "renda_caixa": 0.05},
-        {"safra": 2018, "retorno": 0.0, "rendimento": 0.0, "renda_caixa": 0.0},
+        {"safra": 2017, "rendimento": 0.05, "renda_caixa": 0.05, "valorizacao": 0.0},
+        {"safra": 2018, "rendimento": 0.0, "renda_caixa": 0.0, "valorizacao": 0.0},
     ], capital=100.0)
     assert z["insuficiente"] is False
     assert z["crescimento_renda_aa"] is None and z["quedas_de_renda"] == 1
@@ -81,8 +83,11 @@ def test_rendimentos_do_ano_separa_fator_e_caixa_da_serie_diaria():
     assert y["fator"] == pytest.approx(r_ex - 1.0)
     # Caixa = 0,50 / 10 (capital do início), não o fator.
     assert y["caixa"] == pytest.approx(0.05)
+    # Valorização só pelo preço: 10 -> 11.
+    assert y["preco"] == pytest.approx(0.10)
     # Sem provento: fator e caixa zero.
-    assert ce.rendimentos_do_ano([(10.0, 9.0), (11.0, 9.9)]) == {"fator": 0.0, "caixa": 0.0}
+    z = ce.rendimentos_do_ano([(10.0, 9.0), (11.0, 9.9)])
+    assert z["fator"] == 0.0 and z["caixa"] == 0.0 and z["preco"] == pytest.approx(0.10)
 
 
 def test_rendimentos_do_ano_ignora_desdobramento_e_tira_quebra():
@@ -91,10 +96,30 @@ def test_rendimentos_do_ano_ignora_desdobramento_e_tira_quebra():
     serie = [(20.0, 20.0), (10.0, 10.0), (10.0, 10.0 * 10.0 / 9.5)]
     y = ce.rendimentos_do_ano(serie)
     assert y["caixa"] == pytest.approx(0.05)
+    assert y["preco"] == pytest.approx(0.0)  # 20 -> 10 é desdobramento
     # Razão diária fora da faixa é quebra: o ticker-ano sai.
     assert ce.rendimentos_do_ano([(10.0, 10.0), (10.0, 9.0)]) is None
     assert ce.rendimentos_do_ano([(10.0, 10.0)]) is None
     assert ce.rendimentos_do_ano([(10.0, 10.0), (0.0, 1.0)]) is None
+
+
+def test_salto_so_e_desdobramento_em_passo_diario():
+    # A série de `market.historical_prices` é mensal até 2024: num passo de um
+    # mês, -31% (BOVA11 em março de 2020) é mercado e entra no preço.
+    from datetime import date
+    mensal = [(date(2020, 2, 1), 100.6, 100.6), (date(2020, 3, 1), 69.35, 69.35)]
+    y = ce.rendimentos_do_ano(mensal)
+    assert y["preco"] == pytest.approx(69.35 / 100.6 - 1.0)
+    # O mesmo salto em pregões seguidos continua sendo desdobramento.
+    diario = [(date(2025, 6, 2), 20.0, 20.0), (date(2025, 6, 3), 10.0, 10.0)]
+    assert ce.rendimentos_do_ano(diario)["preco"] == pytest.approx(0.0)
+    # No limite: até PASSO_DIARIO_DIAS corridos ainda é passo diário.
+    d0 = date(2025, 6, 2)
+    from datetime import timedelta
+    borda = [(d0, 20.0, 20.0), (d0 + timedelta(days=ce.PASSO_DIARIO_DIAS), 10.0, 10.0)]
+    assert ce.rendimentos_do_ano(borda)["preco"] == pytest.approx(0.0)
+    fora = [(d0, 20.0, 20.0), (d0 + timedelta(days=ce.PASSO_DIARIO_DIAS + 1), 10.0, 10.0)]
+    assert ce.rendimentos_do_ano(fora)["preco"] == pytest.approx(-0.5)
 
 
 def test_decisao_reprova_r2_e_r3_com_trajetoria_insuficiente():
@@ -156,3 +181,34 @@ def test_constantes_da_regra_registradas():
     assert ce.TOLERANCIA_PONTA_DIAS == 45
     assert (ce.RENDIMENTO_MIN, ce.RENDIMENTO_MAX) == (-0.05, 1.0)
     assert math.isclose(ce.rendimento_por_razao(1, 1, 1, 1), 0.0)
+
+
+def test_valorizacao_da_carteira_e_ponderada_papel_a_papel():
+    # Exemplo da revisão do #810 (régua 1.1.0): pesos iguais, A +100% sem
+    # provento, B 0% de preço com fator de 20%. Retorno total 60%, fator médio
+    # 10%: 1,60/1,10 = 1,4545 não é a valorização. A certa é 50%.
+    rend = {"A": {"fator": 0.0, "caixa": 0.0, "preco": 1.0},
+            "B": {"fator": 0.2, "caixa": 0.2, "preco": 0.0}}
+    lin = ce.linha_de_renda(2017, {"A": 0.5, "B": 0.5}, rend, liquido=0.60, bruto=0.60)
+    assert lin["valorizacao"] == pytest.approx(0.5)
+    assert lin["renda_caixa"] == pytest.approx(0.1)
+    assert lin["rendimento"] == pytest.approx(0.1)
+    assert lin["fator_custo"] == pytest.approx(1.0) and lin["cobertura"] == 1.0
+    t = ce.trajetoria_de_renda([lin], capital=100.0)
+    assert t["capital_final"] == pytest.approx(150.0)
+    assert t["renda_total"] == pytest.approx(10.0)
+
+
+def test_linha_de_renda_aplica_o_custo_e_renormaliza():
+    rend = {"A": {"fator": 0.0, "caixa": 0.0, "preco": 0.10}, "B": None}
+    lin = ce.linha_de_renda(2017, {"a": 0.5, "b": 0.5}, rend, liquido=0.089, bruto=0.10)
+    assert lin["valorizacao"] == pytest.approx(0.10)
+    assert lin["cobertura"] == pytest.approx(0.5)
+    assert lin["fator_custo"] == pytest.approx(1.089 / 1.10)
+    t = ce.trajetoria_de_renda([lin], capital=100.0)
+    assert t["capital_final"] == pytest.approx(100.0 * 1.10 * 1.089 / 1.10)
+    # Sem nenhum papel com dado: a linha fica sem valorização e a trajetória,
+    # insuficiente.
+    vazia = ce.linha_de_renda(2018, {"B": 1.0}, rend, liquido=0.0)
+    assert vazia["valorizacao"] is None and vazia["renda_caixa"] is None
+    assert ce.trajetoria_de_renda([vazia])["insuficiente"] is True

@@ -2135,8 +2135,15 @@ e a **trajetória de renda** de quem gasta os dividendos. A régua mora em
   `(1 - 1/r_i) × P_{i-1}/P_0`. Razão diária fora de [0,95; 2,0) é quebra da
   série e tira o papel naquela safra. Salto de preço de 45% ou mais com as
   duas séries juntas (desdobramento, grupamento) não mexe no índice de preço;
+- valorização da carteira (régua 1.2.0): o índice de preço de cada papel
+  (fechamento, sem proventos) entre as duas pontas, pesado papel a papel
+  pelos mesmos pesos renormalizados da renda. Dividir o retorno total da
+  carteira pelo fator agregado não isola o preço quando os papéis têm
+  rendimentos diferentes (a revisão do PR #810 mostrou o caso);
 - trajetória: R$ 100 mil em abril/2017; renda = capital × caixa; o capital
-  cresce só pela valorização, `capital × (1 + retorno líquido) / (1 + fator)`.
+  cresce só pela valorização, `capital × (1 + valorização) × fator_custo`,
+  com `fator_custo = (1 + retorno líquido) / (1 + retorno bruto)` (1 nos
+  pesos iguais).
   Safra sem rendimento deixa a trajetória **insuficiente** (R2 e R3
   reprovam), nunca renda zero. Mede a tendência da renda (reta do log), os
   anos de queda, a renda total e o capital final.
@@ -2180,6 +2187,9 @@ contra a líder, e o retorno com IR.
   referência, não concorrentes.
 - Sobram pontos isolados de preço em papéis pouco líquidos da
   `brapi_legacy_quote`; o filtro de -5% a 100% tira os piores.
+- (Achado na régua 1.2.0.) A série de `market.historical_prices` é mensal
+  até 2024: o caixa e a valorização desses anos saem de passos de um mês, e
+  um desdobramento que a série não ajustou nesses anos não é reconhecido.
 
 ### Como rodar
 
@@ -2193,7 +2203,7 @@ de cada estratégia, a trajetória de renda, a cobertura do rendimento e a
 escolha. Uma pasta de cache nova evita reaproveitar a aba montada antes da
 correção dos preços.
 
-### Resultado (27/11/2026, régua 1.1.0): a rota de valor passa nas três; a regra escolhe a de 20 nomes
+### Resultado (27/11/2026, régua 1.2.0): a rota de valor passa nas três; a regra escolhe a de 20 nomes
 
 Nove safras, 2017 a 2025. Excesso e IC em pontos percentuais ao ano sobre
 pesos iguais, líquidos de custo. Renda: tendência anual da renda em dinheiro
@@ -2208,32 +2218,46 @@ esta é a rodada corrigida. O excesso (R1) não muda; mudam a renda e o capital.
 A rota de valor continua passando nas três; a fórmula mágica passou a passar
 também (com 3 quedas, igual aos pesos iguais).
 
-**Pesos iguais (benchmark):** renda +18,1% ao ano, 3 quedas, capital final
-185, renda total 72.
+**Régua 1.2.0 (27/11/2026).** A segunda revisão do PR #810 mostrou que dividir
+o retorno da carteira pelo fator médio não isola o preço quando os papéis têm
+proventos diferentes; a valorização passou a sair papel a papel. Ao conferir,
+apareceu um defeito mais sério: `market.historical_prices` é **mensal até
+2024**, e a regra que tira desdobramento (salto de 45% com as duas séries
+juntas) também tirava quedas e altas reais de um mês, como março de 2020
+(BOVA11 −31%). O salto agora só é desdobramento entre pregões a até 7 dias.
+Com as duas correções, preço × proventos fecha com o retorno da régua quando
+a cobertura é cheia (rota em 2020: +154,6% contra +153,6%); onde a cobertura
+é menor, os papéis sem ponta (em geral os que saíram da bolsa ou pararam de
+negociar) puxam a valorização para cima, mais nos pesos iguais (71% a 88% do
+peso coberto) do que na rota (78% a 100%). O excesso (R1) não muda; mudam a
+renda e o capital, e as cinco candidatas são as mesmas.
+
+**Pesos iguais (benchmark):** renda +19,4% ao ano, 3 quedas, capital final
+206, renda total 80.
 
 | Estratégia | Excesso | IC 95% | Sem a melhor | Renda a.a. | Quedas | Capital | Renda total | Falhou |
 |---|---|---|---|---|---|---|---|---|
-| **rota_valor_top20** | **+17,0** | [+1,6; +40,0] | +6,6 | +24,7% | 2 | 355 | 180 | — |
-| **rota_valor** | **+16,3** | [+2,8; +38,5] | +5,8 | +25,0% | 2 | 371 | 171 | — |
-| rota_valor_top15 | +14,8 | [−1,4; +38,5] | +4,2 | +24,5% | 3 | 308 | 167 | R1 |
-| rota_valor_top10 | +12,0 | [−4,0; +36,0] | +1,0 | +25,2% | 3 | 257 | 168 | R1 |
-| **rota_mais_dividendo** | **+9,2** | [+2,9; +18,6] | +5,0 | +19,9% | 2 | 276 | 138 | — |
-| **formula_magica** | **+4,2** | [+0,5; +7,6] | +3,3 | +27,6% | 3 | 211 | 123 | — |
-| dividendo_6 | +2,1 | [−3,6; +7,3] | +0,5 | +13,1% | 4 | 185 | 103 | R1, R2 |
-| **nota_fatores** (padrão até 26/11) | **+1,7** | [+0,6; +2,8] | +1,5 | +19,3% | 3 | 200 | 88 | — |
-| dividendo_segurado_so_solvencia | +1,7 | [−4,0; +6,5] | +0,5 | +12,0% | 4 | 184 | 99 | R1, R2, R3 |
-| dividendo_segurado | +1,7 | [−4,3; +6,7] | +0,5 | +12,3% | 4 | 183 | 99 | R1, R2, R3 |
-| lider_segmento | +1,2 | [−6,6; +9,4] | −1,0 | +31,6% | 3 | 177 | 92 | R1, R3 |
-| tirar_30_pela_nota | +1,2 | [+0,2; +2,1] | +0,9 | +17,4% | 2 | 190 | 84 | R2 |
-| dividendo_segurado_dois_anos | +0,9 | [−6,7; +6,3] | −0,3 | +10,7% | 4 | 173 | 96 | R1, R2, R3 |
-| qualidade_constante | +0,8 | [−4,7; +6,2] | −0,9 | +19,8% | 4 | 191 | 89 | R1, R2 |
-| lider_filtro_nota_fatores | +0,7 | [−6,7; +8,1] | −1,3 | +31,2% | 4 | 165 | 94 | R1, R2, R3 |
-| dividendo_6_top5 | +0,4 | [−6,9; +7,2] | −1,8 | +10,1% | 3 | 135 | 124 | R1, R2, R3 |
-| lider_segurado | −0,4 | [−4,7; +3,7] | −1,8 | +22,9% | 4 | 176 | 69 | R1, R2, R3 |
-| dividendo_6_top20 | −0,8 | [−7,3; +5,4] | −2,9 | +12,1% | 4 | 144 | 99 | R1, R2, R3 |
-| qualidade_3_anos | −0,8 | [−5,7; +4,2] | −2,5 | +19,4% | 3 | 180 | 73 | R1, R3 |
-| dividendo_6_top10 | −1,0 | [−8,8; +6,1] | −3,1 | +8,7% | 5 | 137 | 93 | R1, R2, R3 |
-| dividendo_6_top15 | −1,7 | [−8,3; +4,4] | −3,4 | +11,3% | 5 | 133 | 91 | R1, R2, R3 |
+| **rota_valor_top20** | **+17,0** | [+1,6; +40,0] | +6,6 | +27,0% | 2 | 457 | 221 | — |
+| **rota_valor** | **+16,3** | [+2,8; +38,5] | +5,8 | +27,7% | 2 | 475 | 211 | — |
+| rota_valor_top15 | +14,8 | [−1,4; +38,5] | +4,2 | +26,6% | 2 | 402 | 205 | R1 |
+| rota_valor_top10 | +12,0 | [−4,0; +36,0] | +1,0 | +27,8% | 3 | 317 | 203 | R1 |
+| **rota_mais_dividendo** | **+9,2** | [+2,9; +18,6] | +5,0 | +22,4% | 2 | 341 | 165 | — |
+| **formula_magica** | **+4,2** | [+0,5; +7,6] | +3,3 | +29,0% | 3 | 252 | 137 | — |
+| dividendo_6 | +2,1 | [−3,6; +7,3] | +0,5 | +14,5% | 3 | 208 | 115 | R1, R2 |
+| **nota_fatores** (padrão até 26/11) | **+1,7** | [+0,6; +2,8] | +1,5 | +21,1% | 3 | 235 | 100 | — |
+| dividendo_segurado_so_solvencia | +1,7 | [−4,0; +6,5] | +0,5 | +13,9% | 4 | 215 | 110 | R1, R2 |
+| dividendo_segurado | +1,7 | [−4,3; +6,7] | +0,5 | +13,9% | 4 | 212 | 111 | R1, R2 |
+| lider_segmento | +1,2 | [−6,6; +9,4] | −1,0 | +35,5% | 3 | 226 | 108 | R1 |
+| tirar_30_pela_nota | +1,2 | [+0,2; +2,1] | +0,9 | +19,3% | 2 | 221 | 96 | R2 |
+| dividendo_segurado_dois_anos | +0,9 | [−6,7; +6,3] | −0,3 | +12,7% | 4 | 204 | 107 | R1, R2, R3 |
+| qualidade_constante | +0,8 | [−4,7; +6,2] | −0,9 | +20,8% | 5 | 212 | 95 | R1, R2 |
+| lider_filtro_nota_fatores | +0,7 | [−6,7; +8,1] | −1,3 | +35,2% | 4 | 210 | 111 | R1, R2 |
+| dividendo_6_top5 | +0,4 | [−6,9; +7,2] | −1,8 | +15,0% | 3 | 194 | 171 | R1, R2, R3 |
+| lider_segurado | −0,4 | [−4,7; +3,7] | −1,8 | +25,3% | 3 | 202 | 77 | R1, R3 |
+| dividendo_6_top20 | −0,8 | [−7,3; +5,4] | −2,9 | +14,0% | 3 | 168 | 112 | R1, R2, R3 |
+| qualidade_3_anos | −0,8 | [−5,7; +4,2] | −2,5 | +20,0% | 3 | 190 | 76 | R1, R3 |
+| dividendo_6_top10 | −1,0 | [−8,8; +6,1] | −3,1 | +12,0% | 4 | 181 | 114 | R1, R2, R3 |
+| dividendo_6_top15 | −1,7 | [−8,3; +4,4] | −3,4 | +13,3% | 3 | 159 | 105 | R1, R2, R3 |
 
 Cinco candidatas: rota_valor_top20, rota_valor, rota_mais_dividendo,
 formula_magica e nota_fatores. Pela regra registrada, vira padrão a de maior
@@ -2255,10 +2279,10 @@ por safra.
   rota é alto (63% a 66% ao ano, contra 26% da nota + fatores).
 - **Pareada contra a nota + fatores:** rota +14,5 [+0,7; +36,9]; 20 nomes
   +15,2 [−0,3; +38,3]; metade rota, metade dividendo +7,4 [+1,3; +16,8].
-- **A líder de segmento tem a renda que mais cresce** (+31,6% ao ano, 3
-  quedas), mas não passa no retorno nem na valorização.
-- **A fórmula mágica passa nas três só na régua 1.1.0**, com a renda
-  crescendo +27,6% ao ano e 3 quedas (o limite, igual aos pesos iguais). O
+- **A líder de segmento tem a renda que mais cresce** (+35,5% ao ano, 3
+  quedas), mas não passa no retorno.
+- **A fórmula mágica passa nas três desde a régua 1.1.0**, com a renda
+  crescendo +29,0% ao ano e 3 quedas (o limite, igual aos pesos iguais). O
   excesso é pequeno (+4,2) e com IR o IC cruza o zero (+2,8 [−0,5; +6,0]).
 - Cerca de 20 estratégias na mesma janela: alguma passar por sorte é
   provável. As três que passam com folga são da mesma família (rota de
@@ -2266,9 +2290,10 @@ por safra.
 
 **Decisão do usuário (26/11/2026): a rota de valor inteira vira o padrão da
 tela.** A regra escolhia a top 20; o usuário preferiu a rota inteira, que tem o
-IC mais longe do zero e só se separa da top 20 em 2025. Na régua 1.1.0 as
+IC mais longe do zero e só se separa da top 20 em 2025. Na régua 1.2.0 as
 duas têm 2 quedas; a rota inteira fica com a renda crescendo um pouco mais
-(+25,0% contra +24,7%) e o capital maior (371 contra 355). A tela abre nela desde então, com os seis cards desta medição (excesso
+(+27,7% contra +27,0%) e o capital maior (475 contra 457). A régua 1.2.0 manteve
+o quadro. A tela abre nela desde então, com os seis cards desta medição (excesso
 com IC, com IR, tendência e quedas da renda, capital e renda total) e as
 ressalvas de 2020 e do IR. A nota + fatores e a líder de cada segmento seguem
 no seletor. A carteira de hoje usa a mesma regra
@@ -2278,9 +2303,8 @@ Selic do ano anterior à safra, como aqui.
 ### Leitura
 
 Pela renda e pela valorização juntas, a família da rota de valor ganha com
-folga: a renda em dinheiro cresce cerca de 25% ao ano (pesos iguais, 18,1%),
-com menos ou iguais quedas, e o capital fica perto do dobro do dos pesos
-iguais. A regra escolhe a de 20 nomes, mas a diferença para a rota inteira
+folga: a renda em dinheiro cresce cerca de 27% ao ano (pesos iguais, 19,4%),
+com menos quedas, e o capital fica mais que o dobro do dos pesos iguais. A regra escolhe a de 20 nomes, mas a diferença para a rota inteira
 está numa safra só; a rota inteira tem o IC mais longe do zero. A metade rota,
 metade dividendo rende menos, mas é a única que aguenta o IR com IC acima de
 zero. A nota + fatores, o padrão até esta decisão, passa nas três por pouco.

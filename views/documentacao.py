@@ -550,7 +550,7 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
              "Nove safras; vantagem concentrada em 2020; giro de ~63% ao ano"),
             "Foi uma das cinco estratégias que passaram as três regras da comparação: "
             "retorno sobre pesos iguais com intervalo acima de zero (+16,3 pp ao ano), "
-            "renda em dinheiro crescendo mais (25,0% contra 18,1% ao ano) com menos "
+            "renda em dinheiro crescendo mais (27,7% contra 19,4% ao ano) com menos "
             "quedas (2 contra 3) e capital final maior. A regra escolhia a top 20 da rota "
             "(+17,0 pp), que só se separa dela em 2025; o usuário ficou com a rota "
             "inteira. Com IR o intervalo encosta no zero, e sem 2020 a vantagem cai "
