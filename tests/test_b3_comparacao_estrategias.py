@@ -212,3 +212,20 @@ def test_linha_de_renda_aplica_o_custo_e_renormaliza():
     vazia = ce.linha_de_renda(2018, {"B": 1.0}, rend, liquido=0.0)
     assert vazia["valorizacao"] is None and vazia["renda_caixa"] is None
     assert ce.trajetoria_de_renda([vazia])["insuficiente"] is True
+
+
+def test_custo_de_abril_reduz_o_capital_que_rende():
+    """O custo sai no rebalanceamento, antes do ano: a renda é sobre o investido.
+
+    Capital 100, fator de custo 0,99 e provento de 10%: renda 9,90, não 10.
+    """
+    t = ce.trajetoria_de_renda([
+        {"safra": 2017, "renda_caixa": 0.10, "valorizacao": 0.0, "fator_custo": 0.99},
+        {"safra": 2018, "renda_caixa": 0.10, "valorizacao": 0.0, "fator_custo": 1.0},
+    ], capital=100.0)
+    assert t["anos"][0]["capital_investido"] == pytest.approx(99.0)
+    assert t["anos"][0]["renda"] == pytest.approx(9.90)
+    assert t["anos"][1]["capital_inicio"] == pytest.approx(99.0)
+    assert t["anos"][1]["renda"] == pytest.approx(9.90)
+    assert t["capital_final"] == pytest.approx(99.0)
+

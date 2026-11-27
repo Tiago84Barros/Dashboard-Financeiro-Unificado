@@ -357,8 +357,9 @@ def main() -> int:
             "valorizacao": ("valorização só pelo preço, P_fim/P_0 - 1 da série "
                             "diária de cada papel (sem saltos de desdobramento), "
                             "ponderada papel a papel depois"),
-            "trajetoria": ("renda = capital x renda_caixa; capital x (1 + valorização) "
-                           "x (1 + líquido) / (1 + bruto); safra sem rendimento deixa "
+            "trajetoria": ("investido = capital x (1 + líquido) / (1 + bruto), o custo "
+                           "de abril; renda = investido x renda_caixa; capital seguinte "
+                           "= investido x (1 + valorização); safra sem rendimento deixa "
                            "a trajetória insuficiente (R2 e R3 reprovam)"),
         },
         "fonte": {**fonte,

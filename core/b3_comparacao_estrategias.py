@@ -49,6 +49,11 @@ Na mesma versão, o salto de desdobramento (``SALTO_DE_PRECO``) passou a
 valer só entre pregões a até ``PASSO_DIARIO_DIAS``: a série é mensal até 2024,
 e a regra tirava do índice quedas reais de um mês (março de 2020).
 
+**Custo antes da renda** (régua 1.2.1, 27/11/2026): o custo de transação sai
+no rebalanceamento de abril, antes do ano (como em `simular_custos`); a renda
+do ano é sobre o capital já investido, ``capital × fator_custo``, e não sobre
+o capital de antes do custo (achado da terceira revisão do PR #810).
+
 **Trajetória de renda** (`trajetoria_de_renda`): o investidor que gasta os
 dividendos. Começa com ``CAPITAL_INICIAL`` na primeira safra medida; em cada
 safra recebe ``renda = capital × caixa`` e o capital cresce só pela
@@ -91,7 +96,7 @@ from __future__ import annotations
 
 import math
 
-VERSAO = "1.2.0"
+VERSAO = "1.2.1"
 
 CAPITAL_INICIAL = 100_000.0
 TOLERANCIA_PONTA_DIAS = 45
@@ -268,9 +273,11 @@ def trajetoria_de_renda(linhas: list[dict], capital: float = CAPITAL_INICIAL) ->
     ``valorizacao`` é a valorização só pelo preço, ponderada papel a papel;
     ``renda_caixa`` o provento recebido em fração do capital do início;
     ``fator_custo`` o custo de transação (1 sem custo); ``retorno`` e
-    ``rendimento`` (o fator reinvestido) só informam. O capital cresce só pelo
-    preço, ``capital × (1 + valorizacao) × fator_custo``, e a renda do ano é
-    ``capital × renda_caixa``.
+    ``rendimento`` (o fator reinvestido) só informam. O custo sai no
+    rebalanceamento de abril, antes do ano (como em
+    `core.b3_oos_carteira.simular_custos`): o capital investido é
+    ``capital × fator_custo``, a renda do ano é ``investido × renda_caixa`` e
+    o capital cresce só pelo preço, ``investido × (1 + valorizacao)``.
 
     Ano sem rendimento (None) não vira zero: a separação entre preço e
     provento é desconhecida, a trajetória sai ``insuficiente`` e as métricas
@@ -292,8 +299,10 @@ def trajetoria_de_renda(linhas: list[dict], capital: float = CAPITAL_INICIAL) ->
             v = None
             continue
         yc, vp = float(yc), float(vp)
-        anos.append({"safra": s, "capital_inicio": v, "renda": v * yc, **info})
-        v = v * (1.0 + vp) * custo
+        investido = v * custo
+        anos.append({"safra": s, "capital_inicio": v, "capital_investido": investido,
+                     "renda": investido * yc, **info})
+        v = investido * (1.0 + vp)
     if faltam:
         return {"anos": anos, "insuficiente": True, "safras_sem_rendimento": faltam,
                 "capital_final": None, "renda_total": None,
