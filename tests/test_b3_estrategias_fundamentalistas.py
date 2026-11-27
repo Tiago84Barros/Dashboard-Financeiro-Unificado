@@ -728,3 +728,84 @@ def test_segurar_lideres_barra_reentrada_no_mesmo_ano():
     assert com[2021] == ["BBBB3", "CCCC3"]
     # nome novo que nunca esteve na carteira entra normalmente
     assert com[2020] == ["AAAA3", "BBBB3"]
+
+
+# ── §30: aporte na queda ────────────────────────────────────────────────────
+def test_caidas_pega_o_terco_pior_e_so_os_negativos():
+    ret = {"A3": -0.5, "B3": -0.1, "C3": 0.2, "D3": 0.0, "E3": 0.3, "F3": float("nan")}
+    nomes = ["a3", "b3", "c3", "d3", "e3", "f3", "g3"]  # F3 sem número, G3 sem dado
+    # 5 com retorno: terço arredondado para cima = 2.
+    assert fe.caidas(ret, nomes) == ["A3", "B3"]
+    assert fe.caidas(ret, nomes, modo=fe.QUEDA_TERCO) == ["A3", "B3"]
+    assert fe.caidas(ret, nomes, modo=fe.QUEDA_LIMIAR) == ["A3"]
+    tudo_sobe = {"A3": 0.1, "B3": 0.2, "C3": 0.3}
+    assert fe.caidas(tudo_sobe, tudo_sobe) == []
+    assert fe.caidas(tudo_sobe, tudo_sobe, modo=fe.QUEDA_TERCO) == ["A3"]
+    with pytest.raises(ValueError):
+        fe.caidas(ret, nomes, modo=fe.EM_TODAS)
+
+
+def test_comprar_na_queda_paga_o_novo_primeiro_e_a_sobra_vai_as_caidas():
+    comprar = fe.comprar_na_queda()
+    pos = {"A3": 20.0, "B3": 40.0}
+    compras, info = comprar(pos, ["A3", "B3", "D3"], 60.0, {"A3": -0.5, "B3": 0.0})
+    # Alvo 1/N = (60 + 60) / 3 = 40: D3 recebe 40; a sobra de 20 vai a A3.
+    assert compras == pytest.approx({"D3": 40.0, "A3": 20.0})
+    assert info == {"n_continuam": 2, "n_novos": 1, "n_caidas": 1,
+                    "sem_caidas": False, "fracao_nas_caidas": pytest.approx(20.0 / 60.0)}
+
+
+def test_comprar_na_queda_sem_caidas_espalha_e_o_controle_espalha_sempre():
+    pos = {"A3": 20.0, "B3": 40.0}
+    compras, info = fe.comprar_na_queda()(pos, ["A3", "B3"], 10.0, {"A3": 0.1, "B3": 0.2})
+    assert compras == pytest.approx({"A3": 5.0, "B3": 5.0}) and info["sem_caidas"] is True
+    compras, info = fe.comprar_na_queda(fe.EM_TODAS)(
+        pos, ["A3", "B3"], 10.0, {"A3": -0.9, "B3": 0.2})
+    assert compras == pytest.approx({"A3": 5.0, "B3": 5.0})
+    assert info["n_caidas"] == 0 and info["sem_caidas"] is False
+    with pytest.raises(ValueError):
+        fe.comprar_na_queda("outro")
+
+
+def test_simular_aportes_com_comprador_usa_o_retorno_da_safra_anterior():
+    safras = [_safra(2017, {"A3": -0.5, "B3": 0.0, "C3": 0.5}),
+              _safra(2018, {"A3": 0.0, "B3": 0.0, "C3": 0.0})]
+    queda = fe.simular_aportes(safras, _SEM_CUSTO, comprar=fe.comprar_na_queda())
+    todas = fe.simular_aportes(safras, _SEM_CUSTO,
+                               comprar=fe.comprar_na_queda(fe.EM_TODAS))
+    # Abril/2018: A3 16,67, B3 33,33, C3 50; aporte 10 vai todo a A3 (caiu 50%).
+    assert queda[1]["n_caidas"] == 1 and queda[1]["fracao_nas_caidas"] == pytest.approx(1.0)
+    assert queda[1]["fracoes"]["A3"] == pytest.approx((100 / 6 + 10) / 110)
+    assert todas[1]["fracoes"]["A3"] == pytest.approx((100 / 6 + 10 / 3) / 110)
+    # Na primeira safra não há retorno anterior: todos são novos.
+    assert queda[0]["n_novos"] == 3 and queda[0]["n_caidas"] == 0
+
+
+def test_simular_aportes_sem_comprador_continua_o_da_26():
+    safras = [_safra(2017, {"A3": 1.0, "B3": 0.0}), _safra(2018, {"A3": 0.0, "C3": 0.0})]
+    out = fe.simular_aportes(safras, _SEM_CUSTO)
+    assert "n_caidas" not in out[1]
+    assert sum(out[1]["fracoes"].values()) == pytest.approx(1.0)
+    via = fe.simular_aportes(safras, _SEM_CUSTO,
+                             comprar=lambda p, n, d, r: (fe.encher_por_baixo(p, n, d), {}))
+    assert via == out
+
+
+def test_regra_da_30_registrada_antes_de_medir():
+    regra = fe.REGRA_DE_DECISAO_APORTE_NA_QUEDA
+    assert fe.VERSAO >= "fundamentalistas-1.9.0"
+    for trecho in ("terço", "só os de retorno negativo",
+                   "aportar em todas", "IC 95% acima de zero", "R2 e R3"):
+        assert trecho in regra, trecho
+    assert fe.APORTE_NA_QUEDA == pytest.approx(0.10)
+
+
+def test_ler_diferenca_da_queda_segue_a_regra():
+    ler = fe.ler_diferenca_da_queda
+    assert ler({"media": 0.02, "ic95": [0.001, 0.04]}) == fe.CONCENTRAR_AJUDA
+    assert ler({"media": 0.02, "ic95": [-0.01, 0.04]}) == fe.NAO_SE_SEPARA
+    assert ler({"media": 0.02, "ic95": None}) == fe.NAO_SE_SEPARA
+    assert ler({"media": 0.0, "ic95": [0.001, 0.04]}) == fe.ATRAPALHA
+    assert ler({"media": -0.01, "ic95": [-0.03, 0.01]}) == fe.ATRAPALHA
+    assert ler({"media": None}) is None
+    assert ler({}) is None

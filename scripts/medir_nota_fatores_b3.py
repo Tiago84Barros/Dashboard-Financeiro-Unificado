@@ -58,7 +58,9 @@ def _tirar_piores_pela_nota(universo, scores, corte):
 
 
 #: Chaves que uma cadeia alternativa (``simular``) pode devolver a mais.
-_EXTRAS_DA_CADEIA = ("giro_venda", "peso_maior", "peso_menor")
+_EXTRAS_DA_CADEIA = ("giro_venda", "peso_maior", "peso_menor", "fracoes",
+                     "n_continuam", "n_novos", "n_caidas", "sem_caidas",
+                     "fracao_nas_caidas")
 
 
 def medir_escolha(por_safra, escolha, *, precos, selic_macro, taxa, selic_mensal,

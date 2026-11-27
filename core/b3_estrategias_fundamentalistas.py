@@ -810,7 +810,7 @@ def encher_por_baixo(posicoes: Mapping[str, float], nomes: Iterable[str],
 
 def simular_aportes(safras: list[dict], cfg, *,
                     aporte: float = APORTE_DIVIDENDO_SEGURADO,
-                    capital: float = 100_000.0) -> list[dict]:
+                    capital: float = 100_000.0, comprar=None) -> list[dict]:
     """A cadeia da §26: alvo 1/N, equilíbrio pelo aporte, venda só na saída.
 
     Mesmo formato de entrada e de saída de `core.b3_oos_carteira.simular_custos`
@@ -827,15 +827,26 @@ def simular_aportes(safras: list[dict], cfg, *,
     ponderado pelo tempo: o aporte não conta como ganho); ``bruto`` = soma das
     frações depois da compra vezes o retorno; ``giro`` = compras / (patrimônio
     + aporte); ``giro_venda`` = vendas / patrimônio; ``peso_maior`` e
-    ``peso_menor`` = maior e menor fração depois da compra.
+    ``peso_menor`` = maior e menor fração depois da compra; ``fracoes`` = as
+    frações depois da compra (para pesar a renda).
+
+    ``comprar(posicoes, nomes, dinheiro, ret_anterior) -> (compras, info)``
+    troca o comprador (§30, `comprar_na_queda`); ``ret_anterior`` é o retorno
+    de cada nome na safra anterior (o que se sabia em abril) e ``info`` segue
+    para o item. Sem ``comprar``, é `encher_por_baixo` (§26).
     """
     from core.transaction_costs import custo_compra, custo_venda
+
+    if comprar is None:
+        def comprar(pos, nomes, dinheiro, _ret_anterior):
+            return encher_por_baixo(pos, nomes, dinheiro), {}
 
     caixa_tk = "__caixa__"
     estado = {False: {"pos": {}, "base": {}, "valor": float(capital)},
               True: {"pos": {}, "base": {}, "valor": float(capital)}}
     prejuizo = 0.0
     primeira = True
+    ret_anterior: dict[str, float] = {}
     saida: list[dict] = []
 
     def _passo(e, nomes, rets, com_ir, em_caixa):
@@ -872,11 +883,12 @@ def simular_aportes(safras: list[dict], cfg, *,
                 prejuizo = liquido_ir
             livre -= ir
         livre += novo
+        info: dict = {}
         if em_caixa:
             compras: dict[str, float] = {}
             pos, base = {caixa_tk: livre}, {caixa_tk: livre}
         else:
-            compras = encher_por_baixo(pos, nomes, livre)
+            compras, info = comprar(pos, nomes, livre, ret_anterior)
         for tk, valor in compras.items():
             fee = custo_compra(tk, valor, cfg)
             custo += fee
@@ -895,6 +907,7 @@ def simular_aportes(safras: list[dict], cfg, *,
             "giro": sum(compras.values()) / disponivel if disponivel > 0 else 0.0,
             "giro_venda": vendas / patrimonio if patrimonio > 0 else 0.0,
             "fracoes": fracoes,
+            "info": dict(info or {}),
         }
 
     for s in safras:
@@ -905,6 +918,7 @@ def simular_aportes(safras: list[dict], cfg, *,
                 e["valor"] = sum(e["pos"].values()) if e["pos"] else e["valor"]
                 e["pos"], e["base"] = {}, {}
             saida.append({"safra": s["safra"], "medida": False})
+            ret_anterior = {}
             continue
         em_caixa = not nomes
         if em_caixa:
@@ -915,6 +929,7 @@ def simular_aportes(safras: list[dict], cfg, *,
         sem = _passo(estado[False], nomes, rets, False, em_caixa)
         com = _passo(estado[True], nomes, rets, True, em_caixa)
         primeira = False
+        ret_anterior = {} if em_caixa else dict(rets)
         fr = [w for tk, w in sem["fracoes"].items() if tk != caixa_tk]
         item = {"safra": s["safra"], "medida": True,
                 "bruto": sem["bruto"], "liquido": sem["liquido"],
@@ -922,7 +937,10 @@ def simular_aportes(safras: list[dict], cfg, *,
                 "ir_pct": com["ir_pct"], "giro": sem["giro"],
                 "giro_venda": sem["giro_venda"],
                 "peso_maior": max(fr) if fr else None,
-                "peso_menor": min(fr) if fr else None}
+                "peso_menor": min(fr) if fr else None,
+                "fracoes": {tk: w for tk, w in sem["fracoes"].items()
+                            if tk != caixa_tk},
+                **sem["info"]}
         if em_caixa:
             item["caixa"] = True
         saida.append(item)
@@ -1040,4 +1058,96 @@ REGRA_DE_DECISAO_APORTE_NA_QUEDA = (
     "os nomes (o equilíbrio da §26); a rota na régua da §19 (volta a 1/N todo "
     "abril); a fração do dinheiro que foi às caídas; o peso maior e menor; o "
     "excesso com IR. Passar não muda a tela; só abre a próxima etapa.")
+
+
+def caidas(ret_anterior: Mapping[str, float], nomes: Iterable[str], *,
+           modo: str = QUEDA_TERCO_NEGATIVO) -> list[str]:
+    """As "caídas" da §30 entre ``nomes`` (os que continuam na rota).
+
+    Só conta quem tem retorno finito na safra anterior. ``QUEDA_LIMIAR``:
+    retorno <= ``LIMIAR_QUEDA``. ``QUEDA_TERCO``: o terço de pior retorno
+    (arredondado para cima; empate pelo ticker). ``QUEDA_TERCO_NEGATIVO``
+    (sob a regra): o mesmo terço, só os de retorno negativo.
+    """
+    if modo not in (QUEDA_TERCO_NEGATIVO, QUEDA_TERCO, QUEDA_LIMIAR):
+        raise ValueError(f"modo de queda desconhecido: {modo!r}")
+    ret = {str(k).upper(): v for k, v in (ret_anterior or {}).items()}
+    rs: dict[str, float] = {}
+    for t in {str(t).upper() for t in nomes}:
+        try:
+            r = float(ret.get(t))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(r):
+            rs[t] = r
+    if modo == QUEDA_LIMIAR:
+        return sorted(t for t, r in rs.items() if r <= LIMIAR_QUEDA)
+    k = math.ceil(len(rs) * FRACAO_CAIDAS - 1e-9)
+    piores = sorted(rs, key=lambda t: (rs[t], t))[:k]
+    if modo == QUEDA_TERCO_NEGATIVO:
+        piores = [t for t in piores if rs[t] < 0]
+    return sorted(piores)
+
+
+def comprar_na_queda(modo: str = QUEDA_TERCO_NEGATIVO):
+    """O comprador da §30 para `simular_aportes` (``comprar=``).
+
+    (1) Quem entrou na lista recebe primeiro, em partes iguais, até o alvo
+    1/N de (posições + dinheiro); (2) a sobra vai às `caidas` entre os que
+    continuam, de baixo para cima (`encher_por_baixo`); sem nenhuma caída, em
+    partes iguais a todos os que continuam (``sem_caidas``). ``EM_TODAS`` (o
+    controle) põe a sobra em partes iguais a todos os que continuam.
+    """
+    if modo not in MODOS_QUEDA:
+        raise ValueError(f"modo de queda desconhecido: {modo!r}")
+
+    def comprar(pos, nomes, dinheiro, ret_anterior):
+        alvo_nomes = sorted({str(t).upper() for t in nomes})
+        continuam = [t for t in alvo_nomes if t in pos]
+        novos = [t for t in alvo_nomes if t not in pos]
+        info = {"n_continuam": len(continuam), "n_novos": len(novos),
+                "n_caidas": 0, "sem_caidas": False, "fracao_nas_caidas": 0.0}
+        if not alvo_nomes or dinheiro <= 0:
+            return {}, info
+        alvo = (sum(float(pos[t]) for t in continuam) + dinheiro) / len(alvo_nomes)
+        compras = (encher_por_baixo({}, novos, min(dinheiro, alvo * len(novos)))
+                   if novos else {})
+        resto = dinheiro - sum(compras.values())
+        if resto <= 1e-9 or not continuam:
+            return compras, info
+        def _iguais():
+            return {t: resto / len(continuam) for t in continuam}
+        if modo == EM_TODAS:
+            extra = _iguais()
+        else:
+            cai = caidas(ret_anterior, continuam, modo=modo)
+            info["n_caidas"] = len(cai)
+            if cai:
+                extra = encher_por_baixo(pos, cai, resto)
+                info["fracao_nas_caidas"] = resto / dinheiro
+            else:
+                extra = _iguais()
+                info["sem_caidas"] = True
+        for t, v in extra.items():
+            compras[t] = compras.get(t, 0.0) + v
+        return compras, info
+
+    return comprar
+
+
+def ler_diferenca_da_queda(resumo: Mapping) -> str | None:
+    """Leitura principal da §30 sobre a diferença pareada contra o controle.
+
+    ``resumo`` é o de `core.b3_oos_carteira.resumir` (``media``, ``ic95``).
+    Média > 0 com IC 95% acima de zero: `CONCENTRAR_AJUDA`; média > 0 com IC
+    que cruza o zero: `NAO_SE_SEPARA`; média <= 0: `ATRAPALHA`. Sem média,
+    None.
+    """
+    media = resumo.get("media") if resumo else None
+    if media is None:
+        return None
+    if media <= 0:
+        return ATRAPALHA
+    lo = (resumo.get("ic95") or [None, None])[0]
+    return CONCENTRAR_AJUDA if lo is not None and lo > 0 else NAO_SE_SEPARA
 

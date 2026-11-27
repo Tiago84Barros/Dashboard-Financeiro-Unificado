@@ -28,6 +28,7 @@ Uso::
     python scripts/medir_estrategias_fundamentalistas_b3.py --dry-run
     python scripts/medir_estrategias_fundamentalistas_b3.py --cache-dir <pasta> \n        --dividendo-outra-janela   # §24: safras 2013 a 2016
     python scripts/medir_estrategias_fundamentalistas_b3.py --cache-dir <pasta> \n        --sobreposicao-rota       # §25: dividendo de 6% sobre a rota de valor
+    python scripts/medir_estrategias_fundamentalistas_b3.py --cache-dir <pasta> \n        --aporte-na-queda         # §30: rota de valor, aporte nas que caíram
 
 O armazém local precisa estar de pé. Grava
 `data/oos_estrategias_fundamentalistas_b3.json`; nada vai para banco nenhum.
@@ -54,6 +55,7 @@ CAMINHO_DIVIDENDO_OUTRA_JANELA = ROOT / "data" / "oos_dividendo_outra_janela_b3.
 CAMINHO_SOBREPOSICAO_ROTA = ROOT / "data" / "oos_sobreposicao_dividendo_rota_b3.json"
 CAMINHO_DIVIDENDO_SEGURADO = ROOT / "data" / "oos_dividendo_segurado_b3.json"
 CAMINHO_SOLVENCIA_DOIS_ANOS = ROOT / "data" / "oos_solvencia_dois_anos_b3.json"
+CAMINHO_APORTE_NA_QUEDA = ROOT / "data" / "oos_aporte_na_queda_b3.json"
 
 #: A rodada sem piso de tamanho (§23): o perfil padrão com só o valor de
 #: mercado mínimo trocado. A liquidez mínima (R$ 500 mil) fica.
@@ -1244,6 +1246,225 @@ def medir_dividendo_segurado(rc: dict, *, dry_run: bool = False) -> int:
     return 0
 
 
+def medir_aporte_na_queda(rc: dict, *, dry_run: bool = False) -> int:
+    """§30: a rota de valor inteira, com o aporte concentrado nas que caíram.
+
+    A lista é a da rota (`rc["escolhas"][fe.ROTA_VALOR]`); a cadeia é
+    `fe.simular_aportes` com o comprador `fe.comprar_na_queda`. O controle é a
+    mesma cadeia com a sobra em partes iguais (``fe.EM_TODAS``). A renda
+    (R2/R3 da §29) é pesada pelas frações reais depois da compra.
+    """
+    import core.b3_comparacao_estrategias as ce
+    from core.b3_methodology import SCORE_VERSION
+    from core.b3_portfolio_presets import VERSION as PRESETS_VERSION
+    from scripts.comparar_estrategias_b3 import pontas_de_preco
+    from scripts.medir_vantagem_oos import _fonte_efetiva_b3
+
+    oos, fe, medir = rc["oos"], rc["fe"], rc["medir"]
+    escolha = rc["escolhas"][fe.ROTA_VALOR]
+    por_ano = {int(p["safra"]): p for p in rc["por_safra"]}
+
+    def cadeia(modo=None, fracao=fe.APORTE_NA_QUEDA):
+        comprar = None if modo is None else fe.comprar_na_queda(modo)
+        return lambda itens, cfg: fe.simular_aportes(itens, cfg, aporte=fracao,
+                                                     comprar=comprar)
+
+    memo: dict = {}
+    bracos = {
+        fe.ROTA_VALOR_QUEDA: medir(escolha, memo, simular=cadeia(fe.QUEDA_TERCO_NEGATIVO)),
+        fe.ROTA_VALOR_APORTE_EM_TODAS: medir(escolha, memo, simular=cadeia(fe.EM_TODAS)),
+        "rota_valor_queda_terco": medir(escolha, memo, simular=cadeia(fe.QUEDA_TERCO)),
+        "rota_valor_queda_limiar": medir(escolha, memo, simular=cadeia(fe.QUEDA_LIMIAR)),
+        "rota_valor_queda_aporte_20": medir(
+            escolha, memo, simular=cadeia(fe.QUEDA_TERCO_NEGATIVO,
+                                          fe.APORTE_NA_QUEDA_SENSIBILIDADE)),
+        "rota_valor_aporte_em_todas_20": medir(
+            escolha, memo, simular=cadeia(fe.EM_TODAS, fe.APORTE_NA_QUEDA_SENSIBILIDADE)),
+        "rota_valor_equilibrio_26": medir(escolha, memo, simular=cadeia(None)),
+        "rota_valor_regua_19": medir(escolha, memo),
+    }
+    bracos = {k: _avaliar(rc, m) for k, m in bracos.items()}
+
+    # --- renda (R2/R3 da §29), pesada pelas frações reais --------------------
+    principal = bracos[fe.ROTA_VALOR_QUEDA]
+    base_ew = {int(t["safra"]): float(t["equal_weight"]) for t in principal["safras"]
+               if t.get("equal_weight") is not None}
+    safras = sorted(base_ew)
+    listas = {s: [str(t).upper() for t in escolha(por_ano[s])] for s in safras}
+    todos = {t for v in listas.values() for t in v}
+    for s in safras:
+        todos |= {str(t).upper() for t in por_ano[s]["universo"]}
+    rend = pontas_de_preco(todos, safras)
+
+    def y_de(s, campo):
+        return {tk: (None if v is None else v[campo])
+                for (tk, ss), v in rend.items() if ss == s}
+
+    fator = {s: y_de(s, "fator") for s in safras}
+    caixa = {s: y_de(s, "caixa") for s in safras}
+    ew_linhas = []
+    for s in safras:
+        uni = [str(t).upper() for t in por_ano[s]["universo"]]
+        y, _ = ce.rendimento_medio(uni, fator[s])
+        yc, _ = ce.rendimento_medio(uni, caixa[s])
+        ew_linhas.append({"safra": s, "retorno": base_ew[s], "rendimento": y,
+                          "renda_caixa": yc})
+    renda_ew = ce.trajetoria_de_renda(ew_linhas)
+
+    def renda_do(m):
+        lin, cob = [], {}
+        for t in m["safras"]:
+            s = int(t["safra"])
+            if s not in base_ew or t.get("liquido") is None:
+                continue
+            ps = t.get("fracoes")
+            if ps is None:  # régua da §19: pesos iguais na lista
+                ps = {tk: 1.0 / len(listas[s]) for tk in listas[s]} if listas[s] else {}
+            y, c = ce.rendimento_da_carteira(ps, fator[s])
+            yc, _ = ce.rendimento_da_carteira(ps, caixa[s])
+            cob[str(s)] = c
+            lin.append({"safra": s, "retorno": float(t["liquido"]), "rendimento": y,
+                        "renda_caixa": yc})
+        return ce.trajetoria_de_renda(lin), cob
+
+    def pareada(controle, braco, chave="liquido"):
+        par = diferenca_pareada(bracos[controle]["safras"], bracos[braco]["safras"], chave)
+        return {**oos.resumir(par, "dif"), "safras": par}
+
+    tabela = {}
+    for rotulo, m in bracos.items():
+        renda, cob = renda_do(m)
+        d29 = ce.decidir_padrao(m["vs_equal_weight"], renda, renda_ew)
+        tabela[rotulo] = {"renda": renda, "cobertura_do_rendimento": cob,
+                          "decisao_29": d29}
+        r = m["vs_equal_weight"]
+        print(f"{rotulo}: media={r['media']} ic95={r['ic95']} "
+              f"sem_melhor={r['media_sem_melhor_safra']} "
+              f"vs_padrao={m['vs_carteira_padrao']['media']} "
+              f"cand19={m['decisao']['candidata']} renda_aa={renda['crescimento_renda_aa']} "
+              f"quedas={renda['quedas_de_renda']} cap={renda['capital_final']} "
+              f"falhou29={d29['falhou']}", flush=True)
+    print(f"pesos_iguais: renda_aa={renda_ew['crescimento_renda_aa']} "
+          f"quedas={renda_ew['quedas_de_renda']} cap={renda_ew['capital_final']}",
+          flush=True)
+
+    falhou29 = set(tabela[fe.ROTA_VALOR_QUEDA]["decisao_29"]["falhou"])
+    r2 = "r2_dividendo_crescente" not in falhou29
+    r3 = "r3_valorizacao" not in falhou29
+    candidata = bool(principal["decisao"]["candidata"] and r2 and r3)
+    contra_controle = pareada(fe.ROTA_VALOR_APORTE_EM_TODAS, fe.ROTA_VALOR_QUEDA)
+    leitura = fe.ler_diferenca_da_queda(contra_controle)
+    print(f"queda - todas: media={contra_controle['media']} "
+          f"ic95={contra_controle['ic95']} leitura={leitura} candidata={candidata}",
+          flush=True)
+
+    chaves_diag = ("n_continuam", "n_novos", "n_caidas", "sem_caidas",
+                   "fracao_nas_caidas", "peso_maior", "peso_menor")
+    diagnostico = {
+        str(t["safra"]): {k: t.get(k) for k in chaves_diag}
+        for t in principal["safras"] if t.get("liquido") is not None}
+
+    def _curto(m):
+        out = {k: m[k] for k in ("vs_equal_weight", "com_ir_vs_equal_weight",
+                                 "bruto_vs_equal_weight", "vs_carteira_padrao",
+                                 "decisao", "giro_medio_anual",
+                                 "giro_venda_medio_anual", "custo_medio_anual")
+               if k in m}
+        out["safras"] = [{k: v for k, v in t.items() if k != "fracoes"}
+                         for t in m["safras"]]
+        return out
+
+    medidas = sorted(int(t["safra"]) for t in principal["safras"]
+                     if t.get("liquido") is not None)
+    saida = {
+        "versao_medicao": fe.VERSAO,
+        "versao_metodologia": SCORE_VERSION,
+        "versao_presets": PRESETS_VERSION,
+        "versao_regua_renda": ce.VERSAO,
+        "medido_em": datetime.now().isoformat(timespec="seconds"),
+        "perfil": rc["nome"],
+        "safras": medidas,
+        "janela": (f"abril/{min(medidas)} a março/{max(medidas) + 1}"
+                   if medidas else None),
+        "regra_de_decisao": fe.REGRA_DE_DECISAO_APORTE_NA_QUEDA,
+        "sob_a_regra": [fe.ROTA_VALOR_QUEDA],
+        "regras": {
+            "lista": "a rota de valor inteira de cada abril, sem mudança",
+            "saida": "quem sai da lista é vendido; ninguém é vendido por ter subido",
+            "aporte": f"{fe.APORTE_NA_QUEDA:.0%} do patrimônio de abril",
+            "compra": ("quem entrou recebe primeiro até 1/N; a sobra vai às caídas "
+                       "(terço de pior retorno no último ano, só os negativos), de "
+                       "baixo para cima; sem caídas, partes iguais aos que continuam"),
+            "controle": "a mesma cadeia, com a sobra em partes iguais (aportar em todas)",
+        },
+        "metrica_principal": ("diferença pareada LÍQUIDA contra o controle "
+                              "(aportar em todas), safra a safra"),
+        "resultado": {
+            "leitura": leitura,
+            "queda_menos_aportar_em_todas": contra_controle,
+            "excesso_sobre_equal_weight": principal["vs_equal_weight"],
+            "vs_carteira_padrao": principal["vs_carteira_padrao"],
+            "testes_19": principal["decisao"]["testes"],
+            "r2_dividendo_crescente": r2,
+            "r3_valorizacao": r3,
+            "candidata": candidata,
+            "renda": tabela[fe.ROTA_VALOR_QUEDA]["renda"],
+        },
+        "renda_pesos_iguais": renda_ew,
+        "informativos": {
+            "queda_menos_equilibrio_26": pareada("rota_valor_equilibrio_26",
+                                                 fe.ROTA_VALOR_QUEDA),
+            "queda_menos_regua_19": pareada("rota_valor_regua_19", fe.ROTA_VALOR_QUEDA),
+            "aportar_em_todas_menos_regua_19": pareada("rota_valor_regua_19",
+                                                       fe.ROTA_VALOR_APORTE_EM_TODAS),
+            "terco_sem_exigir_negativo_menos_todas": pareada(
+                fe.ROTA_VALOR_APORTE_EM_TODAS, "rota_valor_queda_terco"),
+            "limiar_menos_todas": pareada(fe.ROTA_VALOR_APORTE_EM_TODAS,
+                                          "rota_valor_queda_limiar"),
+            "aporte_20_queda_menos_todas": pareada("rota_valor_aporte_em_todas_20",
+                                                   "rota_valor_queda_aporte_20"),
+            "queda_menos_todas_com_ir": pareada(fe.ROTA_VALOR_APORTE_EM_TODAS,
+                                                fe.ROTA_VALOR_QUEDA, "liquido_com_ir"),
+            "excesso_com_ir": principal["com_ir_vs_equal_weight"],
+            "safras_sem_caidas": [int(s) for s, d in diagnostico.items()
+                                  if d.get("sem_caidas")],
+            "por_safra": diagnostico,
+        },
+        "estrategias": {k: {**_curto(m), **tabela[k]} for k, m in bracos.items()},
+        "custos": {
+            "modelo": "CostConfig.brasil_pf_default()",
+            "benchmarks": ("brutos e sem aporte (pesos iguais não paga custo e "
+                           "volta a 1/N todo abril): viés contra a carteira"),
+        },
+        "fonte": {
+            **fonte_dos_precos_da_aba(rc["precos"]),
+            "fundamentos": f"aba de Criação de Portfólio B3 sobre {_fonte_efetiva_b3()}",
+            "renda": "pontas de preço do armazém local (scripts/comparar_estrategias_b3.py)",
+        },
+        "limites": [
+            "nove safras: diferenças pequenas não se separam do ruído",
+            ("o equilíbrio de hoje já compra quem ficou para trás (a régua da §19 "
+             "volta a 1/N; o equilíbrio da §26 aporta nos menores): a diferença "
+             "tende a ser pequena"),
+            ("comprar quem caiu em 12 meses vai contra o momento; a reversão "
+             "costuma aparecer em 3 a 5 anos"),
+            "aporte de 10% mexe pouco no resultado",
+            ("muitos braços medidos da §19 à §30 no mesmo período: um falso positivo "
+             "fica mais provável do que o IC sugere"),
+            "a queda é o retorno total winsorizado da safra anterior, não só o preço",
+            "a rota troca muitos nomes por ano: poucos continuam para receber",
+            "as §1 a §22 do guia ainda usam a leitura antiga dos fundamentos",
+        ],
+    }
+    texto = json.dumps(saida, indent=2, ensure_ascii=False, default=str)
+    if dry_run:
+        print(texto[:4000])
+    else:
+        CAMINHO_APORTE_NA_QUEDA.write_text(texto + "\n", encoding="utf-8")
+        print(f"gravado em {CAMINHO_APORTE_NA_QUEDA}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dry-run", action="store_true", help="mede e imprime sem gravar")
@@ -1266,6 +1487,9 @@ def main() -> int:
     ap.add_argument("--dividendo-segurado", action="store_true",
                     help="mede o dividendo de 6%% segurado, com equilíbrio pelo "
                          "aporte, da §26 (grava data/oos_dividendo_segurado_b3.json)")
+    ap.add_argument("--aporte-na-queda", action="store_true",
+                    help="mede a §30: a rota de valor com o aporte nas que caíram "
+                         "(grava data/oos_aporte_na_queda_b3.json)")
     ap.add_argument("--solvencia-dois-anos", action="store_true",
                     help="mede a §27: a §26 com a falha de solvência exigida em dois "
                          "anos seguidos (grava data/oos_solvencia_dois_anos_b3.json)")
@@ -1279,6 +1503,8 @@ def main() -> int:
         return medir_dividendo_topn(rc, dry_run=args.dry_run)
     if args.solvencia_dois_anos:
         return medir_solvencia_dois_anos(rc, dry_run=args.dry_run)
+    if args.aporte_na_queda:
+        return medir_aporte_na_queda(rc, dry_run=args.dry_run)
     if args.dividendo_segurado:
         return medir_dividendo_segurado(rc, dry_run=args.dry_run)
     if args.pequenas_dividendo:
