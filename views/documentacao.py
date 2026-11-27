@@ -548,10 +548,10 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
              "data/oos_comparacao_estrategias_b3.json (scripts/comparar_estrategias_b3.py)",
              "Sem guarda de entrada, piso de qualidade, portão de LLM nem tetos de setor",
              "Nove safras; vantagem concentrada em 2020; giro de ~63% ao ano"),
-            "Foi uma das quatro estratégias que passaram as três regras da comparação: "
+            "Foi uma das cinco estratégias que passaram as três regras da comparação: "
             "retorno sobre pesos iguais com intervalo acima de zero (+16,3 pp ao ano), "
-            "renda crescendo mais (21,8% contra 13,6% ao ano) com menos quedas (2 "
-            "contra 4) e capital final maior. A regra escolhia a top 20 da rota "
+            "renda em dinheiro crescendo mais (25,0% contra 18,1% ao ano) com menos "
+            "quedas (2 contra 3) e capital final maior. A regra escolhia a top 20 da rota "
             "(+17,0 pp), que só se separa dela em 2025; o usuário ficou com a rota "
             "inteira. Com IR o intervalo encosta no zero, e sem 2020 a vantagem cai "
             "para +5,8 pp: a tela diz as duas coisas.",

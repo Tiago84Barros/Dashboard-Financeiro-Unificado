@@ -29,14 +29,25 @@ foi 0,92.
 - Papel sem rendimento é tirado e os pesos dos outros são renormalizados; a
   cobertura (fração do peso com dado) vai para a saída.
 
+**Caixa recebido** (`rendimentos_do_ano`, régua 1.1.0, 27/11/2026): a razão
+das pontas é o provento *reinvestido* (um fator multiplicativo), não o caixa
+de quem gasta os dividendos. O caixa sai da série diária: em cada data ex,
+``(1 - 1/r_i) × P_{i-1}/P_0``, com ``r_i`` a razão diária ajustado/bruto.
+Razão diária fora de [``RAZAO_DIA_MIN``, ``RAZAO_DIA_MAX``) é quebra da série
+e o ticker-ano sai. A régua 1.0.0 usava o fator como caixa e subtraía o fator
+do retorno (``1 + retorno - y``), o que não isola o preço; corrigido pelos
+achados da revisão do PR #810.
+
 **Trajetória de renda** (`trajetoria_de_renda`): o investidor que gasta os
 dividendos. Começa com ``CAPITAL_INICIAL`` na primeira safra medida; em cada
-safra recebe ``renda = capital × y`` e o capital cresce só pela valorização,
-``capital × (1 + retorno líquido - y)``. Mede:
+safra recebe ``renda = capital × caixa`` e o capital cresce só pela
+valorização, ``capital × (1 + retorno líquido) / (1 + fator)``. Safra sem
+rendimento deixa a trajetória ``insuficiente`` (métricas None, R2 e R3
+reprovam) em vez de virar renda zero. Mede:
 
 - ``crescimento_renda_aa``: tendência da renda, ``exp(b) - 1`` da reta de
-  mínimos quadrados de ``log(renda)`` contra o ano (renda zero em algum ano
-  deixa a tendência indefinida e reprova);
+  mínimos quadrados de ``log(renda)`` contra o ano (renda zero medida em algum
+  ano deixa a tendência indefinida e reprova);
 - ``quedas_de_renda``: anos em que a renda caiu em relação ao ano anterior;
 - ``renda_total``, ``renda_ultimo_sobre_primeiro`` e ``capital_final``
   (a valorização acumulada, sem os dividendos).
@@ -69,12 +80,23 @@ from __future__ import annotations
 
 import math
 
-VERSAO = "1.0.0"
+VERSAO = "1.1.0"
 
 CAPITAL_INICIAL = 100_000.0
 TOLERANCIA_PONTA_DIAS = 45
 RENDIMENTO_MIN = -0.05
 RENDIMENTO_MAX = 1.0
+# Razão diária ajustado/bruto: acima de 1 + LIMIAR_DATA_EX é data ex de
+# provento (abaixo disso é arredondamento do ajuste); fora de
+# [RAZAO_DIA_MIN, RAZAO_DIA_MAX) é quebra da série e o ticker-ano sai.
+LIMIAR_DATA_EX = 5e-4
+RAZAO_DIA_MIN = 0.95
+RAZAO_DIA_MAX = 2.0
+# Salto do fechamento acompanhado pelo ajustado (razão ~1) de SALTO_DE_PRECO
+# vezes ou mais, para cima ou para baixo, é desdobramento/grupamento (3:2 já
+# conta) ou degrau da série: não entra no índice de preço que pesa o caixa
+# recebido dentro do ano.
+SALTO_DE_PRECO = 1.45
 
 
 def rendimento_por_razao(c0, a0, c1, a1) -> float | None:
@@ -94,6 +116,48 @@ def rendimento_por_razao(c0, a0, c1, a1) -> float | None:
     if not (RENDIMENTO_MIN <= y < RENDIMENTO_MAX):
         return None
     return max(0.0, y)
+
+
+def rendimentos_do_ano(serie) -> dict | None:
+    """Fator e caixa dos proventos de um papel na safra, da série diária.
+
+    ``serie``: [(fechamento, ajustado), ...] em ordem de data, da véspera da
+    vigência ao fim dela. Devolve ``{"fator", "caixa"}`` ou None (dado ruim):
+
+    - ``fator`` = ``rendimento_por_razao`` nas pontas: o provento
+      **reinvestido**, ``Π r_i - 1``, que separa o retorno total do preço:
+      ``1 + retorno = (1 + valorização) × (1 + fator)``;
+    - ``caixa`` = o provento **recebido** por quem não reinveste, em fração do
+      capital do início: ``Σ (1 - 1/r_i) × P_{i-1}/P_0`` nas datas ex, com
+      ``r_i`` a razão diária ajustado/bruto (o provento por ação é
+      ``P_{i-1} × (1 - 1/r_i)``, a convenção do ajuste retroativo) e ``P``
+      o fechamento sem os saltos de desdobramento (``SALTO_DE_PRECO``).
+
+    O caixa vem da própria série que desconta desdobramento, não dos
+    pagamentos da brapi (que não descontam; ver o cabeçalho do módulo).
+    """
+    try:
+        pts = [(float(c), float(a)) for c, a in serie]
+    except (TypeError, ValueError):
+        return None
+    if len(pts) < 2 or any(not (math.isfinite(c) and math.isfinite(a) and c > 0 and a > 0)
+                           for c, a in pts):
+        return None
+    fator = rendimento_por_razao(pts[0][0], pts[0][1], pts[-1][0], pts[-1][1])
+    if fator is None:
+        return None
+    caixa, indice = 0.0, 1.0
+    for (c0, a0), (c1, a1) in zip(pts, pts[1:]):
+        cr = c1 / c0
+        r = (a1 / a0) / cr
+        if not (RAZAO_DIA_MIN <= r < RAZAO_DIA_MAX):
+            return None
+        if r > 1.0 + LIMIAR_DATA_EX:
+            caixa += (1.0 - 1.0 / r) * indice
+        salto = cr >= SALTO_DE_PRECO or cr <= 1.0 / SALTO_DE_PRECO
+        if not (abs(r - 1.0) <= LIMIAR_DATA_EX and salto):
+            indice *= cr
+    return {"fator": fator, "caixa": caixa}
 
 
 def rendimento_da_carteira(pesos: dict[str, float],
@@ -133,23 +197,45 @@ def _tendencia_log(rendas: list[float]) -> float | None:
 def trajetoria_de_renda(linhas: list[dict], capital: float = CAPITAL_INICIAL) -> dict:
     """Investidor que gasta os dividendos.
 
-    ``linhas``: [{"safra", "retorno", "rendimento"}] em ordem de safra;
-    ``retorno`` é o total líquido da safra e ``rendimento`` a parte em
-    dividendos (None vira 0: sem dado não se inventa renda).
+    ``linhas``: [{"safra", "retorno", "rendimento", "renda_caixa"}] em ordem
+    de safra; ``retorno`` é o total líquido da safra, ``rendimento`` o fator
+    dos proventos reinvestidos e ``renda_caixa`` o provento recebido em
+    fração do capital do início (`rendimentos_do_ano`). O capital cresce só
+    pelo preço, ``capital × (1 + retorno) / (1 + rendimento)``, e a renda do
+    ano é ``capital × renda_caixa``.
+
+    Ano sem rendimento (None) não vira zero: a separação entre preço e
+    provento é desconhecida, a trajetória sai ``insuficiente`` e as métricas
+    que dependem dela (renda, quedas, tendência, capital final) ficam None.
     """
     v = float(capital)
-    anos = []
+    anos, faltam = [], []
     for t in sorted(linhas, key=lambda r: int(r["safra"])):
-        y = float(t.get("rendimento") or 0.0)
+        s = int(t["safra"])
+        y, yc = t.get("rendimento"), t.get("renda_caixa")
         ret = float(t["retorno"])
-        renda = v * y
-        anos.append({"safra": int(t["safra"]), "capital_inicio": v, "renda": renda,
-                     "rendimento": y, "retorno": ret})
-        v = v * (1.0 + ret - y)
+        if y is None or yc is None or v is None:
+            if y is None or yc is None:
+                faltam.append(s)
+            anos.append({"safra": s, "capital_inicio": v, "renda": None,
+                         "rendimento": y, "renda_caixa": yc, "retorno": ret})
+            v = None
+            continue
+        y, yc = float(y), float(yc)
+        anos.append({"safra": s, "capital_inicio": v, "renda": v * yc,
+                     "rendimento": y, "renda_caixa": yc, "retorno": ret})
+        v = v * (1.0 + ret) / (1.0 + y)
+    if faltam:
+        return {"anos": anos, "insuficiente": True, "safras_sem_rendimento": faltam,
+                "capital_final": None, "renda_total": None,
+                "crescimento_renda_aa": None, "quedas_de_renda": None,
+                "renda_ultimo_sobre_primeiro": None}
     rendas = [a["renda"] for a in anos]
     quedas = sum(1 for a, b in zip(rendas, rendas[1:]) if b < a)
     return {
         "anos": anos,
+        "insuficiente": False,
+        "safras_sem_rendimento": [],
         "capital_final": v,
         "renda_total": sum(rendas),
         "crescimento_renda_aa": _tendencia_log(rendas),
@@ -166,10 +252,15 @@ def decidir_padrao(vs_ew: dict, renda: dict, renda_ew: dict) -> dict:
     r1 = bool(vs_ew.get("media") is not None and vs_ew["media"] > 0
               and lo is not None and lo > 0
               and sem_melhor is not None and sem_melhor > 0)
+    # Trajetória insuficiente (de um lado ou do outro) reprova R2 e R3: sem a
+    # separação entre preço e provento não há o que comparar.
+    ok = not renda.get("insuficiente") and not renda_ew.get("insuficiente")
     g, g_ew = renda.get("crescimento_renda_aa"), renda_ew.get("crescimento_renda_aa")
-    r2 = bool(g is not None and g_ew is not None and g >= g_ew
-              and renda["quedas_de_renda"] <= renda_ew["quedas_de_renda"])
-    r3 = bool(renda["capital_final"] >= renda_ew["capital_final"])
+    q, q_ew = renda.get("quedas_de_renda"), renda_ew.get("quedas_de_renda")
+    r2 = bool(ok and g is not None and g_ew is not None and g >= g_ew
+              and q is not None and q_ew is not None and q <= q_ew)
+    k, k_ew = renda.get("capital_final"), renda_ew.get("capital_final")
+    r3 = bool(ok and k is not None and k_ew is not None and k >= k_ew)
     testes = {"r1_retorno": r1, "r2_dividendo_crescente": r2, "r3_valorizacao": r3}
     return {"testes": testes, "candidata": all(testes.values()),
             "falhou": [k for k, ok in testes.items() if not ok]}

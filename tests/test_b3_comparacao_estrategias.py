@@ -33,26 +33,79 @@ def test_carteira_renormaliza_sobre_quem_tem_dado():
 
 
 def test_trajetoria_gasta_a_renda_e_cresce_so_pelo_preco():
+    # Exemplo da revisão: fechamento 10 -> 11, ajustado 10 -> 11,55.
+    fator = ce.rendimento_por_razao(10.0, 10.0, 11.0, 11.55)
+    assert fator == pytest.approx(0.05)
     t = ce.trajetoria_de_renda([
-        {"safra": 2017, "retorno": 0.10, "rendimento": 0.05},
-        {"safra": 2018, "retorno": 0.10, "rendimento": 0.05},
+        {"safra": 2017, "retorno": 0.155, "rendimento": fator, "renda_caixa": 0.048},
+        {"safra": 2018, "retorno": 0.155, "rendimento": fator, "renda_caixa": 0.048},
     ], capital=100.0)
-    assert t["anos"][0]["renda"] == pytest.approx(5.0)
-    assert t["anos"][1]["capital_inicio"] == pytest.approx(105.0)
-    assert t["anos"][1]["renda"] == pytest.approx(5.25)
-    assert t["capital_final"] == pytest.approx(105.0 * 1.05)
-    assert t["crescimento_renda_aa"] == pytest.approx(0.05)
-    assert t["quedas_de_renda"] == 0
-    assert t["renda_total"] == pytest.approx(10.25)
+    # O capital cresce só pelo preço: 100 x 1,155 / 1,05 = 110 (não 110,50).
+    assert t["anos"][1]["capital_inicio"] == pytest.approx(110.0)
+    assert t["capital_final"] == pytest.approx(121.0)
+    # A renda é o caixa recebido, não o fator.
+    assert t["anos"][0]["renda"] == pytest.approx(4.8)
+    assert t["anos"][1]["renda"] == pytest.approx(110.0 * 0.048)
+    assert t["crescimento_renda_aa"] == pytest.approx(0.10)
+    assert t["quedas_de_renda"] == 0 and t["insuficiente"] is False
+    assert t["renda_total"] == pytest.approx(4.8 + 5.28)
 
 
-def test_ano_sem_renda_deixa_tendencia_indefinida_e_conta_queda():
+def test_ano_sem_rendimento_deixa_a_trajetoria_insuficiente_e_nao_vira_zero():
     t = ce.trajetoria_de_renda([
-        {"safra": 2017, "retorno": 0.0, "rendimento": 0.05},
-        {"safra": 2018, "retorno": 0.0, "rendimento": None},
+        {"safra": 2017, "retorno": 0.0, "rendimento": 0.05, "renda_caixa": 0.05},
+        {"safra": 2018, "retorno": 0.0, "rendimento": None, "renda_caixa": None},
+        {"safra": 2019, "retorno": 0.0, "rendimento": 0.05, "renda_caixa": 0.05},
     ], capital=100.0)
-    assert t["crescimento_renda_aa"] is None
-    assert t["quedas_de_renda"] == 1
+    assert t["insuficiente"] is True and t["safras_sem_rendimento"] == [2018]
+    for k in ("capital_final", "renda_total", "crescimento_renda_aa",
+              "quedas_de_renda", "renda_ultimo_sobre_primeiro"):
+        assert t[k] is None, k
+    assert t["anos"][1]["renda"] is None and t["anos"][2]["capital_inicio"] is None
+    # Renda zero MEDIDA continua sendo dado: tendência indefinida, queda contada.
+    z = ce.trajetoria_de_renda([
+        {"safra": 2017, "retorno": 0.0, "rendimento": 0.05, "renda_caixa": 0.05},
+        {"safra": 2018, "retorno": 0.0, "rendimento": 0.0, "renda_caixa": 0.0},
+    ], capital=100.0)
+    assert z["insuficiente"] is False
+    assert z["crescimento_renda_aa"] is None and z["quedas_de_renda"] == 1
+
+
+def test_rendimentos_do_ano_separa_fator_e_caixa_da_serie_diaria():
+    # Preço sobe 10 -> 11 em dois passos; provento de 0,50 por ação na data ex
+    # (ajuste retroativo: r = P_{i-1} / (P_{i-1} - D) no dia).
+    c = [10.0, 10.5, 11.0]
+    r_ex = 10.5 / (10.5 - 0.5)
+    a = [10.0, 10.5, 11.0 * r_ex]
+    y = ce.rendimentos_do_ano(zip(c, a))
+    assert y["fator"] == pytest.approx(r_ex - 1.0)
+    # Caixa = 0,50 / 10 (capital do início), não o fator.
+    assert y["caixa"] == pytest.approx(0.05)
+    # Sem provento: fator e caixa zero.
+    assert ce.rendimentos_do_ano([(10.0, 9.0), (11.0, 9.9)]) == {"fator": 0.0, "caixa": 0.0}
+
+
+def test_rendimentos_do_ano_ignora_desdobramento_e_tira_quebra():
+    # Desdobramento 2:1 com as duas séries saltando juntas (razão ~1): o índice
+    # de preço que pesa o caixa não cai pela metade.
+    serie = [(20.0, 20.0), (10.0, 10.0), (10.0, 10.0 * 10.0 / 9.5)]
+    y = ce.rendimentos_do_ano(serie)
+    assert y["caixa"] == pytest.approx(0.05)
+    # Razão diária fora da faixa é quebra: o ticker-ano sai.
+    assert ce.rendimentos_do_ano([(10.0, 10.0), (10.0, 9.0)]) is None
+    assert ce.rendimentos_do_ano([(10.0, 10.0)]) is None
+    assert ce.rendimentos_do_ano([(10.0, 10.0), (0.0, 1.0)]) is None
+
+
+def test_decisao_reprova_r2_e_r3_com_trajetoria_insuficiente():
+    cheia = {"crescimento_renda_aa": 0.2, "quedas_de_renda": 0, "capital_final": 1e9,
+             "insuficiente": False}
+    falta = {"crescimento_renda_aa": None, "quedas_de_renda": None, "capital_final": None,
+             "insuficiente": True}
+    d = ce.decidir_padrao(_vs(), falta, cheia)
+    assert d["falhou"] == ["r2_dividendo_crescente", "r3_valorizacao"]
+    d = ce.decidir_padrao(_vs(), cheia, falta)
+    assert d["candidata"] is False
 
 
 def _vs(media=0.02, lo=0.005, sem=0.01):

@@ -39,7 +39,12 @@ PADRAO_ATUAL = NOTA_FATORES
 
 
 def pontas_de_preco(tickers, safras):
-    """{(ticker, safra): rendimento} lido de `market.historical_prices`."""
+    """{(ticker, safra): {"fator", "caixa"} | None} de `market.historical_prices`.
+
+    A série diária vai da ponta inicial (último pregão até a véspera da
+    vigência) à final (último pregão até o fim dela), as duas com a
+    tolerância da régua; `ce.rendimentos_do_ano` tira dela o fator e o caixa.
+    """
     import pandas as pd
     from sqlalchemy import text
 
@@ -64,7 +69,7 @@ def pontas_de_preco(tickers, safras):
 
     def ponta(g, data):
         h = g[(g["date"] <= data) & (g["date"] >= data - tol)]
-        return None if h.empty else (float(h["c"].iloc[-1]), float(h["a"].iloc[-1]))
+        return None if h.empty else h["date"].iloc[-1]
 
     saida = {}
     for s in safras:
@@ -75,9 +80,12 @@ def pontas_de_preco(tickers, safras):
             if g is None:
                 saida[(tk, s)] = None
                 continue
-            p0, p1 = ponta(g, vespera), ponta(g, fim_s)
-            saida[(tk, s)] = (None if p0 is None or p1 is None
-                              else ce.rendimento_por_razao(p0[0], p0[1], p1[0], p1[1]))
+            d0, d1 = ponta(g, vespera), ponta(g, fim_s)
+            if d0 is None or d1 is None or d1 <= d0:
+                saida[(tk, s)] = None
+                continue
+            h = g[(g["date"] >= d0) & (g["date"] <= d1)]
+            saida[(tk, s)] = ce.rendimentos_do_ano(zip(h["c"], h["a"]))
     return saida
 
 
@@ -261,16 +269,21 @@ def main() -> int:
         todos |= {str(t).upper() for t in por_ano[s]["universo"]}
     rend = pontas_de_preco(todos, safras)
 
-    def y_de(s):
-        return {tk: v for (tk, ss), v in rend.items() if ss == s}
+    def y_de(s, campo):
+        return {tk: (None if v is None else v[campo])
+                for (tk, ss), v in rend.items() if ss == s}
 
-    y_por_safra = {s: y_de(s) for s in safras}
+    # Fator e caixa têm o mesmo None por ticker: a renormalização é a mesma.
+    y_por_safra = {s: y_de(s, "fator") for s in safras}
+    caixa_por_safra = {s: y_de(s, "caixa") for s in safras}
     ew_linhas, ew_cob = [], {}
     for s in safras:
-        y, cob = ce.rendimento_medio([str(t).upper() for t in por_ano[s]["universo"]],
-                                     y_por_safra[s])
+        uni = [str(t).upper() for t in por_ano[s]["universo"]]
+        y, cob = ce.rendimento_medio(uni, y_por_safra[s])
+        yc, _ = ce.rendimento_medio(uni, caixa_por_safra[s])
         ew_cob[str(s)] = cob
-        ew_linhas.append({"safra": s, "retorno": base_ew[s], "rendimento": y})
+        ew_linhas.append({"safra": s, "retorno": base_ew[s], "rendimento": y,
+                          "renda_caixa": yc})
     renda_ew = ce.trajetoria_de_renda(ew_linhas)
 
     def pareada(a, b):
@@ -286,9 +299,11 @@ def main() -> int:
                 continue
             ps = pesos[rotulo].get(s, {})
             y, c = ce.rendimento_da_carteira(ps, y_por_safra.get(s, {}))
+            yc, _ = ce.rendimento_da_carteira(ps, caixa_por_safra.get(s, {}))
             cob[str(s)] = c
             nomes[str(s)] = len(ps)
-            lin.append({"safra": s, "retorno": float(t["liquido"]), "rendimento": y})
+            lin.append({"safra": s, "retorno": float(t["liquido"]), "rendimento": y,
+                        "renda_caixa": yc})
         renda = ce.trajetoria_de_renda(lin)
         vs = m["vs_equal_weight"]
         tabela[rotulo] = {
@@ -306,11 +321,13 @@ def main() -> int:
         print(f"{rotulo}: media={vs['media']:+.4f} ic95={vs['ic95']} "
               f"sem_melhor={vs['media_sem_melhor_safra']} "
               f"renda_aa={renda['crescimento_renda_aa']} quedas={renda['quedas_de_renda']} "
-              f"cap={renda['capital_final']:.0f} renda_tot={renda['renda_total']:.0f} "
+              f"cap={renda['capital_final']} renda_tot={renda['renda_total']} "
+              f"insuficiente={renda['insuficiente']} "
               f"falhou={r['decisao']['falhou']}", flush=True)
     print(f"pesos_iguais: renda_aa={renda_ew['crescimento_renda_aa']} "
-          f"quedas={renda_ew['quedas_de_renda']} cap={renda_ew['capital_final']:.0f} "
-          f"renda_tot={renda_ew['renda_total']:.0f}", flush=True)
+          f"quedas={renda_ew['quedas_de_renda']} cap={renda_ew['capital_final']} "
+          f"renda_tot={renda_ew['renda_total']} "
+          f"insuficiente={renda_ew['insuficiente']}", flush=True)
 
     escolha = ce.escolher_padrao(tabela, PADRAO_ATUAL)
     print(f"padrao: {escolha}", flush=True)
@@ -332,9 +349,19 @@ def main() -> int:
             "escolha": ("candidata = R1, R2 e R3; vira padrão a de maior excesso médio; "
                         f"sem candidata fica {PADRAO_ATUAL}"),
             "capital_inicial": ce.CAPITAL_INICIAL,
-            "rendimento": ("(a1/a0)/(c1/c0) - 1 em market.historical_prices, véspera e "
-                           f"fim da vigência, tolerância {ce.TOLERANCIA_PONTA_DIAS} dias, "
-                           f"válido em [{ce.RENDIMENTO_MIN}, {ce.RENDIMENTO_MAX})"),
+            "rendimento": ("fator dos proventos reinvestidos, (a1/a0)/(c1/c0) - 1 em "
+                           "market.historical_prices, véspera e fim da vigência, "
+                           f"tolerância {ce.TOLERANCIA_PONTA_DIAS} dias, válido em "
+                           f"[{ce.RENDIMENTO_MIN}, {ce.RENDIMENTO_MAX}); separa o preço: "
+                           "1 + retorno = (1 + valorização) x (1 + fator)"),
+            "renda_caixa": ("provento recebido por quem não reinveste, em fração do "
+                            "capital do início: soma de (1 - 1/r_i) x P_(i-1)/P_0 nas "
+                            f"datas ex (r_i > 1 + {ce.LIMIAR_DATA_EX}) da série diária; "
+                            f"razão diária fora de [{ce.RAZAO_DIA_MIN}, {ce.RAZAO_DIA_MAX}) "
+                            "tira o ticker-ano"),
+            "trajetoria": ("renda = capital x renda_caixa; capital x (1 + retorno) / "
+                           "(1 + fator); safra sem rendimento deixa a trajetória "
+                           "insuficiente (R2 e R3 reprovam)"),
         },
         "fonte": {**fonte,
                   "fundamentos": f"aba de Criação de Portfólio B3 sobre {_fonte_efetiva_b3()}"},

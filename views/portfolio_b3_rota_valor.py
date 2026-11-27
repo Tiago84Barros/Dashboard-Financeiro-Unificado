@@ -113,6 +113,10 @@ def tabela_para_exibicao(tabela: pd.DataFrame | None) -> pd.DataFrame:
     }).reset_index(drop=True)
 
 
+def _pct_ou_none(v):
+    return None if v is None else float(v) * 100
+
+
 def renda_ano_a_ano(dados: dict | None) -> pd.DataFrame:
     """Renda e capital por safra: rota de valor ao lado de pesos iguais.
 
@@ -132,8 +136,9 @@ def renda_ano_a_ano(dados: dict | None) -> pd.DataFrame:
             "Safra": s,
             "Renda da rota (R$)": a.get("renda"),
             "Renda de pesos iguais (R$)": b.get("renda"),
-            "Rendimento da rota (%)": (a.get("rendimento") or 0) * 100,
-            "Retorno da rota (%)": (a.get("retorno") or 0) * 100,
+            # Sem dado fica vazio (None), nunca zero: zero seria renda medida.
+            "Dividendos recebidos pela rota (%)": _pct_ou_none(a.get("renda_caixa")),
+            "Retorno da rota (%)": _pct_ou_none(a.get("retorno")),
             "Capital da rota no início (R$)": a.get("capital_inicio"),
         })
     return pd.DataFrame(linhas)
@@ -163,6 +168,11 @@ def _fmt_pp(v) -> str:
 
 def _fmt_pct(v) -> str:
     return "—" if v is None else f"{v * 100:.1f}%".replace(".", ",")
+
+
+def _fmt_int(v) -> str:
+    """Trajetória insuficiente grava None: mostra "—", nunca "None"."""
+    return "—" if v is None else str(int(v))
 
 
 def _fmt_mil(v) -> str:
@@ -225,8 +235,8 @@ def _render_evidencia(dados: dict) -> None:
                            "deixa o capital crescer só pelo preço.")
     c4, c5, c6 = st.columns(3, gap="small")
     with c4:
-        card_metrica("Anos com renda menor", str(renda.get("quedas_de_renda", "—")),
-                     delta=f"pesos iguais {renda_ew.get('quedas_de_renda', '—')}",
+        card_metrica("Anos com renda menor", _fmt_int(renda.get("quedas_de_renda")),
+                     delta=f"pesos iguais {_fmt_int(renda_ew.get('quedas_de_renda'))}",
                      ajuda="Quantas vezes a renda do ano caiu frente à do ano anterior.")
     with c5:
         card_metrica("R$ 100 mil viraram (só preço)", _fmt_mil(renda.get("capital_final")),
