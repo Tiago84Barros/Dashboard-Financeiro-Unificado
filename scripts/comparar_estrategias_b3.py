@@ -2,8 +2,8 @@
 scripts/comparar_estrategias_b3.py — §29: todas as estratégias B3 na mesma
 rodada, com retorno, renda de dividendos e valorização.
 
-A régua (rendimento pela razão ajustado/bruto, trajetória de renda e a regra
-R1/R2/R3) mora em `core/b3_comparacao_estrategias.py` e foi registrada antes
+A régua (renda e valorização pelo pregão diário, trajetória de renda e a
+regra R1/R2/R3) mora em `core/b3_comparacao_estrategias.py` e foi registrada antes
 desta medição. As estratégias são as das §18–§28, montadas pelas mesmas
 funções das medições originais (`montar_recorte` e companhia), sobre a mesma
 rodada da aba (perfil Equilibrado).
@@ -35,58 +35,113 @@ NOTA_FATORES = "nota_fatores"
 TIRAR_30 = "tirar_30_pela_nota"
 LIDER_FILTRO = "lider_filtro_nota_fatores"
 ROTA_MAIS_DIVIDENDO = "rota_mais_dividendo"
-PADRAO_ATUAL = NOTA_FATORES
+# Padrão da aba desde 26/11/2026, por escolha do usuário (§29). A regra pode
+# apontar outra estratégia: a escolha dela vai em ``escolha`` e a do usuário em
+# ``decisao_do_usuario``, lado a lado, para a tela dizer as duas.
+ROTA_VALOR = "rota_valor"  # = core.b3_estrategias_fundamentalistas.ROTA_VALOR
+PADRAO_ATUAL = ROTA_VALOR
+DECISAO_DO_USUARIO = {
+    "padrao": ROTA_VALOR,
+    "em": "2026-11-26",
+    "confirmada_em": "2026-11-27",
+    "motivo": ("na régua 1.2.1 a regra escolhia a rota_valor_top20 e o usuário ficou "
+               "com a rota inteira; na 1.3.0 (renda pelo pregão diário) a rota falha só "
+               "a R2, por uma queda de renda a mais que pesos iguais (2024, cerca de "
+               "1%), e a regra escolheria nota_fatores; o usuário manteve a rota, "
+               "fora da regra, sem mudar a regra"),
+}
 
 
 def pontas_de_preco(tickers, safras):
-    """{(ticker, safra): {"fator", "caixa", "preco"} | None} de `market.historical_prices`.
+    """{(ticker, safra): {"fator", "caixa", "preco"} | None} do pregão diário.
 
-    A série (diária desde 2025, mensal antes) vai da ponta inicial (último pregão até a véspera da
-    vigência) à final (último pregão até o fim dela), as duas com a
-    tolerância da régua; `ce.rendimentos_do_ano` tira dela o fator, o caixa e
-    a valorização só pelo preço.
+    Régua 1.3.0: o pregão bruto do COTAHIST (`market.b3_security_history`,
+    os BDIs de ação do motor, `cr.BDIS_ACOES`: o lote padrão e os papéis em
+    recuperação ou sob regime especial, que a rota de valor compra; o
+    universo inteiro, que o mercado mediano do motor pede) e os
+    proventos por data com passam pelo motor da Carteira 20
+    (`core.carteira20_retornos.calcular(componentes=True)`), que devolve por
+    dia o fechamento, as ações novas por antiga e o caixa por ação. Os
+    proventos são os de `core.proventos_b3` (foto mais nova da brapi e, nos
+    anos sem foto, o banco), com o provento da foto multiplicado de volta
+    pelos desdobramentos, grupamentos e bonificações que a própria foto lista
+    (`ce.eventos_de_acoes`, `ce.fator_de_desajuste`): a foto vem ajustada e o
+    pregão é bruto. O código segue as trocas de `market.ticker_alias` e de
+    `core.b3_troca_codigo.PARES_CONHECIDOS` (`mapa_de_trocas`): o COTAHIST
+    guarda o passado no código antigo, a carteira usa o atual.
+
+    Para cada safra, a série do papel vai da ponta inicial (último pregão até
+    a véspera da vigência) à final (último pregão até o fim dela), as duas
+    com a tolerância da régua; `ce.rendimentos_do_pregao` tira dela o fator,
+    o caixa e a valorização só pelo preço.
     """
     import pandas as pd
     from sqlalchemy import text
 
     import core.b3_comparacao_estrategias as ce
+    import core.carteira20_retornos as cr
+    import core.proventos_b3 as pb
+    from core.b3_troca_codigo import mapa_de_trocas
     from core.b3_vigencia import janela_de_vigencia
     from core.database import get_engine
+    from core.dividend_types import renda_por_evento, sql_proventos_de_renda
 
     tickers = sorted({str(t).upper() for t in tickers})
-    ini = janela_de_vigencia(min(safras))[0] - pd.Timedelta(days=ce.TOLERANCIA_PONTA_DIAS + 5)
-    fim = janela_de_vigencia(max(safras))[1]
+    inicio0 = janela_de_vigencia(min(safras))[0]
     with get_engine().connect() as con:
-        df = pd.read_sql(text(
-            "SELECT upper(ticker) AS ticker, date, close::float AS c, "
-            "adjusted_close::float AS a FROM market.historical_prices "
-            "WHERE upper(ticker) = ANY(:t) AND date BETWEEN :i AND :f "
-            "AND close > 0 AND adjusted_close > 0"),
-            con, params={"t": tickers, "i": ini.date(), "f": fim.date()})
-    df["date"] = pd.to_datetime(df["date"])
-    df = df.sort_values(["ticker", "date"])
+        pg = pd.read_sql(text(
+            "SELECT ticker, trade_date, bdi, specification, close::float AS close, "
+            "fator_cotacao::float AS fator_cotacao FROM market.b3_security_history "
+            "WHERE bdi = ANY(:bdis) AND trade_date >= :i AND close > 0"),
+            con, params={"i": (inicio0 - pd.Timedelta(days=180)).date(),
+                         "bdis": list(cr.BDIS_ACOES)})
+        aliases = con.execute(text(
+            "SELECT brapi_symbol, b3_ticker, motivo FROM market.ticker_alias")).fetchall()
+        fotos = con.execute(text(pb.SQL_FOTOS)).fetchall()
+        bruto = pd.read_sql_query(text(sql_proventos_de_renda("TRUE")), con)
+
+    pg["ticker"] = pg["ticker"].astype(str).str.strip().str.upper()
+    mapa = mapa_de_trocas(None, aliases)
+    ids = {t: mapa.get(t, t) for t in set(pg["ticker"]) | set(mapa)}
+
+    # Proventos: a foto (desajustada pelos eventos dela), os anos que ela não
+    # tem e os papéis sem foto (do banco, como estão).
+    eventos = {str(tk).strip().upper(): ce.eventos_de_acoes(dd) for tk, _, _, dd in fotos}
+    banco = renda_por_evento(bruto)
+    foto = pb.eventos_das_fotos(fotos).drop(columns="foto_em")
+    cobertos = set(eventos)
+    preenche = pb.anos_que_a_foto_nao_tem(foto, banco[banco["ticker"].isin(cobertos)])
+    resto = banco[~banco["ticker"].isin(cobertos)]
+    foto = foto.assign(amount=pd.to_numeric(foto["amount"], errors="coerce") * [
+        ce.fator_de_desajuste(eventos.get(str(t).strip().upper()), d)
+        for t, d in zip(foto["ticker"], pd.to_datetime(foto["ex_date"], errors="coerce"))])
+    proventos = pd.concat([foto, preenche, resto], ignore_index=True)
+
+    diario = cr.calcular(cr.pregoes_de_acoes(pg.to_dict("records"), set(ids)), proventos,
+                         ids, (inicio0 - pd.Timedelta(days=90)).date(), componentes=True)
+    diario["data"] = pd.to_datetime(diario["data"])
+    diario = diario.sort_values(["id", "data"])
+    por_id = {i: g for i, g in diario.groupby("id")}
     tol = pd.Timedelta(days=ce.TOLERANCIA_PONTA_DIAS)
-    por_tk = {tk: g for tk, g in df.groupby("ticker")}
 
     def ponta(g, data):
-        h = g[(g["date"] <= data) & (g["date"] >= data - tol)]
-        return None if h.empty else h["date"].iloc[-1]
+        h = g[(g["data"] <= data) & (g["data"] >= data - tol)]
+        return None if h.empty else h["data"].iloc[-1]
 
     saida = {}
     for s in safras:
         inicio, fim_s = janela_de_vigencia(s)
         vespera = inicio - pd.Timedelta(days=1)
         for tk in tickers:
-            g = por_tk.get(tk)
-            if g is None:
-                saida[(tk, s)] = None
-                continue
-            d0, d1 = ponta(g, vespera), ponta(g, fim_s)
+            g = por_id.get(ids.get(tk, tk))
+            d0 = None if g is None else ponta(g, vespera)
+            d1 = None if g is None else ponta(g, fim_s)
             if d0 is None or d1 is None or d1 <= d0:
                 saida[(tk, s)] = None
                 continue
-            h = g[(g["date"] >= d0) & (g["date"] <= d1)]
-            saida[(tk, s)] = ce.rendimentos_do_ano(zip(h["date"], h["c"], h["a"]))
+            h = g[(g["data"] >= d0) & (g["data"] <= d1)]
+            saida[(tk, s)] = ce.rendimentos_do_pregao(
+                zip(h["preco"], h["ret"], h["k"], h["caixa"]))
     return saida
 
 
@@ -344,19 +399,23 @@ def main() -> int:
             "escolha": ("candidata = R1, R2 e R3; vira padrão a de maior excesso médio; "
                         f"sem candidata fica {PADRAO_ATUAL}"),
             "capital_inicial": ce.CAPITAL_INICIAL,
-            "rendimento": ("fator dos proventos reinvestidos, (a1/a0)/(c1/c0) - 1 em "
-                           "market.historical_prices, véspera e fim da vigência, "
-                           f"tolerância {ce.TOLERANCIA_PONTA_DIAS} dias, válido em "
-                           f"[{ce.RENDIMENTO_MIN}, {ce.RENDIMENTO_MAX}); separa o preço: "
-                           "1 + retorno = (1 + valorização) x (1 + fator)"),
+            "fonte_da_renda": ("pregão diário bruto do COTAHIST (market.b3_security_history, "
+                               "BDIs de ação do motor) e proventos por data com (foto mais nova da brapi, "
+                               "multiplicada de volta pelos desdobramentos, grupamentos e "
+                               "bonificações que a própria foto lista; banco nos anos sem "
+                               "foto), pelo motor da Carteira 20 "
+                               "(core.carteira20_retornos, componentes=True); código pelas "
+                               "trocas de market.ticker_alias e de PARES_CONHECIDOS"),
+            "rendimento": ("fator dos proventos reinvestidos, (1 + retorno total do "
+                           "pregão diário) / (1 + valorização) - 1, da véspera ao fim da "
+                           f"vigência, tolerância {ce.TOLERANCIA_PONTA_DIAS} dias, válido "
+                           f"em [{ce.RENDIMENTO_MIN}, {ce.RENDIMENTO_MAX})"),
             "renda_caixa": ("provento recebido por quem não reinveste, em fração do "
-                            "capital do início: soma de (1 - 1/r_i) x P_(i-1)/P_0 nas "
-                            f"datas ex (r_i > 1 + {ce.LIMIAR_DATA_EX}) da série diária; "
-                            f"razão diária fora de [{ce.RAZAO_DIA_MIN}, {ce.RAZAO_DIA_MAX}) "
-                            "tira o ticker-ano"),
-            "valorizacao": ("valorização só pelo preço, P_fim/P_0 - 1 da série "
-                            "diária de cada papel (sem saltos de desdobramento), "
-                            "ponderada papel a papel depois"),
+                            "capital do início: soma de n x caixa do dia / P_0, com n as "
+                            "ações acumuladas pelos desdobramentos e bonificações; válido "
+                            f"em [{ce.RENDIMENTO_MIN}, {ce.RENDIMENTO_MAX})"),
+            "valorizacao": ("valorização só pelo preço, n x P_fim / P_0 - 1 do pregão "
+                            "diário de cada papel, ponderada papel a papel depois"),
             "trajetoria": ("investido = capital x (1 + líquido) / (1 + bruto), o custo "
                            "de abril; renda = investido x renda_caixa; capital seguinte "
                            "= investido x (1 + valorização); safra sem rendimento deixa "
@@ -367,6 +426,7 @@ def main() -> int:
         "pesos_iguais": {"renda": renda_ew, "cobertura_do_rendimento": ew_cob},
         "estrategias": tabela,
         "escolha": escolha,
+        "decisao_do_usuario": DECISAO_DO_USUARIO,
         "limites": [
             "nove safras; com ~20 estratégias, alguma passar R1 por sorte é provável",
             "estratégias sobrepostas: não são testes independentes",

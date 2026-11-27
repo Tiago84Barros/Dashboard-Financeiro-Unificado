@@ -1,27 +1,9 @@
-"""Régua da §29: rendimento pela razão ajustado/bruto, renda e veredito."""
-import math
+"""Régua da §29: renda e valorização pelo pregão diário, trajetória e veredito."""
+from datetime import date
 
 import pytest
 
 import core.b3_comparacao_estrategias as ce
-
-
-def test_rendimento_pela_razao_mede_so_o_provento():
-    # Preço bruto 10 -> 11 (+10%), ajustado 10 -> 11,55 (+15,5%): 5% de provento.
-    assert ce.rendimento_por_razao(10, 10, 11, 11.55) == pytest.approx(0.05)
-
-
-def test_desdobramento_nas_duas_series_nao_vira_provento():
-    # As duas séries descontam o desdobramento: a razão não muda.
-    assert ce.rendimento_por_razao(20, 18, 10, 9) == pytest.approx(0.0)
-
-
-def test_ruido_negativo_pequeno_vira_zero_e_salto_vira_ausencia():
-    assert ce.rendimento_por_razao(10, 10, 10, 9.8) == 0.0
-    assert ce.rendimento_por_razao(10, 10, 10, 9.0) is None      # -10%
-    assert ce.rendimento_por_razao(10, 10, 10, 25.0) is None     # +150%
-    assert ce.rendimento_por_razao(None, 10, 10, 10) is None
-    assert ce.rendimento_por_razao(0, 10, 10, 10) is None
 
 
 def test_carteira_renormaliza_sobre_quem_tem_dado():
@@ -33,9 +15,8 @@ def test_carteira_renormaliza_sobre_quem_tem_dado():
 
 
 def test_trajetoria_gasta_a_renda_e_cresce_so_pelo_preco():
-    # Exemplo da revisão: fechamento 10 -> 11, ajustado 10 -> 11,55.
-    fator = ce.rendimento_por_razao(10.0, 10.0, 11.0, 11.55)
-    assert fator == pytest.approx(0.05)
+    # Exemplo da revisão: preço 10 -> 11 e 5% de provento reinvestido.
+    fator = 0.05
     t = ce.trajetoria_de_renda([
         {"safra": 2017, "retorno": 0.155, "rendimento": fator, "renda_caixa": 0.048,
          "valorizacao": 0.10},
@@ -73,53 +54,87 @@ def test_ano_sem_rendimento_deixa_a_trajetoria_insuficiente_e_nao_vira_zero():
     assert z["crescimento_renda_aa"] is None and z["quedas_de_renda"] == 1
 
 
-def test_rendimentos_do_ano_separa_fator_e_caixa_da_serie_diaria():
-    # Preço sobe 10 -> 11 em dois passos; provento de 0,50 por ação na data ex
-    # (ajuste retroativo: r = P_{i-1} / (P_{i-1} - D) no dia).
-    c = [10.0, 10.5, 11.0]
-    r_ex = 10.5 / (10.5 - 0.5)
-    a = [10.0, 10.5, 11.0 * r_ex]
-    y = ce.rendimentos_do_ano(zip(c, a))
-    assert y["fator"] == pytest.approx(r_ex - 1.0)
-    # Caixa = 0,50 / 10 (capital do início), não o fator.
+def test_pregao_separa_fator_caixa_e_valorizacao():
+    # Preço 10 -> 10,5 -> 11; provento de 0,50 por ação no último dia.
+    # O motor dá 1 + ret = (k x preco + caixa) / P_{t-1}.
+    linhas = [(10.0, None, 1.0, 0.0),
+              (10.5, 0.05, 1.0, 0.0),
+              (11.0, (11.0 + 0.5) / 10.5 - 1.0, 1.0, 0.5)]
+    y = ce.rendimentos_do_pregao(linhas)
+    # Caixa = 0,50 / 10 (capital do início).
     assert y["caixa"] == pytest.approx(0.05)
-    # Valorização só pelo preço: 10 -> 11.
     assert y["preco"] == pytest.approx(0.10)
+    # 1 + retorno = (1 + valorização) x (1 + fator).
+    assert (1 + y["preco"]) * (1 + y["fator"]) == pytest.approx(11.5 / 10.0)
     # Sem provento: fator e caixa zero.
-    z = ce.rendimentos_do_ano([(10.0, 9.0), (11.0, 9.9)])
-    assert z["fator"] == 0.0 and z["caixa"] == 0.0 and z["preco"] == pytest.approx(0.10)
+    z = ce.rendimentos_do_pregao([(10.0, None, 1.0, 0.0), (11.0, 0.10, 1.0, 0.0)])
+    assert z == {"fator": 0.0, "caixa": 0.0, "preco": pytest.approx(0.10)}
 
 
-def test_rendimentos_do_ano_ignora_desdobramento_e_tira_quebra():
-    # Desdobramento 2:1 com as duas séries saltando juntas (razão ~1): o índice
-    # de preço que pesa o caixa não cai pela metade.
-    serie = [(20.0, 20.0), (10.0, 10.0), (10.0, 10.0 * 10.0 / 9.5)]
-    y = ce.rendimentos_do_ano(serie)
-    assert y["caixa"] == pytest.approx(0.05)
-    assert y["preco"] == pytest.approx(0.0)  # 20 -> 10 é desdobramento
-    # Razão diária fora da faixa é quebra: o ticker-ano sai.
-    assert ce.rendimentos_do_ano([(10.0, 10.0), (10.0, 9.0)]) is None
-    assert ce.rendimentos_do_ano([(10.0, 10.0)]) is None
-    assert ce.rendimentos_do_ano([(10.0, 10.0), (0.0, 1.0)]) is None
+def test_pregao_desdobramento_multiplica_acoes_e_caixa():
+    # Desdobramento 2:1 no 2º dia (k = 2, preço 20 -> 10); provento de 0,50 por
+    # ação nova no 3º: quem tinha uma ação recebe 2 x 0,50 = 1,00.
+    linhas = [(20.0, None, 1.0, 0.0),
+              (10.0, 0.0, 2.0, 0.0),
+              (10.0, 0.5 / 10.0, 1.0, 0.5)]
+    y = ce.rendimentos_do_pregao(linhas)
+    assert y["preco"] == pytest.approx(0.0)      # 2 x 10 / 20 - 1
+    assert y["caixa"] == pytest.approx(1.0 / 20.0)
+    assert y["fator"] == pytest.approx(0.05)
 
 
-def test_salto_so_e_desdobramento_em_passo_diario():
-    # A série de `market.historical_prices` é mensal até 2024: num passo de um
-    # mês, -31% (BOVA11 em março de 2020) é mercado e entra no preço.
-    from datetime import date
-    mensal = [(date(2020, 2, 1), 100.6, 100.6), (date(2020, 3, 1), 69.35, 69.35)]
-    y = ce.rendimentos_do_ano(mensal)
-    assert y["preco"] == pytest.approx(69.35 / 100.6 - 1.0)
-    # O mesmo salto em pregões seguidos continua sendo desdobramento.
-    diario = [(date(2025, 6, 2), 20.0, 20.0), (date(2025, 6, 3), 10.0, 10.0)]
-    assert ce.rendimentos_do_ano(diario)["preco"] == pytest.approx(0.0)
-    # No limite: até PASSO_DIARIO_DIAS corridos ainda é passo diário.
-    d0 = date(2025, 6, 2)
-    from datetime import timedelta
-    borda = [(d0, 20.0, 20.0), (d0 + timedelta(days=ce.PASSO_DIARIO_DIAS), 10.0, 10.0)]
-    assert ce.rendimentos_do_ano(borda)["preco"] == pytest.approx(0.0)
-    fora = [(d0, 20.0, 20.0), (d0 + timedelta(days=ce.PASSO_DIARIO_DIAS + 1), 10.0, 10.0)]
-    assert ce.rendimentos_do_ano(fora)["preco"] == pytest.approx(-0.5)
+def test_pregao_sem_retorno_conta_zero_e_dado_ruim_sai():
+    # ret vazio (salto sem evento): o motor põe k = P_ant / P e caixa 0.
+    y = ce.rendimentos_do_pregao([(10.0, None, 1.0, 0.0),
+                                  (20.0, float("nan"), 0.5, 0.0)])
+    assert y["preco"] == pytest.approx(0.0) and y["fator"] == 0.0
+    assert ce.rendimentos_do_pregao([(10.0, None, 1.0, 0.0)]) is None
+    assert ce.rendimentos_do_pregao([(0.0, None, 1.0, 0.0), (10.0, 0.0, 1.0, 0.0)]) is None
+    assert ce.rendimentos_do_pregao([(10.0, None, 1.0, 0.0), (10.0, 0.0, 0.0, 0.0)]) is None
+    # Caixa de 150% do capital é dado ruim, não renda.
+    assert ce.rendimentos_do_pregao([(10.0, None, 1.0, 0.0),
+                                     (10.0, 1.5, 1.0, 15.0)]) is None
+    # Ruído negativo pequeno vira zero.
+    r = ce.rendimentos_do_pregao([(10.0, None, 1.0, 0.0), (10.0, -0.01, 1.0, 0.0)])
+    assert r["fator"] == 0.0 and r["preco"] == pytest.approx(0.0)
+
+
+def test_eventos_de_acoes_filtra_rotulo_papel_e_fator():
+    dd = {
+        "cashDividends": [{"isinCode": "BRXXXXACNOR0"}, {"isinCode": "BRXXXXACNOR0"},
+                          {"isinCode": "BRXXXXR01OR0"}],
+        "stockDividends": [
+            {"label": "DESDOBRAMENTO", "factor": 5, "lastDatePrior": "2021-05-03T00:00:00Z",
+             "assetIssued": "BRXXXXACNOR0"},
+            {"label": "BONIFICACAO", "factor": 1.1, "lastDatePrior": "2019-04-30",
+             "assetIssued": None},
+            {"label": "GRUPAMENTO", "factor": 0.008, "lastDatePrior": "2023-08-01"},
+            # resgate e subscrição não ajustam provento
+            {"label": "RESG TOTAL RV", "factor": 1, "lastDatePrior": "2022-01-01"},
+            {"label": "SUBSCRICAO", "factor": 0.2, "lastDatePrior": "2022-02-01"},
+            # outro papel (recibo) e fator 1 ou inválido ficam de fora
+            {"label": "BONIFICACAO", "factor": 1.2, "lastDatePrior": "2020-01-02",
+             "assetIssued": "BRXXXXR01OR0"},
+            {"label": "DESDOBRAMENTO", "factor": 1, "lastDatePrior": "2020-06-01"},
+            {"label": "DESDOBRAMENTO", "factor": None, "lastDatePrior": "2020-07-01"},
+        ],
+    }
+    assert ce.eventos_de_acoes(dd) == [(date(2019, 4, 30), 1.1), (date(2021, 5, 3), 5.0),
+                                      (date(2023, 8, 1), 0.008)]
+    assert ce.eventos_de_acoes(None) == [] and ce.eventos_de_acoes({}) == []
+
+
+def test_fator_de_desajuste_conta_so_eventos_depois_da_data_com():
+    ev = [(date(2019, 4, 30), 1.1), (date(2021, 5, 3), 5.0), (date(2023, 8, 1), 0.008)]
+    # Provento de 2020: desdobramento de 2021 e grupamento de 2023 depois dele.
+    assert ce.fator_de_desajuste(ev, date(2020, 6, 1)) == pytest.approx(5.0 * 0.008)
+    # Na mesma data com do evento, o provento é da ação antiga: não conta.
+    assert ce.fator_de_desajuste(ev, date(2021, 5, 3)) == pytest.approx(0.008)
+    assert ce.fator_de_desajuste(ev, "2018-01-02") == pytest.approx(1.1 * 5.0 * 0.008)
+    assert ce.fator_de_desajuste(ev, date(2024, 1, 2)) == 1.0
+    assert ce.fator_de_desajuste([], date(2020, 1, 2)) == 1.0
+    assert ce.fator_de_desajuste(ev, None) == 1.0
+    assert ce.fator_de_desajuste(ev, float("nan")) == 1.0
 
 
 def test_decisao_reprova_r2_e_r3_com_trajetoria_insuficiente():
@@ -180,7 +195,8 @@ def test_constantes_da_regra_registradas():
     assert ce.CAPITAL_INICIAL == 100_000.0
     assert ce.TOLERANCIA_PONTA_DIAS == 45
     assert (ce.RENDIMENTO_MIN, ce.RENDIMENTO_MAX) == (-0.05, 1.0)
-    assert math.isclose(ce.rendimento_por_razao(1, 1, 1, 1), 0.0)
+    assert ce.VERSAO == "1.3.0"
+    assert ce.ROTULOS_DE_ACOES == {"DESDOBRAMENTO", "BONIFICACAO", "GRUPAMENTO"}
 
 
 def test_valorizacao_da_carteira_e_ponderada_papel_a_papel():

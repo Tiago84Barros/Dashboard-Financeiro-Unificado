@@ -21,7 +21,12 @@ import uuid
 import pytest
 from sqlalchemy import create_engine, text
 
-from core.b3_troca_codigo import MOTIVO_TROCA, MOTIVO_TROCA_PENDENTE, mapa_de_trocas
+from core.b3_troca_codigo import (
+    MOTIVO_TROCA,
+    MOTIVO_TROCA_PENDENTE,
+    PARES_CONHECIDOS,
+    mapa_de_trocas,
+)
 from data_pipeline.market import ingest as ig
 from data_pipeline.market import repository as repo
 from data_pipeline.market import troca_codigo as tc
@@ -776,7 +781,7 @@ def test_script_aplicado_e_idempotente(banco, monkeypatch, capsys):
 
     # a segunda passada não acha nada a fazer, nem aplicando
     codigo, saida = _script(monkeypatch, banco, capsys, "--alvo", "warehouse")
-    assert codigo == 0 and "pares pendentes: 0 de 12" in saida
+    assert codigo == 0 and f"pares pendentes: 0 de {len(PARES_CONHECIDOS)}" in saida
     _script(monkeypatch, banco, capsys, "--alvo", "warehouse", "--apply")
     assert _foto(banco) == depois
 
@@ -787,15 +792,15 @@ def test_script_imprime_o_lote_lista_e_reverte(banco, monkeypatch, capsys):
     assert codigo == 0
     with banco.connect() as conn:
         ids = [x["lote"] for x in tc.lotes(conn)]
-    # um lote por par: os 10 sem ativo na semente só ganham o alias, e esse
+    # um lote por par: os sem ativo na semente só ganham o alias, e esse
     # alias também tem de poder ser desfeito
-    assert len(ids) == 12
+    assert len(ids) == len(PARES_CONHECIDOS)
     assert all(f"--reverter {i} --apply" in saida for i in ids)
 
     # par já unificado não abre lote novo
     _script(monkeypatch, banco, capsys, "--alvo", "warehouse", "--apply")
     codigo, saida = _script(monkeypatch, banco, capsys, "--alvo", "warehouse", "--lotes")
-    assert codigo == 0 and len(saida.strip().splitlines()) == 12
+    assert codigo == 0 and len(saida.strip().splitlines()) == len(PARES_CONHECIDOS)
 
     depois = _foto(banco)
     codigo, saida = _script(monkeypatch, banco, capsys, "--alvo", "warehouse",

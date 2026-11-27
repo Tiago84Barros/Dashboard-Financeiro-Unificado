@@ -548,12 +548,13 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
              "data/oos_comparacao_estrategias_b3.json (scripts/comparar_estrategias_b3.py)",
              "Sem guarda de entrada, piso de qualidade, portão de LLM nem tetos de setor",
              "Nove safras; vantagem concentrada em 2020; giro de ~63% ao ano"),
-            "Foi uma das cinco estratégias que passaram as três regras da comparação: "
+            "Na comparação da §29 (renda medida pelo pregão diário) ela tem o maior "
             "retorno sobre pesos iguais com intervalo acima de zero (+16,3 pp ao ano), "
-            "renda em dinheiro crescendo mais (27,7% contra 19,4% ao ano) com menos "
-            "quedas (2 contra 3) e capital final maior. A regra escolhia a top 20 da rota "
-            "(+17,0 pp), que só se separa dela em 2025; o usuário ficou com a rota "
-            "inteira. Com IR o intervalo encosta no zero, e sem 2020 a vantagem cai "
+            "a renda em dinheiro crescendo mais (25,0% contra 18,5% ao ano) e capital "
+            "final quase o dobro, mas falha a regra da renda: caiu em 3 anos, contra 2 "
+            "de pesos iguais (a de 2024 foi de cerca de 1%). A regra escolheria a "
+            "nota + fatores; o usuário manteve a rota, fora da regra, e a tela diz "
+            "isso. Com IR o intervalo encosta no zero, e sem 2020 a vantagem cai "
             "para +5,8 pp: a tela diz as duas coisas.",
         ),
         "ampla_cp": _node(
@@ -581,10 +582,11 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
              "Nove safras: efeito pequeno, um ano ruim apaga a vantagem"),
             "Tirar os piores foi a única estratégia com ganho medido fora do zero na B3 "
             "(+2,5 pp ao ano sobre pesos iguais); a líder de cada segmento tem intervalo "
-            "que cruza o zero. Por isso foi a padrão até a comparação da §29: ali as "
-            "duas passaram as três regras, mas a rota de valor com folga (+16,3 pp "
-            "ao ano contra +1,7) e com a renda crescendo mais. Segue no seletor, na "
-            "mesma régua da líder.",
+            "que cruza o zero. Por isso foi a padrão até a comparação da §29. Ali ela "
+            "passa nas três regras e é a escolha da regra; a rota de valor rende "
+            "muito mais (+16,3 pp ao ano contra +1,7), mas teve uma queda de renda a "
+            "mais, e o usuário ficou com a rota. Segue no seletor, na mesma régua da "
+            "líder.",
         ),
     },
 )

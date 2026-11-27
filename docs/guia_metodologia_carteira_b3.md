@@ -2120,26 +2120,36 @@ Para cada uma, além do retorno, o **rendimento de dividendos** de cada safra
 e a **trajetória de renda** de quem gasta os dividendos. A régua mora em
 `core/b3_comparacao_estrategias.py`:
 
-- rendimento do papel na safra = `(a1/a0)/(c1/c0) - 1`, com o preço ajustado
-  (`a`) e o de fechamento (`c`) do armazém na véspera e no fim da vigência
-  (tolerância de 45 dias). As duas séries da brapi já descontam
-  desdobramento; só o ajustado desconta proventos. Os proventos por
-  pagamento da brapi não servem: não descontam desdobramento (BBAS3 sai com o
-  dobro antes do desdobramento de 2024);
+- fonte (régua 1.3.0): o pregão diário do COTAHIST no armazém local
+  (`b3_security_history`, preço bruto, os BDIs de ação do motor: o lote
+  padrão e os papéis em recuperação judicial ou sob regime especial, que a
+  rota de valor compra) e os eventos de cada papel
+  (proventos e ações), com o mesmo motor da Carteira 20
+  (`core/carteira20_retorno.calcular`, `componentes=True`). Cada pregão
+  devolve o preço, o fator de ações `k` (desdobramento, bonificação,
+  grupamento) e o caixa por ação na data ex, com
+  `1 + ret = (k × preço + caixa) / P_anterior`;
+- os proventos da foto da brapi vêm **ajustados pelos próprios
+  desdobramentos e bonificações da foto**; o COTAHIST é bruto. Antes de
+  entrar no motor, cada provento é multiplicado pelos fatores dos eventos de
+  ações com data com posterior à dele (`ce.fator_de_desajuste`), restritos ao
+  papel da foto (`ce.eventos_de_acoes`). Na conferência contra o motor, a
+  razão nova/velha das bonificações caiu para mediana 1,03 (186 de 297 a ±15%);
+  as 451 linhas de proventos do banco que completam anos que a foto não tem
+  ficam como estão (31 delas têm evento depois);
+- da véspera ao fim da vigência (tolerância de 45 dias), papel a papel
+  (`ce.rendimentos_do_pregao`): o número de ações começa em 1 e multiplica por
+  `k`; o caixa de quem gasta é a soma de `n × caixa / P_0`; o índice de preço
+  é `n × P_1 / P_0 - 1`; o **fator** (o provento reinvestido) é
+  `Π(1 + ret) / (1 + preço) - 1`. Pregão sem retorno conta zero;
 - rendimento fora de [-5%, 100%) sai como dado ruim; entre -5% e 0 vira 0;
   papel sem dado sai e os pesos dos outros se renormalizam, com a cobertura
   registrada;
-- esse rendimento é um **fator** (o provento reinvestido), não o dinheiro de
-  quem gasta. O **caixa** sai da série diária entre as duas pontas: em cada
-  data ex (razão diária ajustado/fechamento `r_i` acima de 1 + 0,05%), soma
-  `(1 - 1/r_i) × P_{i-1}/P_0`. Razão diária fora de [0,95; 2,0) é quebra da
-  série e tira o papel naquela safra. Salto de preço de 45% ou mais com as
-  duas séries juntas (desdobramento, grupamento) não mexe no índice de preço;
 - valorização da carteira (régua 1.2.0): o índice de preço de cada papel
-  (fechamento, sem proventos) entre as duas pontas, pesado papel a papel
-  pelos mesmos pesos renormalizados da renda. Dividir o retorno total da
-  carteira pelo fator agregado não isola o preço quando os papéis têm
-  rendimentos diferentes (a revisão do PR #810 mostrou o caso);
+  entre as duas pontas, pesado papel a papel pelos mesmos pesos
+  renormalizados da renda. Dividir o retorno total da carteira pelo fator
+  agregado não isola o preço quando os papéis têm rendimentos diferentes (a
+  revisão do PR #810 mostrou o caso);
 - trajetória: R$ 100 mil em abril/2017; o custo sai em abril, antes do ano
   (régua 1.2.1): investido = `capital × fator_custo`; renda = investido ×
   caixa; o capital cresce só pela valorização, `investido × (1 + valorização)`,
@@ -2177,20 +2187,21 @@ contra a líder, e o retorno com IR.
   sorte é alta; R2 e R3 são contra o mesmo benchmark e não corrigem isso.
 - As estratégias se sobrepõem (top 5 dentro do top 10, segurado dentro do
   dividendo): não são testes independentes.
-- O caixa é reconstruído pela razão diária ajustado/fechamento, não pelos
-  pagamentos (que não descontam desdobramento); papel que sai da bolsa no
-  meio da vigência fica sem ponta e sai do cálculo da renda (a régua do
-  retorno já trata a saída).
+- O caixa sai dos pagamentos desajustados (régua 1.3.0); o desajuste usa os
+  eventos da foto da brapi e não alcança evento que a foto não tem. Papel que
+  sai da bolsa no meio da vigência fica sem ponta e sai do cálculo da renda
+  (a régua do retorno já trata a saída).
 - Nas estratégias com aporte (§26, §27) os pesos derivam; o rendimento usa
   pesos iguais na composição da safra.
 - Pequenas baratas (§23) e os perfis Conservador e Amplo ficam de fora: pedem
   outra rodada da aba. Carteiras sorteadas (§22) e portão de IA (§21) são
   referência, não concorrentes.
-- Sobram pontos isolados de preço em papéis pouco líquidos da
-  `brapi_legacy_quote`; o filtro de -5% a 100% tira os piores.
-- (Achado na régua 1.2.0.) A série de `market.historical_prices` é mensal
-  até 2024: o caixa e a valorização desses anos saem de passos de um mês, e
-  um desdobramento que a série não ajustou nesses anos não é reconhecido.
+- O filtro de -5% a 100% tira pregões com dado ruim que sobrarem.
+- (Achado na régua 1.2.0, resolvido na 1.3.0.) A série de
+  `market.historical_prices` é mensal até 2025 e, em 2026, mistura o ponto do
+  dia 01 com o pregão diário em bases de ajuste diferentes: a razão
+  ajustado/bruto vai e volta e inventava provento. Desde a 1.3.0 a renda e a
+  valorização saem do pregão diário do COTAHIST.
 
 ### Como rodar
 
@@ -2204,7 +2215,7 @@ de cada estratégia, a trajetória de renda, a cobertura do rendimento e a
 escolha. Uma pasta de cache nova evita reaproveitar a aba montada antes da
 correção dos preços.
 
-### Resultado (27/11/2026, régua 1.2.1): a rota de valor passa nas três; a regra escolhe a de 20 nomes
+### Resultado (27/11/2026, régua 1.3.0): a rota de valor falha só a R2; a regra escolheria a nota + fatores; o usuário manteve a rota
 
 Nove safras, 2017 a 2025. Excesso e IC em pontos percentuais ao ano sobre
 pesos iguais, líquidos de custo. Renda: tendência anual da renda em dinheiro
@@ -2239,44 +2250,69 @@ era calculada sobre o capital de antes do custo. Agora a renda é sobre o
 capital já investido. O efeito é pequeno (o custo anual é de décimos de
 ponto); nenhuma estratégia mudou de veredito.
 
-**Pesos iguais (benchmark):** renda +19,4% ao ano, 3 quedas, capital final
-206, renda total 80.
+**Régua 1.3.0 (27/11/2026).** A quarta revisão do PR #810 apontou dois
+defeitos na fonte da renda: a série de `market.historical_prices` é mensal
+(o caixa usava o preço do início do mês, não o da véspera da data ex) e, em
+2026, alterna duas bases de ajuste, o que inventava provento (a renda da
+safra 2025 saltava para 13% a 19% em todas as estratégias); e a costura de
+códigos só seguia `market.ticker_alias`. A renda e a valorização passaram a
+sair do pregão diário bruto do COTAHIST, com os proventos da foto da brapi
+desajustados pelos desdobramentos e bonificações da própria foto, todos os
+BDIs de ação que o motor da Carteira 20 aceita e quatro trocas de código que
+só o COTAHIST mostra (TRPL3/TRPL4 → ISAE3/ISAE4, DTEX3 → DXCO3, ESTC3 →
+YDUQ3, conferidas pelo preço do último pregão antigo e do primeiro novo;
+IGTA3 → IGTI3 fica de fora, foi incorporação). Sem elas a rota perdia o
+passado de ISA Energia, Dexco e Yduqs; a cobertura dela subiu de 50% para
+70% em 2017 e de 78% para 89% em 2020. O excesso (R1) não muda. Mudam a
+renda e o capital, e com eles os vereditos: a rota de valor e a top 20 passam
+a ter 3 quedas de renda (2018, 2023 e 2024; a de 2024 é de cerca de 1%),
+contra 2 dos pesos iguais, e falham a R2; a fórmula mágica e a metade rota,
+metade dividendo também; o corte de 30% pela nota passa a passar.
+
+**Pesos iguais (benchmark):** renda +18,5% ao ano, 2 quedas (2020 e 2023),
+capital final 223, renda total 76.
 
 | Estratégia | Excesso | IC 95% | Sem a melhor | Renda a.a. | Quedas | Capital | Renda total | Falhou |
 |---|---|---|---|---|---|---|---|---|
-| **rota_valor_top20** | **+17,0** | [+1,6; +40,0] | +6,6 | +27,0% | 2 | 457 | 220 | — |
-| **rota_valor** | **+16,3** | [+2,8; +38,5] | +5,8 | +27,7% | 2 | 475 | 211 | — |
-| rota_valor_top15 | +14,8 | [−1,4; +38,5] | +4,2 | +26,6% | 2 | 402 | 204 | R1 |
-| rota_valor_top10 | +12,0 | [−4,0; +36,0] | +1,0 | +27,8% | 3 | 317 | 203 | R1 |
-| **rota_mais_dividendo** | **+9,2** | [+2,9; +18,6] | +5,0 | +22,4% | 2 | 341 | 165 | — |
-| **formula_magica** | **+4,2** | [+0,5; +7,6] | +3,3 | +29,0% | 3 | 252 | 137 | — |
-| dividendo_6 | +2,1 | [−3,6; +7,3] | +0,5 | +14,5% | 3 | 208 | 115 | R1, R2 |
-| **nota_fatores** (padrão até 26/11) | **+1,7** | [+0,6; +2,8] | +1,5 | +21,1% | 3 | 235 | 100 | — |
-| dividendo_segurado_so_solvencia | +1,7 | [−4,0; +6,5] | +0,5 | +13,9% | 4 | 215 | 110 | R1, R2 |
-| dividendo_segurado | +1,7 | [−4,3; +6,7] | +0,5 | +13,9% | 4 | 212 | 111 | R1, R2 |
-| lider_segmento | +1,2 | [−6,6; +9,4] | −1,0 | +35,5% | 3 | 226 | 108 | R1 |
-| tirar_30_pela_nota | +1,2 | [+0,2; +2,1] | +0,9 | +19,3% | 2 | 221 | 96 | R2 |
-| dividendo_segurado_dois_anos | +0,9 | [−6,7; +6,3] | −0,3 | +12,7% | 4 | 204 | 107 | R1, R2, R3 |
-| qualidade_constante | +0,8 | [−4,7; +6,2] | −0,9 | +20,8% | 5 | 212 | 95 | R1, R2 |
-| lider_filtro_nota_fatores | +0,7 | [−6,7; +8,1] | −1,3 | +35,1% | 4 | 210 | 111 | R1, R2 |
-| dividendo_6_top5 | +0,4 | [−6,9; +7,2] | −1,8 | +15,0% | 3 | 194 | 171 | R1, R2, R3 |
-| lider_segurado | −0,4 | [−4,7; +3,7] | −1,8 | +25,3% | 3 | 202 | 77 | R1, R3 |
-| dividendo_6_top20 | −0,8 | [−7,3; +5,4] | −2,9 | +14,0% | 3 | 168 | 111 | R1, R2, R3 |
-| qualidade_3_anos | −0,8 | [−5,7; +4,2] | −2,5 | +20,0% | 3 | 190 | 76 | R1, R3 |
-| dividendo_6_top10 | −1,0 | [−8,8; +6,1] | −3,1 | +12,0% | 4 | 181 | 113 | R1, R2, R3 |
-| dividendo_6_top15 | −1,7 | [−8,3; +4,4] | −3,4 | +13,3% | 3 | 159 | 104 | R1, R2, R3 |
+| rota_valor_top20 | +17,0 | [+1,6; +40,0] | +6,6 | +22,4% | 3 | 384 | 184 | R2 |
+| rota_valor (padrão desde 26/11, escolha do usuário) | +16,3 | [+2,8; +38,5] | +5,8 | +25,0% | 3 | 434 | 184 | R2 |
+| rota_valor_top15 | +14,8 | [−1,4; +38,5] | +4,2 | +22,9% | 3 | 345 | 171 | R1, R2 |
+| rota_valor_top10 | +12,0 | [−4,0; +36,0] | +1,0 | +24,5% | 2 | 271 | 169 | R1 |
+| rota_mais_dividendo | +9,2 | [+2,9; +18,6] | +5,0 | +21,4% | 3 | 328 | 142 | R2 |
+| formula_magica | +4,2 | [+0,5; +7,6] | +3,3 | +27,8% | 3 | 248 | 120 | R2 |
+| dividendo_6 | +2,1 | [−3,6; +7,3] | +0,5 | +15,6% | 4 | 217 | 100 | R1, R2, R3 |
+| **nota_fatores** (padrão até 26/11; escolha da regra na 1.3.0) | **+1,7** | [+0,6; +2,8] | +1,5 | +20,7% | 2 | 246 | 90 | — |
+| dividendo_segurado_so_solvencia | +1,7 | [−4,0; +6,5] | +0,5 | +13,5% | 3 | 212 | 95 | R1, R2, R3 |
+| dividendo_segurado | +1,7 | [−4,3; +6,7] | +0,5 | +13,5% | 3 | 209 | 95 | R1, R2, R3 |
+| lider_segmento | +1,2 | [−6,6; +9,4] | −1,0 | +39,1% | 4 | 247 | 102 | R1, R2 |
+| **tirar_30_pela_nota** | **+1,2** | [+0,2; +2,1] | +0,9 | +21,0% | 2 | 258 | 95 | — |
+| dividendo_segurado_dois_anos | +0,9 | [−6,7; +6,3] | −0,3 | +13,1% | 3 | 202 | 93 | R1, R2, R3 |
+| qualidade_constante | +0,8 | [−4,7; +6,2] | −0,9 | +18,0% | 5 | 210 | 90 | R1, R2, R3 |
+| lider_filtro_nota_fatores | +0,7 | [−6,7; +8,1] | −1,3 | +39,5% | 4 | 240 | 109 | R1, R2 |
+| dividendo_6_top5 | +0,4 | [−6,9; +7,2] | −1,8 | +17,4% | 4 | 188 | 142 | R1, R2, R3 |
+| lider_segurado | −0,4 | [−4,7; +3,7] | −1,8 | +31,3% | 3 | 226 | 76 | R1, R2 |
+| dividendo_6_top20 | −0,8 | [−7,3; +5,4] | −2,9 | +14,3% | 4 | 159 | 95 | R1, R2, R3 |
+| qualidade_3_anos | −0,8 | [−5,7; +4,2] | −2,5 | +15,2% | 3 | 194 | 71 | R1, R2, R3 |
+| dividendo_6_top10 | −1,0 | [−8,8; +6,1] | −3,1 | +13,3% | 4 | 153 | 91 | R1, R2, R3 |
+| dividendo_6_top15 | −1,7 | [−8,3; +4,4] | −3,4 | +14,0% | 3 | 149 | 88 | R1, R2, R3 |
 
-Cinco candidatas: rota_valor_top20, rota_valor, rota_mais_dividendo,
-formula_magica e nota_fatores. Pela regra registrada, vira padrão a de maior
-excesso: **rota_valor_top20**. Cobertura do rendimento: 60% a 100% do peso
-por safra.
+Duas candidatas: nota_fatores e tirar_30_pela_nota. Pela regra registrada,
+vira padrão a de maior excesso: **nota_fatores** (+1,7). Cobertura do
+rendimento: 60% a 100% do peso por safra.
+
+Renda da rota de valor por safra, em R$ mil: 6,8; 5,8; 9,5; 12,8; 32,0; 36,6;
+24,4; 24,1; 31,9. Pesos iguais: 3,7; 4,5; 5,5; 4,7; 11,0; 11,5; 9,7; 10,5;
+15,0. A rota fica acima dos pesos iguais em todas as safras e termina com o
+dobro da renda anual; falha a R2 pela contagem de quedas, não pelo nível.
 
 **Ressalvas que a regra não pesa, mas a decisão deve pesar:**
 
+- **A R2 conta quedas, não tamanho:** a terceira queda da rota (2024) é de
+  cerca de 1% (24,4 → 24,1). Com uma queda a menos ela passaria nas três. A
+  regra não distingue uma queda de 1% de uma de 30%.
 - **A rota de 20 nomes e a rota inteira são a mesma carteira de 2017 a
   2021** (a rota tinha 20 nomes ou menos). A vantagem da de 20 (+0,7 p.p.)
-  vem toda de 2025 (+18,6 p.p.); ela perde em 2022, 2023 e 2024. Com 10 e 15
-  nomes a rota não passa. A escolha da de 20 depende do tamanho do corte.
+  vem toda de 2025 (+18,6 p.p.); ela perde em 2022, 2023 e 2024.
 - **A rota depende de 2020:** +153,6% com nove nomes (PRIO3 e ROMI3 acima de
   400%). Sem a melhor safra o excesso cai para +5,8 (rota) e +6,6 (20 nomes),
   ainda acima de zero.
@@ -2286,21 +2322,23 @@ por safra.
   rota é alto (63% a 66% ao ano, contra 26% da nota + fatores).
 - **Pareada contra a nota + fatores:** rota +14,5 [+0,7; +36,9]; 20 nomes
   +15,2 [−0,3; +38,3]; metade rota, metade dividendo +7,4 [+1,3; +16,8].
-- **A líder de segmento tem a renda que mais cresce** (+35,5% ao ano, 3
+- **A líder de segmento tem a renda que mais cresce** (+39,1% ao ano, 4
   quedas), mas não passa no retorno.
-- **A fórmula mágica passa nas três desde a régua 1.1.0**, com a renda
-  crescendo +29,0% ao ano e 3 quedas (o limite, igual aos pesos iguais). O
-  excesso é pequeno (+4,2) e com IR o IC cruza o zero (+2,8 [−0,5; +6,0]).
+- **As duas candidatas ganham pouco:** a nota + fatores rende +1,7 p.p. ao
+  ano sobre pesos iguais e, com IR, o IC cruza o zero (+0,9 [−0,3; +2,1]); o
+  corte de 30% pela nota rende +1,2. A rota rende dez vezes mais.
 - Cerca de 20 estratégias na mesma janela: alguma passar por sorte é
-  provável. As três que passam com folga são da mesma família (rota de
-  valor), o que não é prova independente.
+  provável. As estratégias se sobrepõem, o que não é prova independente.
 
-**Decisão do usuário (26/11/2026): a rota de valor inteira vira o padrão da
-tela.** A regra escolhia a top 20; o usuário preferiu a rota inteira, que tem o
-IC mais longe do zero e só se separa da top 20 em 2025. Na régua 1.2.0 as
-duas têm 2 quedas; a rota inteira fica com a renda crescendo um pouco mais
-(+27,7% contra +27,0%) e o capital maior (475 contra 457). As réguas 1.2.0 e 1.2.1 mantiveram
-o quadro. A tela abre nela desde então, com os seis cards desta medição (excesso
+**Decisão do usuário (26/11/2026, confirmada em 27/11/2026): a rota de
+valor inteira é o padrão da tela, fora da regra.** Na régua 1.2.1 a regra
+escolhia a top 20; o usuário preferiu a rota inteira, que tem o IC mais longe
+do zero e só se separa da top 20 em 2025. Na régua 1.3.0 a rota falha a R2
+por uma queda de renda a mais que os pesos iguais, e a regra escolheria a
+nota + fatores; o usuário manteve a rota. A regra não mudou: a escolha dela e
+a do usuário ficam gravadas lado a lado (`escolha` e `decisao_do_usuario`), e
+a tela diz que a rota não passa na R2 e qual a regra escolheria. A tela abre
+nela desde então, com os seis cards desta medição (excesso
 com IC, com IR, tendência e quedas da renda, capital e renda total) e as
 ressalvas de 2020 e do IR. A nota + fatores e a líder de cada segmento seguem
 no seletor. A carteira de hoje usa a mesma regra
@@ -2309,9 +2347,11 @@ Selic do ano anterior à safra, como aqui.
 
 ### Leitura
 
-Pela renda e pela valorização juntas, a família da rota de valor ganha com
-folga: a renda em dinheiro cresce cerca de 27% ao ano (pesos iguais, 19,4%),
-com menos quedas, e o capital fica mais que o dobro do dos pesos iguais. A regra escolhe a de 20 nomes, mas a diferença para a rota inteira
-está numa safra só; a rota inteira tem o IC mais longe do zero. A metade rota,
-metade dividendo rende menos, mas é a única que aguenta o IR com IC acima de
-zero. A nota + fatores, o padrão até esta decisão, passa nas três por pouco.
+Pela renda e pela valorização juntas, a rota de valor ganha com folga: a
+renda em dinheiro cresce 25% ao ano (pesos iguais, 18,5%), fica acima da dos
+pesos iguais em todas as safras, e o capital fica quase o dobro. O que ela não
+tem é a renda sem tropeço: caiu em três anos, um deles por 1%. A regra
+registrada pede as duas coisas e, com a renda medida pelo pregão diário,
+escolheria a nota + fatores, que tem a renda mais regular e rende pouco acima
+dos pesos iguais. A metade rota, metade dividendo segue a única que aguenta o
+IR com IC acima de zero.

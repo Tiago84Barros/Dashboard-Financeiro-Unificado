@@ -32,6 +32,15 @@ def test_par_conhecido_da_mesma_companhia_e_troca():
     assert _sem_conhecidos(mapa) == {}
 
 
+def test_trocas_so_do_cotahist_ligam_o_pregao_antigo_ao_codigo_atual():
+    """O COTAHIST guarda o passado no código antigo; sem o par, a régua diária
+    da §29 perdia ISA Energia, Dexco e Yduqs antes da troca."""
+    mapa = tc.mapa_de_trocas(None, [])
+    assert {a: mapa[a] for a in ("TRPL3", "TRPL4", "DTEX3", "ESTC3")} == {
+        "TRPL3": "ISAE3", "TRPL4": "ISAE4", "DTEX3": "DXCO3", "ESTC3": "YDUQ3"}
+    assert "IGTA3" not in mapa  # incorporação pela Jereissati, não troca
+
+
 def test_companhias_diferentes_vetam_ate_o_par_conhecido():
     df = _ativos(("ELET3", 1), ("AXIA3", 2))
     assert "ELET3" not in tc.mapa_de_trocas(df)

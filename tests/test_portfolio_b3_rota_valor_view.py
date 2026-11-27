@@ -121,8 +121,28 @@ def test_medicao_gravada_tem_o_braco_da_tela():
     dados = _medicao()
     assert rv.BRACO in dados["estrategias"]
     rota = dados["estrategias"][rv.BRACO]
-    assert rota["decisao"]["candidata"] is True
     assert rota["vs_equal_weight"]["ic95"][0] > 0
+    # A rota é o padrão por escolha do usuário (26/11, confirmada em 27/11),
+    # mesmo quando a regra da §29 aponta outra: o arquivo guarda as duas.
+    assert dados["decisao_do_usuario"]["padrao"] == rv.BRACO
+    assert dados["escolha"]["padrao"]
+
+
+def test_ressalva_da_regra_diz_o_teste_que_a_rota_falha_e_a_escolha_da_regra():
+    dados = _medicao()
+    rota = dados["estrategias"][rv.BRACO]
+    texto = rv.ressalva_da_regra(dados)
+    if dados["escolha"]["padrao"] == rv.BRACO:
+        assert texto is None
+    else:
+        assert texto and "escolha do usuário" in texto
+        assert str(rota["renda"]["quedas_de_renda"]) in texto
+        assert rv._NOMES.get(dados["escolha"]["padrao"], dados["escolha"]["padrao"]) in texto
+    assert rv.ressalva_da_regra(None) is None
+    mesma = dict(dados, escolha=dict(dados["escolha"], padrao=rv.BRACO))
+    assert rv.ressalva_da_regra(mesma) is None
+    sem_usuario = {k: v for k, v in dados.items() if k != "decisao_do_usuario"}
+    assert rv.ressalva_da_regra(sem_usuario) is None
 
 
 def test_renda_ano_a_ano_alinha_rota_e_pesos_iguais_por_safra():

@@ -2,12 +2,14 @@
 views/portfolio_b3_rota_valor.py — carteira "rota de valor" na aba B3.
 
 Estratégia padrão da aba desde 26/11/2026, por escolha do usuário depois da
-comparação da §29 do guia (`core/b3_comparacao_estrategias.py`): das 21
-estratégias medidas, a rota de valor inteira passou as três regras da régua
-(retorno sobre pesos iguais com IC acima de zero, renda crescendo sem mais
-quedas que pesos iguais, capital final pelo preço acima de pesos iguais). A
-regra fixada escolhia a ``rota_valor_top20`` (+17,0 pp); o usuário ficou com
-a rota inteira (+16,3 pp), que só se separa da top 20 em 2025.
+comparação da §29 do guia (`core/b3_comparacao_estrategias.py`), confirmada em
+27/11/2026 na régua 1.3.0. Nela, com a renda lida do pregão diário, a rota de
+valor inteira passa o retorno sobre pesos iguais (+16,3 pp, IC acima de zero) e
+o capital final pelo preço, mas falha a R2: a renda caiu em 3 anos, contra 2 de
+pesos iguais (a terceira, 2024, de cerca de 1%). A regra escolheria
+``nota_fatores``; o usuário manteve a rota, fora da regra. A tela lê as duas
+escolhas do arquivo (``escolha`` e ``decisao_do_usuario``) e diz a diferença
+(`ressalva_da_regra`), em vez de afirmar que a rota passa.
 
 A regra é a da medição: `core.b3_estrategias_fundamentalistas.carteira_rota_valor`
 sobre o quadro de decisão de hoje, com a Selic do ano anterior à safra
@@ -16,8 +18,8 @@ compra em pesos iguais quem a rota de valor (`core.b3_value_route`) classifica
 como ``oportunidade``. A evidência vem gravada em
 `data/oos_comparacao_estrategias_b3.json` por `scripts/comparar_estrategias_b3.py`.
 
-`selic_da_safra`, `formar_hoje`, `tabela_para_exibicao`, `renda_ano_a_ano` e
-`avisos_da_medicao` são puras (sem streamlit, sem banco) para poderem ser
+`selic_da_safra`, `formar_hoje`, `tabela_para_exibicao`, `renda_ano_a_ano`,
+`avisos_da_medicao` e `ressalva_da_regra` são puras (sem streamlit, sem banco) para poderem ser
 testadas direto.
 """
 from __future__ import annotations
@@ -162,6 +164,49 @@ def avisos_da_medicao(dados: dict | None, perfil_ativo: str | None,
     return avisos
 
 
+#: Nome dos testes da §29 em palavras simples, para a ressalva da tela.
+_TESTES_EM_PALAVRAS = {
+    "r1_retorno": "o de retorno acima de pesos iguais",
+    "r2_dividendo_crescente": "o de renda que cresce sem cair mais vezes que pesos iguais",
+    "r3_valorizacao": "o de capital final pelo preço acima de pesos iguais",
+}
+
+#: Nome das estratégias que a regra pode escolher, como o seletor da aba as chama.
+_NOMES = {
+    fe.ROTA_VALOR: "rota de valor",
+    "nota_fatores": "nota + fatores",
+    "tirar_30_pela_nota": "tirar os 30% piores pela nota",
+    "rota_valor_top20": "top 20 da rota de valor",
+}
+
+
+def ressalva_da_regra(dados: dict | None) -> str | None:
+    """O que a tela diz quando a escolha do usuário não é a da regra da §29.
+
+    Lê ``escolha`` (a da regra) e ``decisao_do_usuario`` do arquivo gravado, e o
+    veredito da rota (``decisao.falhou``). Sem diferença, devolve ``None``.
+    """
+    if not dados or BRACO not in (dados.get("estrategias") or {}):
+        return None
+    regra = (dados.get("escolha") or {}).get("padrao")
+    usuario = (dados.get("decisao_do_usuario") or {}).get("padrao")
+    if not regra or regra == BRACO or usuario != BRACO:
+        return None
+    rota = dados["estrategias"][BRACO]
+    falhou = (rota.get("decisao") or {}).get("falhou") or []
+    renda = rota.get("renda") or {}
+    renda_ew = ((dados.get("pesos_iguais") or {}).get("renda") or {})
+    testes = ", ".join(_TESTES_EM_PALAVRAS.get(t, t) for t in falhou) or "nenhum"
+    texto = f"Pela regra da comparação, a rota de valor não passa num teste: {testes}."
+    if "r2_dividendo_crescente" in falhou:
+        texto += (f" A renda dela caiu em {_fmt_int(renda.get('quedas_de_renda'))} "
+                  f"anos, contra {_fmt_int(renda_ew.get('quedas_de_renda'))} de pesos "
+                  "iguais.")
+    texto += (f" A regra escolheria “{_NOMES.get(regra, regra)}”. A rota segue como "
+              "padrão por escolha do usuário.")
+    return texto
+
+
 def _fmt_pp(v) -> str:
     return "—" if v is None else f"{v * 100:+.1f} pp".replace(".", ",")
 
@@ -250,6 +295,9 @@ def _render_evidencia(dados: dict) -> None:
 
     import core.b3_oos_carteira as oos
     st.caption(oos.leitura_honesta(vs))
+    ressalva = ressalva_da_regra(dados)
+    if ressalva:
+        st.info(ressalva, icon="ℹ️")
 
     tabela = renda_ano_a_ano(dados)
     if not tabela.empty:
@@ -278,8 +326,10 @@ def _render_evidencia(dados: dict) -> None:
                                      if k.startswith("r")) + "). Limites: "
         + "; ".join(dados.get("limites") or []) + f". Medição de "
         f"{str(dados.get('medido_em') or '')[:10]}, régua {dados.get('versao_regua')}, "
-        f"perfil “{dados.get('perfil')}”. A regra da §29 escolhia a top 20 da rota "
-        "(+17,0 pp); a rota inteira foi a escolha do usuário em 26/11/2026.",
+        f"perfil “{dados.get('perfil')}”. Escolha da regra: "
+        f"{(dados.get('escolha') or {}).get('padrao', '—')}; escolha do usuário: "
+        f"{(dados.get('decisao_do_usuario') or {}).get('padrao', '—')} "
+        f"({(dados.get('decisao_do_usuario') or {}).get('motivo', '—')}).",
         codigo="portfolio_b3.rota_valor_medicao")
 
 
