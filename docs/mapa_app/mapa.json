@@ -1,7 +1,7 @@
 {
   "nome": "Dashboard Financeiro Unificado",
   "explicacao": "Junta num lugar só suas contas do dia a dia, seus investimentos e a análise de empresas do Brasil e dos EUA. Abaixo estão as 8 telas do menu lateral e, por último, o que funciona por trás delas.",
-  "data_mapa": "24/11/2026",
+  "data_mapa": "26/11/2026",
   "filhos": [
     {
       "nome": "Dashboard Geral",
@@ -1869,20 +1869,26 @@
             },
             {
               "nome": "Estratégia",
-              "resumo": "Nota + fatores (padrão) ou líder de cada segmento",
-              "explicacao": "Um seletor logo depois dos testes complementares escolhe qual carteira a tela mostra. Abre em \"Nota + fatores\", a estratégia padrão. \"Líder de cada segmento\" mostra a carteira concentrada e tudo o que vem com ela: as empresas líderes, o parecer da IA e o botão de salvar.",
+              "resumo": "Rota de valor (padrão), nota + fatores ou líder de cada segmento",
+              "explicacao": "Um seletor logo depois dos testes complementares escolhe qual carteira a tela mostra. Abre em \"Rota de valor\", a estratégia padrão desde 26/11/2026. \"Nota + fatores\" foi a padrão de 20/11 a 26/11/2026. \"Líder de cada segmento\" mostra a carteira concentrada e tudo o que vem com ela: as empresas líderes, o parecer da IA e o botão de salvar.",
               "so_admin": false,
               "filhos": [
                 {
-                  "nome": "Nota + fatores (padrão)",
-                  "resumo": "Estratégia padrão: tira os 30% piores e divide igual no resto",
-                  "explicacao": "A estratégia que abre por padrão, desde 20/11/2026, porque foi a única com ganho medido fora do zero: em média, 2,5 pontos ao ano acima de dividir igual entre todas as empresas. É uma carteira ampla feita com a mesma nota. Junta a nota com três dados de mercado (momento, baixa volatilidade e ROE), tira os 30% de pior resultado e divide o dinheiro em partes iguais entre os que ficam. É refeita uma vez por ano, em abril. Três cartões mostram quanto ela rendeu a mais que dividir igual entre todas as empresas nos anos passados, ao lado da nota sozinha e da líder de cada segmento. Outros três mostram quanto R$ 1 teria virado reaplicado a cada abril nesses anos (nota + fatores, a nota sozinha e partes iguais), com a taxa ao ano: é o resultado do período, não a prova. A lista de hoje aparece depois de rodar a aba; entre janeiro e março ela é uma prévia. Logo abaixo vêm o desempenho safra a safra e a metodologia. Ela não passa pelo parecer da IA e não pode ser salva como portfólio padrão.",
+                  "nome": "Rota de valor (padrão)",
+                  "resumo": "Estratégia padrão: compra em partes iguais as empresas baratas e solventes",
+                  "explicacao": "A estratégia que abre por padrão, desde 26/11/2026, escolhida pelo usuário depois de comparar 21 estratégias. Compra em partes iguais toda empresa com nota de hoje que a rota de valor marca como oportunidade: preço pelo menos 20% abaixo do valor estimado (Graham e Bazin) e dívida e caixa dentro dos limites. É refeita uma vez por ano, em abril. Seis cartões mostram a medição dos anos passados, sempre ao lado de dividir igual entre todas as empresas: o ganho ao ano com a margem de erro, o mesmo depois do imposto, quanto a renda de dividendos cresceu, em quantos anos ela caiu, o capital final e a renda total. Uma tabela abre a renda ano a ano. A tela avisa que o ganho depende muito de 2020 e que, com imposto, a margem de erro encosta no zero. A lista de hoje aparece depois de rodar a aba; entre janeiro e março ela é uma prévia. Logo abaixo vêm o desempenho safra a safra e a metodologia. Ela não passa pelo parecer da IA e não pode ser salva como portfólio padrão.",
+                  "so_admin": false
+                },
+                {
+                  "nome": "Nota + fatores",
+                  "resumo": "Tira os 30% piores e divide igual no resto",
+                  "explicacao": "Foi a estratégia padrão de 20/11 a 26/11/2026, quando era a única com ganho medido fora do zero: em média, 2,5 pontos ao ano acima de dividir igual entre todas as empresas. É uma carteira ampla feita com a mesma nota. Junta a nota com três dados de mercado (momento, baixa volatilidade e ROE), tira os 30% de pior resultado e divide o dinheiro em partes iguais entre os que ficam. É refeita uma vez por ano, em abril. Três cartões mostram quanto ela rendeu a mais que dividir igual entre todas as empresas nos anos passados, ao lado da nota sozinha e da líder de cada segmento. Outros três mostram quanto R$ 1 teria virado reaplicado a cada abril nesses anos (nota + fatores, a nota sozinha e partes iguais), com a taxa ao ano: é o resultado do período, não a prova. A lista de hoje aparece depois de rodar a aba; entre janeiro e março ela é uma prévia. Logo abaixo vêm o desempenho safra a safra e a metodologia. Ela não passa pelo parecer da IA e não pode ser salva como portfólio padrão.",
                   "so_admin": false
                 },
                 {
                   "nome": "Líder de cada segmento",
                   "resumo": "A carteira concentrada, uma empresa por segmento aprovado",
-                  "explicacao": "A outra estratégia do seletor. Ao escolhê-la aparecem as empresas líderes, os ajustes e verificações (com o parecer da IA), o botão de salvar como portfólio padrão e o desempenho. Seu ganho sobre dividir igual não foi provado: a margem de erro cruza o zero. É a única que pode ser salva como portfólio padrão.",
+                  "explicacao": "A terceira estratégia do seletor. Ao escolhê-la aparecem as empresas líderes, os ajustes e verificações (com o parecer da IA), o botão de salvar como portfólio padrão e o desempenho. Seu ganho sobre dividir igual não foi provado: a margem de erro cruza o zero. É a única que pode ser salva como portfólio padrão.",
                   "so_admin": false,
                   "filhos": [
                     {

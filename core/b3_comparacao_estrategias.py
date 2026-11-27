@@ -58,6 +58,11 @@ pareadas contra a nota + fatores e contra a líder de segmento são
 informativas. Nove safras é pouco: a regra pode errar nos dois sentidos, e a
 saída diz isso.
 
+Decisão do usuário de 26/11/2026: a regra escolheu a ``rota_valor_top20``;
+o usuário ficou com a ``rota_valor`` inteira (+16,3 pp, só se separa da top
+20 em 2025), que virou a padrão da tela (`views/portfolio_b3_rota_valor.py`).
+A regra continua gravando a sua escolha em ``escolha``; a da tela é do usuário.
+
 Funções puras: nada de banco nem de Streamlit.
 """
 from __future__ import annotations
@@ -185,3 +190,19 @@ def escolher_padrao(bracos: dict[str, dict], atual: str) -> dict:
     return {"padrao": cand[0][0], "trocou": cand[0][0] != atual,
             "candidatas": [k for k, _ in cand],
             "motivo": "maior excesso médio entre as candidatas"}
+
+
+def motivos_vencida(dados: dict, versao_metodologia: str,
+                    versao_presets: str) -> list[str]:
+    """Por que a medicao gravada nao vale para o metodo de hoje (vazio = em dia).
+
+    Ponto unico da regra: a tela da rota de valor e o Grau de Confianca leem
+    daqui, para os dois nunca discordarem sobre a mesma medicao."""
+    motivos = []
+    if str(dados.get("versao_regua")) != str(VERSAO):
+        motivos.append(f"régua {dados.get('versao_regua')} ≠ {VERSAO}")
+    if str(dados.get("versao_metodologia")) != str(versao_metodologia):
+        motivos.append(f"metodologia {dados.get('versao_metodologia')} ≠ {versao_metodologia}")
+    if str(dados.get("versao_presets")) != str(versao_presets):
+        motivos.append(f"perfis {dados.get('versao_presets')} ≠ {versao_presets}")
+    return motivos

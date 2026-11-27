@@ -113,14 +113,19 @@ def test_acumulado_da_medicao_gravada():
     assert nf_["valor_final"] == pytest.approx(esperado)
 
 
-# ── Estratégia padrão (decisão de 20/11/2026) ────────────────────────────────
+# ── Estratégia padrão (decisão de 26/11/2026: rota de valor) ────────────────
 
-def test_nota_fatores_e_a_estrategia_padrao():
-    """O seletor abre na primeira opção (`index=0`); ela tem de ser a nota +
-    fatores, e a líder de cada segmento continua no seletor."""
+def test_rota_de_valor_e_a_estrategia_padrao():
+    """O seletor abre na primeira opção (`index=0`); ela tem de ser a rota de
+    valor, e a nota + fatores e a líder de cada segmento continuam nele."""
     import ast
-    assert list(v.ESTRATEGIAS)[0] == v.ESTRATEGIA_NOTA_FATORES
-    assert v.ESTRATEGIA_LIDER in v.ESTRATEGIAS
+    assert list(v.ESTRATEGIAS) == [v.ESTRATEGIA_ROTA_VALOR, v.ESTRATEGIA_NOTA_FATORES,
+                                   v.ESTRATEGIA_LIDER]
+    assert "(padrão)" in v.ESTRATEGIAS[v.ESTRATEGIA_ROTA_VALOR]
+    assert all("padrão" not in r for k, r in v.ESTRATEGIAS.items()
+               if k != v.ESTRATEGIA_ROTA_VALOR)
+    import views.portfolio_b3_rota_valor as rv
+    assert v.ESTRATEGIA_ROTA_VALOR == rv.BRACO == "rota_valor"
     arvore = ast.parse((ROOT / "views" / "portfolio_b3_nota_fatores.py")
                        .read_text(encoding="utf-8"))
     fn = next(no for no in ast.walk(arvore)
@@ -133,24 +138,32 @@ def test_nota_fatores_e_a_estrategia_padrao():
     assert v.CHAVE_ESTRATEGIA == "pb3_estrategia"
 
 
-def test_tela_b3_rota_padrao_vem_antes_do_portao_e_retorna():
-    """Na tela, a escolha da nota + fatores desvia para `_rota_nota_fatores`
-    e retorna antes do cabeçalho das líderes -- portanto antes do portão de
-    LLM e do botão de salvar. A líder segue pelo caminho de antes."""
+@pytest.mark.parametrize("constante,rota", [
+    ("ESTRATEGIA_ROTA_VALOR", "_rota_rota_valor"),
+    ("ESTRATEGIA_NOTA_FATORES", "_rota_nota_fatores"),
+])
+def test_tela_b3_rotas_amplas_vem_antes_do_portao_e_retornam(constante, rota):
+    """Na tela, a rota de valor (padrão) e a nota + fatores desviam cada uma
+    para a sua rota e retornam antes do cabeçalho das líderes -- portanto
+    antes do portão de LLM e do botão de salvar. A líder segue pelo caminho
+    de antes."""
     import ast
     fonte = (ROOT / "views" / "portfolio_b3.py").read_text(encoding="utf-8")
     arvore = ast.parse(fonte)
     render = next(no for no in arvore.body
                   if isinstance(no, ast.FunctionDef) and no.name == "render")
     desvio = [no for no in ast.walk(render) if isinstance(no, ast.If)
-              and "ESTRATEGIA_NOTA_FATORES" in ast.unparse(no.test)]
-    assert len(desvio) == 1, "render deve ter um único desvio de estratégia"
+              and constante in ast.unparse(no.test)]
+    assert len(desvio) == 1, f"render deve ter um único desvio para {constante}"
     corpo = desvio[0].body
     assert isinstance(corpo[-1], ast.Return)
     assert any(isinstance(no, ast.Expr) and isinstance(no.value, ast.Call)
                and isinstance(no.value.func, ast.Name)
-               and no.value.func.id == "_rota_nota_fatores" for no in corpo)
-    assert "escolher_estrategia()" in ast.unparse(desvio[0].test)
+               and no.value.func.id == rota for no in corpo)
+    escolha = [no for no in ast.walk(render) if isinstance(no, ast.Assign)
+               and "escolher_estrategia()" in ast.unparse(no.value)]
+    assert len(escolha) == 1 and escolha[0].lineno < desvio[0].lineno
+    assert "_estrategia" in ast.unparse(desvio[0].test)
     linhas = fonte.splitlines()
     cab = next(i for i, linha in enumerate(linhas, 1)
                if "Empresas líderes para o próximo ano" in linha and "_sec_hdr" in linha)
@@ -160,14 +173,17 @@ def test_tela_b3_rota_padrao_vem_antes_do_portao_e_retorna():
     assert desvio[0].lineno < portao
 
 
-def test_rota_nota_fatores_mostra_secao_safras_e_metodologia():
+@pytest.mark.parametrize("rota_nome,secao", [
+    ("_rota_nota_fatores", "_nota_fatores.render_nota_fatores"),
+    ("_rota_rota_valor", "_rota_valor.render_rota_valor"),
+])
+def test_rotas_amplas_mostram_secao_safras_e_metodologia(rota_nome, secao):
     import ast
     arvore = ast.parse((ROOT / "views" / "portfolio_b3.py").read_text(encoding="utf-8"))
     rota = next(no for no in arvore.body
-                if isinstance(no, ast.FunctionDef) and no.name == "_rota_nota_fatores")
+                if isinstance(no, ast.FunctionDef) and no.name == rota_nome)
     chamadas = [ast.unparse(no.func) for no in ast.walk(rota) if isinstance(no, ast.Call)]
-    for nome in ("_nota_fatores.render_nota_fatores", "render_safras",
-                 "_render_metodologia_portfolio"):
+    for nome in (secao, "render_safras", "_render_metodologia_portfolio"):
         assert nome in chamadas, nome
     # Sem LLM nem gravação de carteira-modelo nesta rota.
     texto = ast.unparse(rota)

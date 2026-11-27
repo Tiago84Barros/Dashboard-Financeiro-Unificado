@@ -2243,8 +2243,15 @@ nota_fatores. Pela regra registrada, vira padrão a de maior excesso:
   provável. As três que passam com folga são da mesma família (rota de
   valor), o que não é prova independente.
 
-**O padrão da tela não mudou neste passo.** A troca é decisão do usuário e,
-quando vier, muda a tela e as três abas de Configurações no mesmo PR.
+**Decisão do usuário (26/11/2026): a rota de valor inteira vira o padrão da
+tela.** A regra escolhia a top 20; o usuário preferiu a rota inteira, que tem o
+IC mais longe do zero e menos quedas de renda, e só se separa da top 20 em
+2025. A tela abre nela desde então, com os seis cards desta medição (excesso
+com IC, com IR, tendência e quedas da renda, capital e renda total) e as
+ressalvas de 2020 e do IR. A nota + fatores e a líder de cada segmento seguem
+no seletor. A carteira de hoje usa a mesma regra
+(`carteira_rota_valor`, pesos iguais) sobre o mesmo quadro de múltiplos e a
+Selic do ano anterior à safra, como aqui.
 
 ### Leitura
 
@@ -2254,4 +2261,4 @@ iguais quedas, e o capital quase dobra o dos pesos iguais. A regra escolhe a
 de 20 nomes, mas a diferença para a rota inteira está numa safra só; a rota
 inteira tem o IC mais longe do zero e menos quedas de renda. A metade rota,
 metade dividendo rende menos, mas é a única que aguenta o IR com IC acima de
-zero. A nota + fatores, o padrão atual, passa nas três por pouco.
+zero. A nota + fatores, o padrão até esta decisão, passa nas três por pouco.
