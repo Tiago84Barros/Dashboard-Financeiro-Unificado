@@ -2284,3 +2284,164 @@ iguais. A regra escolhe a de 20 nomes, mas a diferença para a rota inteira
 está numa safra só; a rota inteira tem o IC mais longe do zero. A metade rota,
 metade dividendo rende menos, mas é a única que aguenta o IR com IC acima de
 zero. A nota + fatores, o padrão até esta decisão, passa nas três por pouco.
+
+## 30. Aporte na queda sobre a rota de valor (27/11/2026, regra registrada antes de medir)
+
+### Que pergunta responde
+
+A rota de valor inteira virou o padrão (§29). Ela tem muitos nomes, e o
+usuário quer manter isso: carteira com poucos nomes é insegura. A ideia do
+usuário (27/11/2026) muda só onde vai o aporte:
+
+- manter na carteira todos os nomes que passam na avaliação;
+- não espalhar o aporte por todos;
+- concentrar o aporte nos que caíram de forma substancial, sem perder
+  qualidade.
+
+Pergunta: **concentrar o aporte nos que caíram rende mais que aportar em
+todos, com a mesma carteira?**
+
+### O que se mede
+
+| Parte | Regra |
+|---|---|
+| Lista | a rota de valor inteira de cada abril, sem mudança |
+| Saída | quem sai da lista é vendido, como na rota. "Sem perder qualidade" = seguir na lista deste abril. Ninguém é vendido por ter subido |
+| Dinheiro de abril | o que sobra das vendas + aporte de 10% do patrimônio de abril (nenhum na primeira safra) |
+| 1º passo | quem entrou na lista recebe primeiro, até o alvo 1/N de (patrimônio + aporte), em partes iguais |
+| 2º passo (sob a regra) | a sobra vai às "caídas": entre os que continuam, o terço de pior retorno total no último ano (a safra anterior, abril/N-1 a março/N; arredondado para cima), só os de retorno negativo. Dentro delas, de baixo para cima (`encher_por_baixo`) |
+| Sem caídas | a sobra vai em partes iguais a todos os que continuam, e a safra é contada |
+| Controle | a mesma cadeia, com a sobra do 2º passo em partes iguais entre todos os que continuam ("aportar em todas") |
+| Retorno da safra | valor em março de N+1 sobre (patrimônio de abril + aporte), líquido de custo. O aporte não conta como ganho |
+
+O retorno do último ano é o da safra anterior na própria régua: só usa o que
+se sabia em abril de N. A cadeia é `simular_aportes` com o comprador
+`comprar_na_queda`, em `core/b3_estrategias_fundamentalistas.py`.
+
+### Regra de decisão (registrada antes de medir)
+
+`REGRA_DE_DECISAO_APORTE_NA_QUEDA`, versão `fundamentalistas-1.9.0`, commit de
+27/11/2026 anterior à medição. Um braço sob a regra (`rota_valor_queda`).
+Candidato só se, **líquido**, passar:
+
+- nos três testes da §19: (a) excesso sobre pesos iguais > 0 com IC 95% acima
+  de zero; (b) média sem a melhor safra > 0; (c) diferença pareada contra a
+  carteira padrão com média > 0;
+- nas regras R2 e R3 da §29 contra pesos iguais, com a renda pesada pelas
+  frações reais depois da compra.
+
+Leitura principal, a diferença pareada líquida contra o controle:
+
+| Diferença contra "aportar em todas" | Leitura |
+|---|---|
+| média > 0, IC 95% acima de zero | concentrar ajuda |
+| média > 0, IC cruza o zero | não se separa do ruído |
+| média ≤ 0 | atrapalha |
+
+Só informativos:
+
+- o terço de pior retorno sem exigir retorno negativo;
+- o limiar de −20% no último ano;
+- aporte de 20%;
+- o equilíbrio da §26 (`encher_por_baixo` em todos os nomes);
+- a rota na régua da §19 (volta a 1/N todo abril, vendendo o excesso);
+- a fração do dinheiro que foi às caídas e o peso maior e menor;
+- o excesso com IR.
+
+Passar não muda a tela; só abre a próxima etapa.
+
+### Limites declarados antes
+
+- **O equilíbrio de hoje já compra quem ficou para trás.** A rota na régua da
+  §19 volta a 1/N todo abril, e o `encher_por_baixo` da §26 aporta primeiro
+  nos menores. Concentrar nas caídas é uma versão mais forte do que já
+  existe; a diferença tende a ser pequena.
+- **Vai contra o momento.** Comprar quem caiu em 12 meses é apostar na
+  reversão; na literatura, perdedores de 3 a 12 meses costumam seguir
+  perdendo, e a reversão aparece em 3 a 5 anos.
+- **O aporte de 10% mexe pouco.** Na §26, 5%, 10% e 20% deram resultados
+  parecidos.
+- **Nove safras.** Diferenças pequenas não se separam do ruído.
+- **Muitos braços no mesmo período** (§19 a §30): um falso positivo fica mais
+  provável do que o IC sugere.
+- O retorno do último ano é o total (com proventos), winsorizado como na
+  régua, não só o preço.
+- A rota troca muitos nomes por ano; com poucos que continuam, o 2º passo
+  tem pouco onde escolher.
+
+
+### Como rodar
+
+```bash
+python scripts/medir_estrategias_fundamentalistas_b3.py --cache-dir <pasta> --aporte-na-queda
+```
+
+Pede o armazém local de pé (`dfu_warehouse`). Grava
+`data/oos_aporte_na_queda_b3.json`, com a regra, os oito braços, as
+diferenças pareadas, a renda de cada braço e o diagnóstico por safra (quantos
+continuam, quantos entraram, quantas caídas, a fração do dinheiro que foi a
+elas).
+
+### Resultado (27/11/2026): concentrar nas caídas atrapalha
+
+Leitura principal, líquida, `rota_valor_queda` − `rota_valor_aporte_em_todas`:
+
+| Safra | 2017 | 2018 | 2019 | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 |
+|---|---|---|---|---|---|---|---|---|---|
+| Diferença (p.p.) | 0,0 | 0,0 | 0,0 | −9,5 | +0,5 | +0,1 | −0,1 | −2,3 | −2,9 |
+
+Média **−1,6 p.p. ao ano, IC 95% [−3,8; −0,02]**, sem a melhor safra −1,8.
+Pela regra: **atrapalha**.
+
+Os braços, contra pesos iguais no universo (líquido):
+
+| Braço | Excesso médio (p.p.) | IC 95% | Renda (cresc./ano) | Quedas de renda | Capital final (base 100) |
+|---|---|---|---|---|---|
+| Queda, terço negativo (sob a regra) | +16,4 | [1,1; 41,2] | 27,0% | 3 | 366 |
+| **Aportar em todas (controle)** | **+18,0** | [1,6; 44,9] | 27,5% | 2 | 389 |
+| Terço, sem exigir negativo | +16,2 | [1,1; 41,0] | 27,2% | 3 | 362 |
+| Limiar −20% | +18,2 | [1,3; 46,0] | 27,1% | 2 | 387 |
+| Queda, aporte 20% | +15,8 | [1,3; 39,4] | 26,6% | 3 | 360 |
+| Aportar em todas, aporte 20% | +17,6 | [1,8; 43,6] | 27,3% | 3 | 385 |
+| Equilíbrio da §26 | +16,0 | [1,2; 39,5] | 25,0% | 2 | 363 |
+| Rota na régua da §19 | +16,3 | [2,8; 38,5] | 25,0% | 2 | 371 |
+| Pesos iguais no universo | — | — | 18,1% | 3 | 185 |
+
+Informativos (diferença pareada líquida):
+
+| Comparação | Média (p.p.) | IC 95% |
+|---|---|---|
+| Terço sem exigir negativo − todas | −1,7 | [−4,1; 0,0] |
+| Limiar −20% − todas | +0,3 | [−0,4; 1,3] |
+| Aporte 20%: queda − todas | −1,8 | [−4,4; −0,02] |
+| Queda − todas, com IR | −1,6 | [−3,8; −0,01] |
+| Queda − equilíbrio da §26 | +0,4 | [−0,9; 2,1] |
+| Aportar em todas − régua da §19 | +1,7 | [−1,7; 6,5] |
+
+O 2º passo só agiu em **3 das 9 safras**: 2020 (2 caídas, 30% do dinheiro),
+2023 (10 caídas, 27%) e 2024 (5 caídas, 56%). Nas outras, os nomes que
+entraram na lista levaram todo o dinheiro. A diferença de 2025 vem dos pesos
+herdados de 2024.
+
+O braço passa, formalmente, nos testes da §19 e em R2 e R3 da §29: isso mede
+a rota, não a concentração. A pergunta da §30 é a diferença contra o
+controle, e ela é negativa.
+
+### Leitura
+
+- **Concentrar o aporte nas que caíram não rendeu mais.** Perdeu 1,6 p.p.
+  ao ano para aportar em todas, com a mesma carteira. O IC fica abaixo de
+  zero por pouco (−0,02).
+- **A perda vem quase toda de 2020.** As duas caídas de abril de 2020
+  ficaram para trás na recuperação (−9,5 p.p.). Sem 2020, a média é −0,6
+  p.p.: atrapalha pouco, mas em nenhuma safra ajuda de forma que se veja.
+- **A regra quase não age.** A rota troca muitos nomes por ano; quem entra
+  absorve o aporte. A ideia só muda a carteira em um terço das safras.
+- **O limiar de −20% ficou levemente à frente (+0,3), com IC que cruza o
+  zero.** É informativo, num período com muitos braços medidos: não sustenta
+  troca de regra.
+- **Bate com o limite declarado antes:** comprar quem caiu em 12 meses vai
+  contra o momento, e o momento costuma vencer nesse prazo.
+- **Nada muda na tela.** A rota de valor inteira segue o padrão, com o
+  aporte espalhado. Aportar em todas também não se separa da régua da §19
+  (+1,7, IC cruza o zero).
