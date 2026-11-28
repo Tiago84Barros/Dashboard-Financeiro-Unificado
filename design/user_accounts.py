@@ -6,6 +6,7 @@ papel de Configurações passou a ser o do administrador -- ver quem tem acesso,
 quem está logado agora e excluir uma conta com todos os dados dela.
 """
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import streamlit as st
 
@@ -15,6 +16,14 @@ from design.componentes import card_metrica
 from design.lacunas import falha_de_acao
 
 _NOME_DO_BANCO = {"principal": "Supabase principal", "novos": "Supabase das contas novas"}
+
+# O servidor (Streamlit Cloud) roda em UTC; os horários exibidos são os de Brasília.
+_FUSO_LOCAL = ZoneInfo("America/Sao_Paulo")
+
+
+def _hora_local(ts: float) -> datetime:
+    """Timestamp epoch -> datetime no fuso de Brasília, independente do servidor."""
+    return datetime.fromtimestamp(ts, tz=_FUSO_LOCAL)
 
 
 def render_user_accounts():
@@ -144,10 +153,10 @@ def render_logged_users():
     with col3:
         card_metrica(
             "Última atividade",
-            datetime.fromtimestamp(ultima).strftime("%H:%M") if ultima else "—",
-            delta=datetime.fromtimestamp(ultima).strftime("%d/%m/%Y") if ultima else "sem sessões",
+            _hora_local(ultima).strftime("%H:%M") if ultima else "—",
+            delta=_hora_local(ultima).strftime("%d/%m/%Y") if ultima else "sem sessões",
             accent="var(--app-warning)",
-            ajuda="Momento mais recente em que alguma sessão deu sinal (horário do servidor).",
+            ajuda="Momento mais recente em que alguma sessão deu sinal (horário de Brasília).",
         )
     if not logados:
         st.caption("Ninguém logado agora.")
@@ -156,8 +165,8 @@ def render_logged_users():
         [
             {
                 "Nome": p["name"],
-                "Entrou às": datetime.fromtimestamp(p["desde"]).strftime("%d/%m %H:%M"),
-                "Última atividade": datetime.fromtimestamp(p["visto"]).strftime("%d/%m %H:%M"),
+                "Entrou às": _hora_local(p["desde"]).strftime("%d/%m %H:%M"),
+                "Última atividade": _hora_local(p["visto"]).strftime("%d/%m %H:%M"),
                 "Abas": p["abas"],
                 "Banco": _NOME_DO_BANCO.get(p["banco"], "—"),
             }
@@ -165,7 +174,7 @@ def render_logged_users():
         ],
         hide_index=True, width="stretch",
     )
-    st.caption("Horário do servidor. Uma pessoa com o app aberto em duas abas "
+    st.caption("Horário de Brasília. Uma pessoa com o app aberto em duas abas "
                "conta uma vez em Pessoas e duas em Abas.")
 
 
