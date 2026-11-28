@@ -597,7 +597,7 @@ def _regua(mt: rs.MetricaPares) -> str:
             + "".join(marcas) + "</div>")
 
 
-def _bloco_metrica(mt: rs.MetricaPares) -> str:
+def _bloco_metrica(mt: rs.MetricaPares, *, comparar: bool = True) -> str:
     pares = " · ".join(f"{escape(pt.ticker)} {escape(pt.texto)}"
                        for pt in mt.pontos if not pt.eh_ativo)
     return (
@@ -608,11 +608,13 @@ def _bloco_metrica(mt: rs.MetricaPares) -> str:
            if mt.chave in ls.O_QUE_MEDE else "")
         + f'<div class="ia-metrica-val"><b>{escape(mt.texto_ativo)}</b>'
         f'<span class="ia-peca-det">'
-        f'{escape(ls.ROTULO_POSICAO_SIMPLES.get(mt.posicao, ""))}</span></div>'
-        + _regua(mt)
-        + f'<div class="ia-peca-det ia-num">'
-          f'Típico do setor: {escape(mt.texto_mediana)} (entre '
-          f'{mt.n_pares} {"empresa" if mt.n_pares == 1 else "empresas"})</div>'
+        f'{escape(ls.ROTULO_POSICAO_SIMPLES.get(mt.posicao, "").replace("do setor", "dos pares") if comparar else "")}</span></div>'
+        + (f'<div class="ia-peca-det">{escape(mt.referencia)}</div>' if mt.referencia else "")
+        + (_regua(mt) if comparar else "")
+        + (f'<div class="ia-peca-det ia-num">'
+           f'Típico dos pares: {escape(mt.texto_mediana)} (entre '
+           f'{mt.n_pares} {"empresa" if mt.n_pares == 1 else "empresas"})</div>'
+           if comparar and mt.n_pares else "")
         + (f'<div class="ia-peca-det ia-num">{pares}</div>' if pares else "")
         + "</div>")
 
@@ -624,7 +626,7 @@ def cartao_pares(t: rs.TabelaPares) -> str:
         aviso_lacuna(f"Comparação com o segmento: {t.motivo or 'sem dado'}",
                      codigo="tela.inteligencia.pares_sem_dado")
         return _caixa(_secao(titulo)
-                      + _vazio("Comparação indisponível no momento."))
+                      + _vazio(t.motivo or "Comparação indisponível no momento."))
     ponto = ('<span style="display:inline-block;width:9px;height:9px;'
              'border-radius:50%;margin-right:6px;vertical-align:middle;{}">'
              '</span>')
@@ -634,16 +636,25 @@ def cartao_pares(t: rs.TabelaPares) -> str:
                   "border:2px solid var(--app-muted)")
         legenda.append(f'<span>{ponto.format(estilo)}<b>{escape(tk)}</b> '
                        f'<span class="ia-meta">{escape(nome)}</span></span>')
-    legenda.append('<span><span style="display:inline-block;width:2px;'
-                   'height:11px;margin-right:6px;vertical-align:middle;'
-                   'background:var(--app-text);opacity:.55"></span>'
-                   f'{ls.TIPICO}</span>')
-    grade = "".join(_bloco_metrica(mt) for mt in t.metricas)
+    tem_pares = t.n_grupo > 0
+    if tem_pares:
+        legenda.append('<span><span style="display:inline-block;width:2px;'
+                       'height:11px;margin-right:6px;vertical-align:middle;'
+                       'background:var(--app-text);opacity:.55"></span>'
+                       'típico dos pares</span>')
+    else:
+        aviso_lacuna(f"Comparação com o segmento: {t.motivo or 'sem dado'}",
+                     codigo="tela.inteligencia.pares_sem_dado")
+        titulo = "Indicadores do ativo"
+    grade = "".join(_bloco_metrica(mt, comparar=tem_pares) for mt in t.metricas)
     setor = f" · {t.setor}" if t.setor else ""
+    if t.ampliado:
+        setor += " · grupo ampliado"
     return _caixa(f'{_secao(f"{titulo}{setor}")}'
                   f'<div class="ia-legenda">{"".join(legenda)}</div>'
-                  f'<div class="ia-grade">{grade}</div>'
-                  f'{_nota(ls.RODAPE_PARES)}')
+                  f'{_nota(t.referencia) if t.referencia else ""}'
+                  f'{_nota(t.motivo) if not tem_pares and t.motivo else ""}'
+                  f'<div class="ia-grade">{grade}</div>')
 
 
 def cartao_papel(a: m.AnaliseAtivo) -> str:

@@ -617,7 +617,7 @@ def _reprocess(monkeypatch, spot, tipo="unit"):
     monkeypatch.setattr(ig, "repo", fake)
     monkeypatch.setattr(ig, "_engine", lambda: _Engine(_Conn(spot, tipo)))
     monkeypatch.setattr(ac_cot, "tabela_existe", lambda conn: True)
-    monkeypatch.setattr(ac_cot, "preco_atual", lambda conn, tk, existe=True: (30.0, 30.0))
+    monkeypatch.setattr(ac_cot, "preco_atual", lambda conn, tk, existe=True, com_data=False: (30.0, 30.0, None))
     monkeypatch.setattr(ac_cot, "fita_existe", lambda conn: False)
     monkeypatch.setattr(ig, "_eventos_de_renda", lambda conn: ({}, "fake"))
     return ig.reprocess_metrics(["XPTO11"]), fake

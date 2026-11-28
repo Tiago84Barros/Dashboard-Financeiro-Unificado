@@ -766,17 +766,21 @@ def linha_dy(historico_dy: Mapping | None, ano_mercado_dy: int | None,
     Na série mensal do FII o último mês de cada ano fica com o ano."""
     from core.inteligencia_ativos import fontes_valuation as fv
 
-    janela = fv.dy_janela(historico_dy, ano_mercado_dy)
+    janela = fv.dy_janela(historico_dy, ano_mercado_dy, mercado=mercado)
     if not janela:
+        motivo = ("cobertura insuficiente de DY anual dentro da janela ou série defasada"
+                  if mercado == "b3" else
+                  "menos de 3 anos, série parada ou nenhum provento registrado")
         return ("DY anual de cinco anos: sem dado no histórico de valuation "
-                "para este código (menos de 3 anos, série parada ou nenhum "
-                "provento registrado).")
+                f"para este código ({motivo}).")
     media, mediana = _media_mediana([v for _, v in janela])
+    regra = (f"{len(janela)} exercícios com DY registrado na janela de cinco anos"
+             if mercado == "b3" else
+             "ano com dado de preço e sem provento entra como 0%")
     return (f"DY anual ({METODO_DY.get(mercado, METODO_DY['b3'])}): "
             + "; ".join(f"{a} {_pp(v)}" for a, v in janela)
-            + f". Média {_pp(media)}, mediana {_pp(mediana)}; ano com dado de "
-            "preço e sem provento entra como 0%. O critério de ano do DY pode "
-            "diferir da soma por pagamento.")
+            + f". Média {_pp(media)}, mediana {_pp(mediana)}; {regra}. "
+            "O critério de ano do DY pode diferir da soma por pagamento.")
 
 
 def texto_proventos(ticker: str, por_ano: Mapping[int, float], fonte: str,

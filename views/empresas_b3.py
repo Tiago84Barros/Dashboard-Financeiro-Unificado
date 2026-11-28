@@ -2885,9 +2885,16 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
         # Payout já vêm nele.
         mult = _db.load_multiplos(tk)
         fontes_recon = {k: "market" for k in getattr(mult, "index", [])
-                        if k not in ("Ticker", "data")}
+                        if k not in ("Ticker", "data", "data_preco", "fonte_ttm")}
         df_yf_divs, fonte_divs = _dividendos_anuais_market_first(tk)
         df_precos    = _yf_precos(tk)
+
+    from core.inteligencia_ativos.fontes_valuation import referencia_b3
+    base_indicadores = referencia_b3(mult.to_dict())
+    if base_indicadores:
+        st.caption(base_indicadores)
+    elif mult.empty and not df_fin.empty:
+        st.caption("Indicadores correntes indisponíveis. A série anual continua abaixo.")
 
     # Provento maior que o preço do dia deixa o fator de ajuste negativo e o
     # histórico anterior noutra escala: o gráfico e o retorno anual usam só o

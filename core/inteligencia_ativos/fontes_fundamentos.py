@@ -562,6 +562,8 @@ def dados_acao_b3(demonstracoes, multiplos,
     if multiplos is not None and not getattr(multiplos, "empty", True):
         data = multiplos.get("data")
         ref_m = str(data)[:10] if data is not None and str(data) != "NaT" else None
+        fonte_m = ("CVM (ITR/DFP, 12 meses)" if
+                   multiplos.get("fonte_ttm") == "market.compute.cvm" else FONTE_B3_MET)
         for chave, coluna, nota in (
                 ("margem_ebit", "Margem_Operacional", "margem operacional"),
                 ("margem_liquida", "Margem_Liquida", None),
@@ -573,7 +575,8 @@ def dados_acao_b3(demonstracoes, multiplos,
                                          "gravado na base")):
             v = _pct(multiplos.get(coluna))
             if v is not None:
-                saida[chave] = Dado(v, FONTE_B3_MET, ref_m, nota)
+                fonte = FONTE_B3_MET if coluna in ("DY", "Payout") else fonte_m
+                saida[chave] = Dado(v, fonte, ref_m, nota)
         # Dív/PL: o mesmo número que a Empresas B3 mede contra o teto do
         # segmento; tem precedência sobre o calculado do balanço.
         endiv = _num(multiplos.get("Endividamento_Total"))

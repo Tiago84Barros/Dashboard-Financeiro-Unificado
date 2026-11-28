@@ -632,6 +632,7 @@ def confianca_b3(engine=None) -> ConfiancaSecao:
             notas.append("medido na copia do Supabase congelada em 15/11/2026: "
                          + motivo)
     notas.append(NOTA_COTACAO_ACAO)
+    notas.append(NOTA_INDICADORES_CORRENTES_B3)
     notas.append(nota_selic_mensal(engine))
     notas.append(NOTA_DETALHE_DO_CHAT)
     notas.append(nota_medicao_nota_fatores())
@@ -705,6 +706,13 @@ NOTA_COTACAO_ACAO = (
     "Cotacao: vale a mais nova entre a ultima barra de preco e o fechamento do pregao da B3 "
     "(COTAHIST, market.b3_cotacao_atual); market cap, P/L, P/VP e DY acompanham o preco "
     "escolhido. Papel com desdobramento, grupamento ou salto de escala fica na barra.")
+
+
+NOTA_INDICADORES_CORRENTES_B3 = (
+    "Indicadores correntes da B3: demonstrações ITR/DFP da CVM, com brapi quando "
+    "traz competência mais recente ou a CVM não cobre o papel. O leitor exige "
+    "a competência calculada e, para múltiplos de preço, a cotação vigente. "
+    "A cópia antiga sem referência verificável fica sem esses indicadores.")
 
 
 NOTA_COTACAO_FII = (
@@ -1315,7 +1323,8 @@ def confianca_investimentos(engine=None, user_id: str | None = None) -> Confianc
                                 f"nao medido: {type(exc).__name__}"))
     # Os chats de Visao Geral, Acoes e FIIs citam os proventos publicados.
     comps.append(_proventos_do_chat())
-    return ConfiancaSecao("Investimentos", tuple(comps), base.universo, base.notas)
+    return ConfiancaSecao("Investimentos", tuple(comps), base.universo,
+                          (*base.notas, NOTA_INDICADORES_CORRENTES_B3))
 
 
 def confianca_dashboard_geral(engine=None) -> ConfiancaSecao:

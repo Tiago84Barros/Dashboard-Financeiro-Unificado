@@ -50,7 +50,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import text
@@ -61,7 +61,7 @@ from sqlalchemy import text
 from core.destino_local import HOSTS_LOCAIS, DestinoRemotoRecusado  # noqa: F401
 from core.destino_local import exigir_local as _exigir_local
 from data_pipeline.market import b3_cotahist
-from data_pipeline.market.fii_b3_history import fetch_year
+from data_pipeline.market.fii_b3_history import fetch_year, ultimo_pregao_esperado
 from data_pipeline.market.repository import save_raw_payload
 
 SOURCE = "b3_cotahist"
@@ -226,7 +226,54 @@ def preparar_linhas(linhas: list[dict]) -> list[dict]:
     return saida
 
 
-def ingerir_ano(engine, ano: int, *, conteudo: bytes | None = None) -> dict:
+def linhas_do_pregao(conteudo: bytes, dia: date) -> list[dict]:
+    linhas = preparar_linhas(b3_cotahist.ler_linhas(conteudo))
+    if not linhas or {linha["trade_date"] for linha in linhas} != {dia.isoformat()}:
+        raise ValueError(f"COTAHIST diário de {dia} vazio ou com outra sessão")
+    return linhas
+
+
+def atualizar_pregoes_diarios(engine, *, gravar: bool = False, agora: datetime | None = None) -> dict:
+    """Busca os arquivos de cada pregão recente que falta no armazém."""
+    import requests
+
+    from core.pregao import _e_dia_util
+    from core.tesouro_mtm import feriados_nacionais
+
+    exigir_local(engine)
+    ultimo = ultimo_pregao_esperado(agora)
+    primeiro = ultimo - timedelta(days=20)
+    with engine.connect() as conn:
+        presentes = set(conn.execute(text("""
+            SELECT DISTINCT trade_date FROM market.b3_security_history
+            WHERE trade_date BETWEEN :de AND :ate
+        """), {"de": primeiro, "ate": ultimo}).scalars())
+    procurados = (primeiro + timedelta(days=i) for i in range((ultimo - primeiro).days + 1))
+    relatorio = {"pregoes": [], "falhas": []}
+    for dia in procurados:
+        # O calendário observado pode terminar antes do pregão que buscamos.
+        # Feriados nacionais e os recessos de fim de ano continuam conhecidos.
+        recesso = (dia.month, dia.day) in {(12, 24), (12, 31)}
+        if dia in presentes or not _e_dia_util(dia) or dia in feriados_nacionais(dia.year) or recesso:
+            continue
+        url = ("https://bvmf.bmfbovespa.com.br/InstDados/SerHist/"
+               f"COTAHIST_D{dia:%d%m%Y}.ZIP")
+        try:
+            resposta = requests.get(url, timeout=(5, 12))
+            resposta.raise_for_status()
+            if gravar:
+                ingerir_ano(engine, dia.year, conteudo=resposta.content,
+                            dia=dia, origem=url)
+            else:
+                linhas_do_pregao(resposta.content, dia)
+            relatorio["pregoes"].append(dia)
+        except (requests.RequestException, ValueError, OSError) as exc:
+            relatorio["falhas"].append({"dia": dia, "erro": type(exc).__name__})
+    return relatorio
+
+
+def ingerir_ano(engine, ano: int, *, conteudo: bytes | None = None,
+                dia: date | None = None, origem: str | None = None) -> dict:
     """Ingere um ano do COTAHIST. Reentrante: ano ja concluido é ignorado."""
     exigir_local(engine)
     relatorio = {"ano": ano, "status": "completed", "linhas": 0,
@@ -234,11 +281,12 @@ def ingerir_ano(engine, ano: int, *, conteudo: bytes | None = None) -> dict:
     if conteudo is None:
         conteudo, url, headers = fetch_year(ano)
     else:
-        url, headers = f"local:COTAHIST_A{ano}.ZIP", {}
+        url, headers = origem or f"local:COTAHIST_A{ano}.ZIP", {}
     sha = hashlib.sha256(conteudo).hexdigest()
 
     with engine.begin() as conn:
-        garantir_schema(conn)
+        if dia is None:
+            garantir_schema(conn)
         concluido = conn.execute(text("""
             SELECT status='completed' FROM market.b3_archive_loads
              WHERE archive_year=:ano AND archive_sha256=:sha
@@ -249,7 +297,8 @@ def ingerir_ano(engine, ano: int, *, conteudo: bytes | None = None) -> dict:
         _LOGGER.info("COTAHIST %s (lote padrao) ja concluido, ignorado", ano)
         return {**relatorio, "pulado": True}
 
-    linhas = preparar_linhas(b3_cotahist.ler_linhas(conteudo))
+    linhas = (linhas_do_pregao(conteudo, dia) if dia else
+              preparar_linhas(b3_cotahist.ler_linhas(conteudo)))
     if not linhas:
         # ZIP vazio (a reserva da B3 devolve um de 22 bytes com HTTP 200) não
         # é ano sem pregão; concluir com zero linhas faria o carimbo mentir.
@@ -263,7 +312,8 @@ def ingerir_ano(engine, ano: int, *, conteudo: bytes | None = None) -> dict:
             conn, None, "b3/cotahist/lote-padrao",
             {"ano": ano, "sha256": sha, "linhas": len(linhas),
              "parser": PARSER_NAME, "parser_version": PARSER_VERSION},
-            request_params={"year": ano}, response_headers=headers,
+            request_params={"year": ano, "session": dia.isoformat()} if dia else {"year": ano},
+            response_headers=headers,
             collected_at=coletado, source=SOURCE,
             request_fingerprint=hashlib.sha256(
                 f"{url}|{PARSER_NAME}".encode()).hexdigest(),

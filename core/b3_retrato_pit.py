@@ -49,7 +49,7 @@ COLUNAS_RETRATO = (
     "P/L", "P/VP", "DY", "ROE", "ROA", "ROIC",
     "Margem_Liquida", "Margem_Operacional",
     "Endividamento_Total", "Liquidez_Corrente",
-    "EV_EBIT", "P_FCO", "Payout",
+    "EV_EBIT", "P_FCO", "Payout", "Valor_Mercado",
     "Patrimonio_Negativo", "Endividamento_Fora_De_Faixa", "FCO_Negativo",
 )
 

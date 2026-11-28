@@ -85,7 +85,16 @@ def main() -> int:
                         help="ano unico (2026), intervalo (2010-2026) ou recentes")
     parser.add_argument("--cache-apenas", action="store_true",
                         help="usa so os ZIPs ja baixados, sem tocar a rede")
+    parser.add_argument("--diarios", action="store_true",
+                        help="busca os ZIPs individuais dos pregões recentes")
     args = parser.parse_args()
+    if args.diarios:
+        if args.anos or args.cache_apenas:
+            parser.error("--diarios tem janela própria e consulta a B3")
+        engine = create_engine(warehouse_url(), pool_pre_ping=True)
+        relatorio = b3_precos.atualizar_pregoes_diarios(engine, gravar=args.apply)
+        logger.info("%s", json.dumps(relatorio, default=str, ensure_ascii=False))
+        return int(bool(relatorio["falhas"]))
     anos = _anos_do_argumento(args.anos)
 
     if not args.apply:

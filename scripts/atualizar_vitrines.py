@@ -238,6 +238,8 @@ def gravar_estado(estado: dict) -> None:
 # `updated_at`, `ingested_at`, `derived_at`, `recorded_at`), então está mapeado
 # alvo a alvo em vez de adivinhado.
 CARIMBO = {
+    "b3_acoes_diario": ("armazem", "SELECT max(completed_at) FROM market.b3_archive_loads WHERE status='completed'"),
+    "b3_ttm": ("armazem", "SELECT max(updated_at) FROM market.calculated_metrics WHERE period='ttm'"),
     "fii_ingest": ("armazem", "SELECT max(updated_at) FROM market.fiis"),
     # O segundo passo (ações) é o último a gravar; a carga dele só conclui
     # depois que a de FIIs baixou o ZIP.

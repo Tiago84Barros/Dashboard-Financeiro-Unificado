@@ -48,7 +48,7 @@ A seleção (`pares.selecionar`) é determinística:
 
    | Mercado | Taxonomia |
    |---|---|
-   | B3 | segmento → subsetor → setor |
+   | B3 | segmento → subsetor dentro do mesmo setor |
    | FII | tipo + segmento declarado → tipo + mandato → tipo |
    | EUA | SIC de 4 → 3 → 2 dígitos |
    | Tesouro | papel → família |

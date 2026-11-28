@@ -249,7 +249,7 @@ def _reprocess(monkeypatch, eventos=None):
     monkeypatch.setattr(ig, "_engine", lambda: _Engine(_ConnAnual()))
     monkeypatch.setattr(ac_cot, "tabela_existe", lambda conn: True)
     monkeypatch.setattr(ac_cot, "preco_atual",
-                        lambda conn, tk, existe=True: (PRECO_HOJE, PRECO_HOJE))
+                        lambda conn, tk, existe=True, com_data=False: (PRECO_HOJE, PRECO_HOJE, None))
     monkeypatch.setattr(ac_cot, "fita_existe", lambda conn: True)
     monkeypatch.setattr(suc, "carregar_sucessoes", lambda conn: {})
     monkeypatch.setattr(ac_cot, "fechamentos_de_fim_de_ano",
@@ -311,7 +311,7 @@ def test_reprocess_sem_fita_marca_o_preco_ajustado(monkeypatch):
     monkeypatch.setattr(ig, "_engine", lambda: _Engine(_ConnAnual()))
     monkeypatch.setattr(ac_cot, "tabela_existe", lambda conn: True)
     monkeypatch.setattr(ac_cot, "preco_atual",
-                        lambda conn, tk, existe=True: (PRECO_HOJE, PRECO_HOJE))
+                        lambda conn, tk, existe=True, com_data=False: (PRECO_HOJE, PRECO_HOJE, None))
     monkeypatch.setattr(ac_cot, "ajustados_de_fim_de_ano",
                         lambda conn, tk: {y: v[4] for y, v in ANOS.items()})
     monkeypatch.setattr(ig, "_eventos_de_renda", lambda conn: ({}, "fake"))

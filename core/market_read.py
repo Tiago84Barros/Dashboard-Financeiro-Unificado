@@ -60,7 +60,7 @@ logger = logging.getLogger(__name__)
 # entra como coluna vazia para preservar o shape de saída.
 _MULT_COLS = ["P/L", "P/VP", "DY", "ROE", "ROA", "ROIC",
               "Margem_Liquida", "Margem_Operacional", "Endividamento_Total",
-              "Liquidez_Corrente", "EV_EBIT", "P_FCO", "Payout",
+              "Liquidez_Corrente", "EV_EBIT", "P_FCO", "Payout", "Valor_Mercado",
               # SINAIS (0/1), não indicadores: registram balanço estruturalmente
               # rompido, que a faixa coerente descartava como se fosse ausência.
               # O piso de qualidade precisa vê-los para REPROVAR; ranking e
@@ -205,31 +205,86 @@ def _com_codigo_atual(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _multiplos_long(ticker: str | None = None) -> pd.DataFrame:
-    """Snapshot ttm em formato longo, com o ano do último balanço anual por ticker."""
+    """Métricas correntes com a competência e a sessão efetivamente usadas."""
+    from data_pipeline.market.metrics import METRICAS_COM_PRECO
+
+    # A cópia antiga (year=0) não registra os insumos que realmente entraram no
+    # cálculo. Uma competência conhecida mais nova invalida todo o TTM. Se só
+    # o preço mudou, os indicadores contábeis ainda podem ser exibidos.
     where_tk = ""
-    params: dict = {}
+    params: dict = {"com_preco": list(METRICAS_COM_PRECO)}
     if ticker is not None:
         where_tk = "AND cm.ticker = :tk"
         params["tk"] = ticker.strip().upper().replace(".SA", "")
     return _q_b3(f"""
-        WITH ly AS (
-            SELECT ticker, MAX(year) AS y
-            FROM market.income_statements
-            WHERE period = 'annual'
-            GROUP BY ticker
-        )
-        SELECT cm.ticker AS "Ticker", COALESCE(ly.y, 0) AS year,
-               cm.metric_name, cm.metric_value
+        SELECT cm.ticker AS "Ticker", cm.year, cm.quarter,
+               cm.metric_name, cm.metric_value, cm.source AS fonte_ttm,
+               ref.balanco AS base_data,
+               CASE WHEN cm.metric_name=ANY(:com_preco) THEN ref.pregao END AS data_preco
         FROM market.calculated_metrics cm
         JOIN market.assets a ON a.ticker=cm.ticker
           AND a.asset_type IN ('stock','unit')
           AND a.is_active IS TRUE
           AND a.company_id IS NOT NULL
-        LEFT JOIN ly ON ly.ticker = cm.ticker
-        WHERE cm.period = 'ttm'
+        CROSS JOIN LATERAL (
+            SELECT CAST(substring(cm.calculation_method from 'balanco=([0-9-]+)') AS date)
+                      AS balanco,
+                   CAST(substring(cm.calculation_method from 'preco=([0-9-]+)') AS date)
+                      AS pregao,
+                   CAST(substring(cm.calculation_method from 'valor_preco=([0-9.]+)')
+                        AS numeric) AS valor_preco
+        ) ref
+        LEFT JOIN LATERAL (
+            SELECT max(i.period_end_date) AS ultima_competencia,
+                   max(i.updated_at) FILTER (
+                       WHERE i.period='quarterly' AND i.year*4+i.quarter
+                           BETWEEN cm.year*4+cm.quarter-3 AND cm.year*4+cm.quarter
+                   ) AS ultima_revisao
+            FROM market.income_statements i
+            WHERE i.ticker=cm.ticker
+        ) demo ON TRUE
+        LEFT JOIN market.balance_sheets b ON b.ticker=cm.ticker
+          AND b.period='quarterly' AND b.year=cm.year AND b.quarter=cm.quarter
+        LEFT JOIN LATERAL (
+            SELECT p.date, p.close FROM market.historical_prices p
+            WHERE p.ticker=cm.ticker AND p.close>0
+            ORDER BY p.date DESC LIMIT 1
+        ) barra ON TRUE
+        LEFT JOIN market.b3_cotacao_atual slot ON slot.ticker=cm.ticker
+        WHERE cm.period = 'ttm' AND cm.year > 0 AND cm.quarter BETWEEN 1 AND 4
+          AND ref.balanco IS NOT NULL
+          AND ref.balanco >= (CURRENT_DATE - INTERVAL '7 months')
+          AND ref.balanco >= COALESCE(demo.ultima_competencia, ref.balanco)
+          AND (cm.source='market.compute.cvm'
+               OR cm.updated_at >= GREATEST(demo.ultima_revisao, b.updated_at))
+          AND (
+              NOT (cm.metric_name=ANY(:com_preco))
+              OR (ref.pregao=GREATEST(barra.date, slot.trade_date)
+                  AND ref.pregao BETWEEN CURRENT_DATE - 4 AND CURRENT_DATE
+                  AND abs(ref.valor_preco - CASE
+                      WHEN slot.trade_date >= COALESCE(barra.date, slot.trade_date)
+                      THEN slot.price ELSE barra.close END) < 0.000001)
+          )
           AND (cm.confidence_score IS NULL OR cm.confidence_score >= 80)
           {where_tk}
     """, params)
+
+
+def _finalizar_multiplos(long_df: pd.DataFrame) -> pd.DataFrame:
+    wide = _pivot_metrics(long_df)
+    wide["Ticker"] = _norm_ticker(wide["Ticker"])
+    if "base_data" not in long_df:
+        return _attach_data(wide)
+    metadados = long_df[["Ticker", "year", "base_data", "fonte_ttm", "data_preco"]].copy()
+    metadados["Ticker"] = _norm_ticker(metadados["Ticker"])
+    metadados["base_data"] = pd.to_datetime(metadados["base_data"])
+    metadados["data_preco"] = pd.to_datetime(metadados["data_preco"])
+    metadados = (metadados.groupby(["Ticker", "year"], as_index=False)
+                 .agg(data=("base_data", "max"), fonte_ttm=("fonte_ttm", "first"),
+                      data_preco=("data_preco", "max")))
+    out = wide.merge(metadados, on=["Ticker", "year"], how="left").drop(columns=["year"])
+    out.attrs.update(long_df.attrs)
+    return out
 
 
 def _attach_data(wide: pd.DataFrame, col: str = "data") -> pd.DataFrame:
@@ -302,11 +357,10 @@ def load_multiplos_todos(ano_ref_max: int | None = None) -> pd.DataFrame:
     long_df = (_annual_upto_long(int(ano_ref_max))
                if ano_ref_max is not None else _multiplos_long())
     if long_df.empty:
-        return pd.DataFrame()
-    wide = _pivot_metrics(long_df)
-    wide["Ticker"] = _norm_ticker(wide["Ticker"])
-    out = _attach_data(wide)
-    return out[["Ticker", "data", *_MULT_COLS]]
+        return long_df
+    out = _finalizar_multiplos(long_df)
+    meta = [c for c in ("data_preco", "fonte_ttm") if c in out]
+    return out[["Ticker", "data", *_MULT_COLS, *meta]]
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -315,11 +369,8 @@ def load_multiplos(ticker: str) -> pd.Series:
     long_df = _multiplos_long(ticker)
     if long_df.empty:
         return pd.Series(dtype=object)
-    wide = _pivot_metrics(long_df)
-    if wide.empty:
-        return pd.Series(dtype=object)
-    wide["Ticker"] = _norm_ticker(wide["Ticker"])
-    return _attach_data(wide).iloc[0]
+    out = _finalizar_multiplos(long_df)
+    return out.iloc[0] if not out.empty else pd.Series(dtype=object)
 
 
 # market.* (EN) -> colunas que as telas esperam (PT do legado)

@@ -153,6 +153,8 @@ _CADEIA_FII = (
 # O primeiro passo baixa o ZIP (e o deixa no cache); o segundo relê o mesmo
 # ZIP, sem rede. Dois anos para não perder dezembro na virada -- o ano
 # fechado e já carregado não é baixado de novo.
+_ATUALIZAR_TTM_B3 = ("run_market_ingest.py", "reprocess", "--somente-ttm",
+                      "--cvm", "--warehouse", "--json")
 _CADEIA_PREGAO = (
     ("run_market_ingest.py", "fiis-b3-history", "--warehouse", "--json",
      "--years", "2"),
@@ -162,6 +164,7 @@ _CADEIA_PREGAO = (
     # a cotacao da acao (market.b3_cotacao_atual) sem depender da cota da brapi.
     # Sem a migration 089 a etapa termina 0 e nomeia a tabela ausente no log.
     ("run_market_ingest.py", "acoes-cotahist", "--warehouse", "--json"),
+    _ATUALIZAR_TTM_B3,
     # Sem publicador para o Supabase (15/11/2026). A cotação fica no armazém
     # (market.b3_cotacao_atual) e o app4 a lê de lá. O
     # `scripts/publish_b3_cotacao_from_local.py` segue no repositório para
@@ -192,16 +195,35 @@ _CADEIA_CVM_IPE = (
 _CADEIA_B3_BRAPI = (
     ("run_market_ingest.py", "daily", "--source", "market", "--warehouse",
      "--json"),
+    _ATUALIZAR_TTM_B3,
     ("run_market_ingest.py", "setores", "--warehouse", "--json"),
     ("-m", "scripts.snapshot_b3_readiness", "--warehouse"),
 )
 _CADEIA_B3_BRAPI_ANUAL = (
     ("run_market_ingest.py", "annual", "--source", "market", "--warehouse",
      "--json"),
+    _ATUALIZAR_TTM_B3,
 )
 ALVOS: tuple[Alvo, ...] = (
     Alvo(
-        # Primeiro da fila: quem vem depois (FIIs, valuation) lê esta fita.
+        # Os arquivos diários independem da descarga anual usada pelos FIIs.
+        chave="b3_acoes_diario",
+        titulo="Fechamentos diários das ações da B3",
+        passos=(("scripts/ingerir_precos_b3.py", "--diarios", "--apply"),),
+        cadencia_dias=1,
+        modulo="b3",
+    ),
+    Alvo(
+        # Rodar mesmo se uma fonte anterior falhar mantém os fundamentos
+        # independentes da cotação e permite o diagnóstico pelo leitor.
+        chave="b3_ttm",
+        titulo="Indicadores correntes da B3 com CVM e pregão",
+        passos=(("run_market_ingest.py", "acoes-cotahist", "--warehouse", "--json"),
+                _ATUALIZAR_TTM_B3),
+        cadencia_dias=1,
+        modulo="b3",
+    ),
+    Alvo(
         chave="b3_pregao",
         titulo="Pregão diário da B3 no armazém (FIIs e ações)",
         passos=_CADEIA_PREGAO,

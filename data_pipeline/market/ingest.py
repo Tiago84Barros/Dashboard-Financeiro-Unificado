@@ -1097,9 +1097,21 @@ def _eventos_de_renda(conn) -> tuple[dict[str, list[tuple]], str]:
     return out, fonte
 
 
-def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None) -> dict:
+def _perderia_base_cvm(anterior, oficial, base_brapi) -> bool:
+    competencia, revisao = anterior
+    if not competencia or (base_brapi and base_brapi.isoformat() > competencia):
+        return False
+    return oficial is None or (
+        oficial.period_end.isoformat(), oficial.filing_date.isoformat()
+    ) < (competencia, revisao or "")
+
+
+def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None, *,
+                      somente_ttm: bool = False, dry_run: bool = False,
+                      cvm: bool = False, cvm_cache: bool = False) -> dict:
     """
-    Recalcula indicadores derivados a partir de market.* (SEM rede):
+    Recalcula indicadores derivados de market.*. Com cvm=True, concilia a
+    competência e as contas do TTM com os documentos oficiais da CVM:
       • snapshot completo (period='ttm'): Margem_Liquida/Operacional, ROE, ROA,
         ROIC, Endividamento_Total, Liquidez_Corrente, P/L, P/VP, EV_EBIT, P_FCO,
         DY, Payout;
@@ -1111,7 +1123,8 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
         desde jun/2026.
     Roda sobre as empresas já em market.assets (cresce com o bootstrap).
     """
-    from datetime import datetime, timezone
+    from calendar import monthrange
+    from datetime import date, datetime, timezone
 
     import core.data_quality as dq
     from data_pipeline.market import metrics as mx
@@ -1123,7 +1136,10 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
         if not repo.schema_exists(conn):
             return {**prog, "erros": -1}
         if tickers is None:
-            rows = conn.execute(text("SELECT ticker FROM market.assets ORDER BY ticker")).fetchall()
+            escopo = ("WHERE asset_type IN ('stock','unit') AND is_active "
+                      "AND company_id IS NOT NULL" if somente_ttm else "")
+            rows = conn.execute(text(
+                f"SELECT ticker FROM market.assets {escopo} ORDER BY ticker")).fetchall()
             tickers = [r[0] for r in rows]
             if limit:
                 tickers = tickers[:limit]
@@ -1144,7 +1160,7 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
     # demonstrações não. Conexão própria: uma falha aqui aborta a transação, e
     # o resto do cabeçalho não pode morrer com ela.
     cadeias_tk: dict[str, list[str]] = {}
-    if fita_existe:
+    if fita_existe and not somente_ttm:
         try:
             from data_pipeline.market import b3_sucessao as _suc
             with engine.connect() as _c:
@@ -1156,9 +1172,32 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
     prog["anos_preco_ajustado"] = 0
     prog["anos_lpa_base_de_hoje"] = 0
     ref = datetime.now(timezone.utc).date()
+    codigo_cvm = {}
+    oficiais = {}
+    if cvm:
+        from data_pipeline.market.cvm_fundamentos import carregar_fundamentos_cvm
+
+        with engine.connect() as conn:
+            codigo_cvm = dict(conn.execute(text("""
+                SELECT a.ticker, c.codigo_cvm
+                FROM market.assets a JOIN market.companies c ON c.id=a.company_id
+                WHERE a.ticker=ANY(:tickers) AND c.codigo_cvm IS NOT NULL
+            """), {"tickers": tickers}).fetchall())
+        oficiais = carregar_fundamentos_cvm(set(codigo_cvm.values()), as_of=ref,
+                                             somente_cache=cvm_cache)
+        prog["empresas_cvm"] = len(oficiais)
+        if codigo_cvm and not oficiais:
+            return {**prog, "erros": -1, "erro": "nenhum demonstrativo da CVM disponível"}
+    if dry_run:
+        prog["simulacao"] = {}
     for tk in tickers:
         try:
             with engine.begin() as conn:
+                if dry_run:
+                    conn.execute(text("SET TRANSACTION READ ONLY"))
+                else:
+                    conn.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:chave, 0))"),
+                                 {"chave": f"metricas-b3:{tk}"})
                 inc = _latest_annual(conn, "income_statements",
                                      "revenue, ebit, ebitda, net_income, eps", tk)
                 bal = _latest_annual(conn, "balance_sheets",
@@ -1175,7 +1214,8 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                 eps = spot.get("LPA")
                 # Cotação vigente: a mais nova entre a última barra e o fechamento
                 # do COTAHIST (market.b3_cotacao_atual, migration 089).
-                last_price, preco_brapi = _ac_cot.preco_atual(conn, tk, existe=slot_existe)
+                last_price, preco_brapi, data_preco = _ac_cot.preco_atual(
+                    conn, tk, existe=slot_existe, com_data=True)
                 # P/L, P/VP e DY do spot foram calculados sobre a cotação da
                 # brapi: com o fechamento do COTAHIST vencendo, reescalam.
                 spot = _ac_cot.cp.rebasear_spot(spot, last_price, preco_brapi)
@@ -1186,8 +1226,8 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                 # Ações por título: 1 na ação; k na unit, se o normalizador o
                 # derivou; None na unit sem k (acoes.py).
                 por_titulo = spot.get("Acoes_por_Titulo") or (None if unit else 1.0)
-                if spot_anterior_a_composicao(unit=unit, por_titulo=por_titulo,
-                                              metodo_market_cap=metodo_mc):
+                if not somente_ttm and spot_anterior_a_composicao(
+                        unit=unit, por_titulo=por_titulo, metodo_market_cap=metodo_mc):
                     # Pular em vez de recalcular: nada é apagado nem gravado, e
                     # o ticker sai nomeado no resultado.
                     logger.warning(
@@ -1196,41 +1236,46 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                         "`run_market_ingest.py renormalize --warehouse` e repita.", tk)
                     prog.setdefault("units_spot_sem_composicao", []).append(tk)
                     continue
+                preservar_cvm = not cvm and bool(conn.execute(text("""
+                    SELECT 1 FROM market.calculated_metrics
+                    WHERE ticker=:t AND period='ttm' AND source='market.compute.cvm'
+                    LIMIT 1
+                """), {"t": tk}).scalar())
+                if preservar_cvm and somente_ttm and not dry_run:
+                    prog["tickers"] += 1
+                    continue
                 mc = _valor_de_mercado_atual(
                     preco=last_price, acoes=spot.get("Acoes_Emitidas"),
-                    por_titulo=por_titulo, mc_spot=spot.get("marketCap"), unit=unit,
+                    por_titulo=por_titulo,
+                    mc_spot=(spot.get("marketCap") if not somente_ttm else None),
+                    unit=unit,
                     lucro_anual=inc[3] if inc else None,
                     lpa_anual=inc[4] if inc else None)
                 # (event_date, ex_date, amount) já deduplicados: a mesma regra
                 # do valuation histórico publicado (`_eventos_de_renda`).
                 ev_tk = eventos_renda.get(tk, [])
-                divs = [(d, a) for d, _ex, a in ev_tk]
-
-                # dividendos POR AÇÃO nos últimos 366 dias (fallback p/ DY)
+                # Data-ex define o direito ao provento. A janela usa o mesmo
+                # pregão do preço, inclusive em uma execução atrasada.
+                divs = [(ex, a) for _d, ex, a in ev_tk]
                 div_ps_ttm = sum(float(a) for d, a in divs
-                                 if d is not None and a is not None and 0 <= (ref - d).days <= 366)
+                                 if data_preco is not None and d is not None
+                                 and a is not None and 0 <= (data_preco - d).days < 365)
 
-                # Payout: separar "não distribuiu" de "não sabemos".
-                # `div_ps_ttm or None` convertia 0.0 em None, então empresa que
-                # retém todo o lucro ficava SEM Payout em vez de Payout = 0 —
-                # e o piso de qualidade não podia aprová-la nem reprová-la.
-                # Medido em 30/07/2026: 165 dos 170 tickers sem Payout caíam
-                # aqui. Mas zero só é medição quando há EVIDÊNCIA de que a
-                # ingestão de dividendos funciona para o ticker: 110 têm
-                # histórico e nada em 366 dias (zero real); 55 nunca tiveram
-                # nenhum evento, e aí é indecidível entre "não paga" e "não
-                # ingerido" — gravar 0 nesses seria inventar valor favorável.
+                # Sem confirmação de cobertura até o pregão, um intervalo sem
+                # observações de data-ex fica vazio, inclusive em pagador antigo.
                 tem_historico_dividendo = any(
                     d is not None and a is not None for d, a in divs)
-                div_ttm_val = (div_ps_ttm if (div_ps_ttm or tem_historico_dividendo)
-                               else None)
+                sem_data_ex = any(d is None and a is not None for d, a in divs)
+                div_ttm_val = (div_ps_ttm if div_ps_ttm
+                               and tem_historico_dividendo and not sem_data_ex else None)
 
                 # ── Base do snapshot: TTM REAL (soma dos 4 últimos trimestres) ──
                 # Metodologia de consenso (Fundamentus/SI): fluxos (receita/EBIT/
                 # lucro/FCO) somam 4 trimestres; estoques (balanço) usam o trimestre
                 # mais recente. Sem 4 trimestres completos → cai p/ o último anual.
                 q_inc = conn.execute(text(
-                    "SELECT year, quarter, revenue, ebit, ebitda, net_income "
+                    "SELECT year, quarter, revenue, ebit, ebitda, net_income, "
+                    "period_end_date, updated_at "
                     "FROM market.income_statements "
                     "WHERE ticker=:t AND period='quarterly' ORDER BY year DESC, quarter DESC LIMIT 4"),
                     {"t": tk}).fetchall()
@@ -1241,7 +1286,7 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                     {"t": tk}).fetchall()
                 q_bal = conn.execute(text(
                     "SELECT year, quarter, total_assets, equity, cash, gross_debt, net_debt, "
-                    "current_assets, current_liabilities FROM market.balance_sheets "
+                    "current_assets, current_liabilities, updated_at FROM market.balance_sheets "
                     "WHERE ticker=:t AND period='quarterly' ORDER BY year DESC, quarter DESC LIMIT 1"),
                     {"t": tk}).fetchone()
 
@@ -1267,7 +1312,17 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                 aligned_cf = cf_keys == inc_keys
                 ttm_ni = _sum4(q_inc, 5) if _four_consecutive(q_inc) else None
                 from_q = ttm_ni is not None and aligned_balance
+                base_data = None
+                revisao = None
+                ano, tri = 0, 0
                 if from_q:
+                    ano, tri = inc_keys[0]
+                    mes = tri * 3
+                    base_data = q_inc[0][6] or date(ano, mes, monthrange(ano, mes)[1])
+                    revisao = max((r[7] for r in q_inc if r[7] is not None), default=None)
+                    if q_bal[9] is not None:
+                        revisao = max(revisao, q_bal[9]) if revisao else q_bal[9]
+                    revisao = revisao.isoformat() if revisao is not None else None
                     base_method = "ttm_4q"
                     f = {
                         "revenue": _sum4(q_inc, 2), "ebit": _sum4(q_inc, 3),
@@ -1298,7 +1353,37 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                         "fco": cf[0] if cf else None, "market_cap": mc,
                         "div_ttm": div_ttm_val, "price": last_price, "eps": eps,
                     }
+                oficial = oficiais.get(codigo_cvm.get(tk))
+                if somente_ttm and cvm and not dry_run:
+                    anterior = conn.execute(text("""
+                        SELECT substring(calculation_method from 'balanco=([0-9-]+)'),
+                               substring(calculation_method from 'versao=([0-9-]+)')
+                        FROM market.calculated_metrics
+                        WHERE ticker=:t AND period='ttm' AND source='market.compute.cvm'
+                        ORDER BY year DESC, quarter DESC LIMIT 1
+                    """), {"t": tk}).first()
+                    if anterior and _perderia_base_cvm(anterior, oficial, base_data):
+                        prog["cvm_preservados"] = prog.get("cvm_preservados", 0) + 1
+                        continue
+                if oficial is not None and oficial.period_end >= (base_data or date.min):
+                    mesma_competencia = oficial.period_end == base_data
+                    base_data = oficial.period_end
+                    ano, tri = base_data.year, (base_data.month - 1) // 3 + 1
+                    base_method = "cvm"
+                    revisao = oficial.filing_date.isoformat()
+                    f.update(revenue=oficial.revenue_ttm, ebit=oficial.ebit_ttm,
+                             net_income=oficial.net_income_ttm, equity=oficial.equity,
+                             cash=oficial.cash, gross_debt=oficial.gross_debt,
+                             net_debt=oficial.net_debt, total_assets=oficial.total_assets,
+                             current_assets=oficial.current_assets,
+                             current_liabilities=oficial.current_liabilities)
+                    if not mesma_competencia:
+                        f["fco"] = None
+                if somente_ttm and from_q and not aligned_cf:
+                    f["fco"] = None
                 snap = mx.compute_snapshot(f)
+                if base_data is not None and mc is not None and data_preco is not None:
+                    snap["Valor_Mercado"] = (mc, "valor_de_mercado")
                 # Procedência do FCO misto fica no método (auditoria), não na
                 # confiança: o leitor filtra confidence_score >= 80, então
                 # rebaixar aqui apagaria a métrica que acabamos de recuperar.
@@ -1306,9 +1391,8 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                     _val, _met = snap["P_FCO"]
                     snap["P_FCO"] = (_val, _met + " (fco anual sobre base ttm)")
 
-                # brapi spot: no caminho ANUAL sobrescreve (anual distorce por
-                # não-recorrentes); no TTM real só PREENCHE o que faltar. DY sempre
-                # do trailing da brapi (evita over-count da janela de dividendos).
+                # A reserva anual antiga fica sem competência TTM e não chega
+                # à leitura corrente. O spot não preenche contas ausentes no TTM.
                 # P/L e P/VP spot já não são os campos crus da brapi: saem do
                 # título, com as ações conferidas (normalize.metric_rows,
                 # ``pl_do_titulo`` e ``pvp_do_titulo``), então sobrescrever com
@@ -1317,7 +1401,7 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                     v = spot.get(k)
                     if v is None or not dq.is_valid_value(k, v):
                         continue
-                    if base_method == "annual" or k not in snap:
+                    if base_method == "annual":
                         snap[k] = (round(v, 8), "brapi_trailing")
                 # DY trailing da brapi, quando serve (``mx.dy_da_brapi_serve``,
                 # a mesma regra do normalizador): nunca na unit, em que ele é
@@ -1329,13 +1413,29 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                 # ignorada aqui; por isso o reprocess basta, sem renormalizar.
                 dyv = spot.get("DY")
                 own_dy = snap.get("DY", (None,))[0]
-                if mx.dy_da_brapi_serve(dyv, own_dy, unit=unit):
+                if base_data is None and mx.dy_da_brapi_serve(dyv, own_dy, unit=unit):
                     snap["DY"] = (round(dyv, 8), "brapi_trailing")
                 if "DY" in snap and "P/L" in snap:
                     pay = snap["DY"][0] * snap["P/L"][0]
                     if dq.is_valid_value("Payout", pay):
                         snap["Payout"] = (round(pay, 8), "DY*P/L")
-                rows_out = mx.to_metric_rows(tk, snap)
+                fonte = "market.compute.cvm" if base_method == "cvm" else "market.compute"
+                rows_out = mx.to_metric_rows(tk, snap, year=ano, quarter=tri,
+                                             base_date=base_data, price_date=data_preco,
+                                             price_value=last_price, source=fonte, revision=revisao)
+                if dry_run:
+                    prog["simulacao"][tk] = {
+                        "balanco": base_data, "preco": data_preco,
+                        "fonte": fonte, "indicadores": {k: v[0] for k, v in snap.items()},
+                    }
+                    prog["tickers"] += 1
+                    prog["indicadores"] += len(rows_out)
+                    continue
+                if somente_ttm:
+                    repo.replace_metric_snapshot(conn, tk, rows_out, periods=("ttm",))
+                    prog["tickers"] += 1
+                    prog["indicadores"] += len(rows_out)
+                    continue
 
                 # ── Histórico anual (period='annual', um conjunto por ano) ──
                 # Fundamentais (margens, ROE, ROA, ROIC, Endiv, Liquidez) são
@@ -1427,8 +1527,11 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                                                   period="annual", year=y,
                                                   low_conf=None if exact else mx.ANNUAL_APPROX)
                 if rows_out:
+                    if preservar_cvm:
+                        rows_out = [r for r in rows_out if r["period"] == "annual"]
                     repo.append_metric_vintages(conn, rows_out)
-                    removed = repo.replace_metric_snapshot(conn, tk, rows_out)
+                    removed = (repo.replace_metric_snapshot(conn, tk, rows_out, periods=("annual",))
+                               if preservar_cvm else repo.replace_metric_snapshot(conn, tk, rows_out))
                     if removed:
                         logger.info("reprocess %s: %s métricas obsoletas removidas", tk, removed)
                     prog["indicadores"] += len(rows_out)

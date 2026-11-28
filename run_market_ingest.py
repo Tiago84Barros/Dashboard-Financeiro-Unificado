@@ -123,10 +123,21 @@ def main() -> int:
     p.add_argument("--forcar", action="store_true",
                    help="renormalize-demonstracoes: regrava também o que já saiu "
                         "do payload mais novo (correção do normalizador)")
+    p.add_argument("--somente-ttm", action="store_true",
+                   help="reprocess: atualiza somente os indicadores correntes")
+    p.add_argument("--cvm", action="store_true",
+                   help="reprocess: concilia os indicadores correntes com ITR/DFP oficiais")
+    p.add_argument("--cvm-cache", action="store_true",
+                   help="com --cvm, usa apenas os arquivos oficiais já em cache")
     p.add_argument("--json", action="store_true")
     p.add_argument("--warehouse", action="store_true",
                    help="usa o PostgreSQL local warehouse em 127.0.0.1:5433")
     args = p.parse_args()
+
+    if args.cvm_cache and not args.cvm:
+        p.error("--cvm-cache exige --cvm")
+    if (args.somente_ttm or args.cvm) and args.command != "reprocess":
+        p.error("--somente-ttm e --cvm pertencem ao comando reprocess")
 
     if args.warehouse:
         if not _point_to_warehouse():
@@ -464,7 +475,9 @@ def main() -> int:
             if rep.get("units_spot_sem_composicao"):
                 prog["units_spot_sem_composicao"] = rep["units_spot_sem_composicao"]
     else:
-        prog = ingest.reprocess_metrics(tickers, args.limit)
+        prog = ingest.reprocess_metrics(tickers, args.limit, somente_ttm=args.somente_ttm,
+                                         dry_run=args.dry_run, cvm=args.cvm,
+                                         cvm_cache=args.cvm_cache)
 
     if prog.get("erros") == -1:
         if prog.get("bloqueio_brapi"):
@@ -473,7 +486,8 @@ def main() -> int:
                       prog.get("tickers", 0), prog.get("nao_tentados", 0),
                       prog.get("motivo_bloqueio") or "não informado")
         else:
-            log.error("Falha: schema market.* ausente ou banco não conectado.")
+            log.error("Falha: %s", prog.get("erro") or
+                      "schema market.* ausente ou banco não conectado.")
         if args.json:
             print(json.dumps(prog, indent=2, default=str))
         return 1

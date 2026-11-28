@@ -16,6 +16,8 @@ Endividamento_Fora_De_Faixa. Ver core.data_quality.SIGNAL_RANGES para o porquê.
 """
 from __future__ import annotations
 
+from datetime import date
+
 import core.data_quality as _dq
 
 # Acima disto o DY da brapi é o consenso somando as classes (CEBR5/6, BRSR5/6).
@@ -179,11 +181,18 @@ def compute_snapshot(f: dict) -> dict[str, tuple[float, str]]:
 # (low_conf=None). Esta lista é o que recebe confiança menor se um chamador
 # marcar o ano como aproximado. Fundamentais (margens, ROE, ROA, ROIC, Endiv,
 # Liquidez) e DY não dependem das ações e mantêm a confiança cheia.
+# Razões com preço e valor de mercado compartilham o mesmo pregão.
+METRICAS_COM_PRECO = ("P/L", "P/VP", "EV_EBIT", "P_FCO", "DY", "Payout", "Valor_Mercado")
+
 ANNUAL_APPROX = frozenset({"P/L", "P/VP", "EV_EBIT", "P_FCO", "Payout"})
 
 
 def to_metric_rows(ticker: str, snapshot: dict[str, tuple[float, str]],
                    confidence: float = 85.0, *, period: str = "ttm", year: int = 0,
+                   quarter: int = 0, base_date: date | None = None,
+                   price_date: date | None = None, price_value: float | None = None,
+                   source: str = "market.compute",
+                   revision: str | None = None,
                    low_conf: frozenset[str] | set[str] | None = None,
                    low_conf_value: float = 60.0) -> list[dict]:
     """
@@ -195,11 +204,19 @@ def to_metric_rows(ticker: str, snapshot: dict[str, tuple[float, str]],
     rows = []
     for name, (val, method) in snapshot.items():
         approx = name in low_conf
+        if base_date is not None:
+            method += f"|balanco={base_date.isoformat()}"
+        if revision is not None:
+            method += f"|versao={revision}"
+        if price_date is not None and name in METRICAS_COM_PRECO:
+            method += f"|preco={price_date.isoformat()}"
+            if price_value is not None:
+                method += f"|valor_preco={price_value:.6f}"
         rows.append({
-            "ticker": ticker, "period": period, "year": year, "quarter": 0,
+            "ticker": ticker, "period": period, "year": year, "quarter": quarter,
             "metric_name": name, "metric_value": val,
             "calculation_method": (method + " ~aprox" if approx else method),
-            "source": "market.compute",
+            "source": source,
             "confidence_score": low_conf_value if approx else confidence,
         })
     return rows
