@@ -9,9 +9,10 @@ declara cada critério:
 1. filtros duros -- mesma classe (``tipo``) e mesmo mercado; fora o próprio
    ativo e as outras classes da mesma empresa (ITUB3 não é par de ITUB4);
 2. modelo de negócio -- a taxonomia do mercado, do nível mais estreito para
-   o mais largo (B3: segmento → subsetor → setor; EUA: SIC de 4 → 3 → 2
-   dígitos; FII: tipo+segmento → tipo+mandato → tipo; Tesouro: mesmo papel
-   → mesma família). Sobe de nível só se o estreito não tem pares mínimos;
+   o mais largo (B3: segmento → subsetor, com os níveis superiores do
+   caminho; EUA: SIC de 4 → 3 → 2 dígitos; FII: tipo+segmento → tipo+mandato
+   → tipo; Tesouro: mesmo papel → mesma família). Sobe de nível só se o
+   estreito não tem pares mínimos;
 3. tamanho e risco -- dentro do nível, primeiro só candidatos com porte
    entre 1/10x e 10x e risco entre 1/2x e 2x do ativo; afrouxa o risco,
    depois alarga o porte para 1/100x a 100x, e registra o afrouxamento. O
@@ -164,6 +165,7 @@ class Candidato:
     metricas: dict = field(default_factory=dict)
     raiz: str | None = None
     ano_ref: int | None = None        # exercício do dado (balanço/múltiplo)
+    referencias: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -192,8 +194,11 @@ class GrupoPares:
     def descricao(self) -> str | None:
         if not self.pares:
             return None
-        return (f"{len(self.pares)} {'par' if len(self.pares) == 1 else 'pares'}"
-                f" do mesmo {self.nivel} ({self.valor})")
+        descricao = (f"{len(self.pares)} {'par' if len(self.pares) == 1 else 'pares'}"
+                     f" do mesmo {self.nivel} ({self.valor})")
+        if self.nivel == "subsetor" and self.ampliado:
+            descricao += " · grupo ampliado"
+        return descricao
 
     def valores(self, chave: str) -> tuple[float, ...]:
         return tuple(float(p.metricas[chave]) for p in self.pares
@@ -295,12 +300,28 @@ def selecionar(alvo: Candidato, universo, *, n_maximo: int = N_MAXIMO,
     bandas = [(bp, ur) for bp in portes
               for ur in ((True, False) if tem_risco else (False,))]
 
+    acao_b3 = alvo.tipo == ACAO and alvo.mercado == "B3"
+    if acao_b3:
+        criterios.append("B3: segmento e subsetor incluem os níveis superiores "
+                         "da classificação; setor sozinho não forma grupo.")
+
     for i, (nivel, valor) in enumerate(alvo.taxonomia):
+        if acao_b3 and nivel == "setor":
+            break
         if not valor:
             relaxamentos.append(f"Ativo sem {nivel}: nível ignorado.")
             continue
-        mesmo = [c for c in base if len(c.taxonomia) > i
-                 and c.taxonomia[i][1] == valor]
+        if acao_b3:
+            # Rótulos da B3 podem se repetir em ramos diferentes. Ex.:
+            # Comércio e Distribuição em Saúde e em Consumo não Cíclico.
+            caminho = alvo.taxonomia[i:]
+            if caminho[-1][0] != "setor" or any(not v for _, v in caminho):
+                relaxamentos.append(f"Caminho incompleto para {nivel}: nível ignorado.")
+                continue
+            mesmo = [c for c in base if c.taxonomia[i:] == caminho]
+        else:
+            mesmo = [c for c in base if len(c.taxonomia) > i
+                     and c.taxonomia[i][1] == valor]
         for banda_porte, usa_risco in bandas:
             filtrados = [c for c in mesmo
                          if (banda_porte is None
@@ -344,10 +365,16 @@ def selecionar(alvo: Candidato, universo, *, n_maximo: int = N_MAXIMO,
                     tuple(relaxamentos), ampliado=i > 0)
         porte_barrou = (tem_porte and len({c.raiz or c.ticker for c in mesmo})
                         >= n_minimo)
+        proximo_nivel = "" if acao_b3 and nivel == "subsetor" else ": nível mais largo"
         relaxamentos.append(f"Menos de {n_minimo} pares "
                             f"{'de porte comparável ' if porte_barrou else ''}"
-                            f"no mesmo {nivel} ({valor}): nível mais largo.")
-    if tem_porte:
+                            f"no mesmo {nivel} ({valor}){proximo_nivel}.")
+    if acao_b3:
+        porte = (f" de porte comparável (de 1/{BANDA_PORTE_LARGA:g}x a "
+                 f"{BANDA_PORTE_LARGA:g}x o do ativo)" if tem_porte else "")
+        motivo = (f"Menos de {n_minimo} pares{porte} no mesmo segmento ou subsetor, "
+                  "dentro do mesmo setor.")
+    elif tem_porte:
         motivo = (f"Menos de {n_minimo} pares do mesmo negócio e de porte "
                   f"comparável (de 1/{BANDA_PORTE_LARGA:g}x a "
                   f"{BANDA_PORTE_LARGA:g}x o do ativo) mesmo no nível mais "
@@ -376,6 +403,7 @@ class LinhaComparacao:
     diferenca_pct: float | None
     posicao: str
     interpretacao: str
+    referencia: str | None = None
 
     def texto_valor(self, moeda: str = "BRL") -> str:
         return formatar(self.valor, self.unidade, moeda)
@@ -422,6 +450,7 @@ class ComparacaoPares:
                     "mediana_pares": ln.mediana_pares, "n_pares": ln.n_pares,
                     "diferenca": ln.diferenca, "diferenca_pct": ln.diferenca_pct,
                     "posicao": ln.posicao, "interpretacao": ln.interpretacao,
+                    "referencia": ln.referencia,
                     "texto_valor": ln.texto_valor(self.moeda),
                     "texto_mediana": ln.texto_mediana(self.moeda),
                     "texto_diferenca": ln.texto_diferenca(self.moeda)}
@@ -438,7 +467,8 @@ class ComparacaoPares:
                                        int(ln.get("n_pares") or 0),
                                        ln.get("diferenca"), ln.get("diferenca_pct"),
                                        ln.get("posicao") or SEM_DADO,
-                                       ln.get("interpretacao") or NAO_DISPONIVEL)
+                                       ln.get("interpretacao") or NAO_DISPONIVEL,
+                                       ln.get("referencia"))
                        for ln in d.get("linhas") or ()), d.get("motivo"))
 
 
@@ -462,6 +492,7 @@ def comparar(alvo: Candidato, grupo: GrupoPares, *,
     if not catalogo:
         return ComparacaoPares(alvo.ticker, alvo.tipo, moeda, grupo, (),
                                "Classe sem métricas de comparação com pares.")
+    motivo = None if grupo.pares else grupo.motivo
     linhas = []
     for mt in catalogo:
         valor = alvo.metricas.get(mt.chave)
@@ -483,13 +514,20 @@ def comparar(alvo: Candidato, grupo: GrupoPares, *,
             and absoluta is None else None
         interp = (_interpretacao(mt, pos, len(amostra)) if valor is not None
                   else NAO_DISPONIVEL)
+        if alvo.tipo == ACAO and alvo.mercado == "B3" and mt.chave == "dy_mediano_5a":
+            if valor is None:
+                interp = "Cobertura insuficiente do DY anual do ativo."
+                if not grupo.pares:
+                    motivo = f"{motivo} {interp}" if motivo else interp
+            elif grupo.pares and not amostra:
+                interp = "Cobertura insuficiente do DY anual dos pares."
         linhas.append(LinhaComparacao(
             alvo.ticker, mt.chave, mt.rotulo, mt.unidade, valor,
             mediana, len(amostra),
             round(dif, 6) if dif is not None else None,
-            round(dif_pct, 2) if dif_pct is not None else None, pos, interp))
-    return ComparacaoPares(alvo.ticker, alvo.tipo, moeda, grupo, tuple(linhas),
-                           None if grupo.pares else grupo.motivo)
+            round(dif_pct, 2) if dif_pct is not None else None, pos, interp,
+            alvo.referencias.get(mt.chave) if valor is not None else None))
+    return ComparacaoPares(alvo.ticker, alvo.tipo, moeda, grupo, tuple(linhas), motivo)
 
 
 # -- textos --------------------------------------------------------------------------

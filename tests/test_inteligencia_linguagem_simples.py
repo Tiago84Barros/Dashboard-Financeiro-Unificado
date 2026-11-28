@@ -326,7 +326,7 @@ def test_comparacao_com_parecidas_sem_mediana_nem_segmento(an):
     a = _seguradora(an)
     html = tela.cartao_pares(rs.tabela_pares(a))
     assert "Como se compara com empresas parecidas · Seguros" in html
-    assert "Típico do setor" in html and "Lucro sobre o dinheiro dos sócios" in html
+    assert "Típico dos pares" in html and "Lucro sobre o dinheiro dos sócios" in html
     low = html.lower()
     assert "mediana" not in low and "segmento" not in low
     assert _sem_cor_literal(html)

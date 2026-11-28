@@ -117,16 +117,16 @@ def verificar_b3() -> dict:
 
     getattr(mr.load_multiplos_todos, "clear", lambda: None)()
     frame = mr.load_multiplos_todos()
-    # A idade NÃO sai da coluna `data` do quadro: ali `data` é 31/12 do exercício
-    # de referência (`_attach_data`), uma data contábil que fica no futuro
-    # durante todo o ano corrente. Medida assim, a B3 acusaria idade negativa e
-    # passaria no teste de frescor para sempre, inclusive com a publicação
-    # parada há meses. Quem sabe quando a vitrine foi escrita é `updated_at` de
-    # `market.calculated_metrics`, que é o que `market_health_summary` lê.
     frescor = (mh.market_health_summary() or {}).get("frescor") or {}
     idade = _idade_em_dias(frescor.get("ultimo_calc"))
-    return _conferir_quadro(
-        "b3", frame, ("Ticker", "P/L", "P/VP", "DY", "ROE"), idade)
+    resultado = _conferir_quadro("b3", frame,
+                                 ("Ticker", "P/L", "P/VP", "DY", "ROE", "data_preco"),
+                                 idade)
+    if resultado["ok"]:
+        precos = int(frame["data_preco"].notna().sum())
+        resultado["ok"] = precos > 0
+        resultado["detalhe"] = f"{precos}/{len(frame)} papéis com indicador e cotação vigente"
+    return resultado
 
 
 def verificar_noticias() -> dict:

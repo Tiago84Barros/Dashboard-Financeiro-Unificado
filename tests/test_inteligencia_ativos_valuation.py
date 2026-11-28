@@ -131,9 +131,9 @@ def test_texto_separa_dado_de_interpretacao_e_nao_da_veredito():
 # -- seleção de pares ----------------------------------------------------------------
 
 def _c(tk, seg="S1", sub="Sub", porte=100.0, risco=30.0, raiz=None, ano=2025,
-       tipo=f.ACAO, mercado="B3", **metricas):
+       tipo=f.ACAO, mercado="B3", setor="X", **metricas):
     return p.Candidato(tk, tk, tipo, mercado,
-                       (("segmento", seg), ("subsetor", sub), ("setor", "X")),
+                       (("segmento", seg), ("subsetor", sub), ("setor", setor)),
                        porte, risco, "volatilidade", metricas,
                        raiz or tk[:4], ano)
 
@@ -168,6 +168,35 @@ def test_nivel_mais_largo_quando_o_estreito_nao_tem_pares():
     assert g.nivel == "subsetor"
     assert any("mesmo segmento (Raro): nível mais largo" in r
                for r in g.relaxamentos)
+
+
+def test_b3_pares_exigem_o_caminho_setorial_completo():
+    alvo = _c("VARE3", seg="Alimentos", sub="Comércio e Distribuição",
+              setor="Consumo não Cíclico")
+    farmacias = [_c(tk, seg=seg, sub="Comércio e Distribuição", setor="Saúde")
+                 for tk, seg in [("FARM3", "Medicamentos"), ("DROG3", "Alimentos"),
+                                 ("SAUD3", "Medicamentos")]]
+    industrias = [_c(tk, seg="Alimentos", sub="Alimentos Processados",
+                     setor="Consumo não Cíclico")
+                  for tk in ("FRIG3", "GRAO3", "FRUT3")]
+    sem_setor = _c("INCO3", seg="Alimentos", sub="Comércio e Distribuição", setor=None)
+    g = p.selecionar(alvo, farmacias + industrias + [sem_setor])
+    assert not g.pares
+    assert "segmento ou subsetor" in g.motivo
+
+
+def test_b3_pares_admitem_subsetor_do_mesmo_setor_com_rotulo_ampliado():
+    alvo = _c("VARE3", seg="Alimentos", sub="Comércio e Distribuição",
+              setor="Consumo não Cíclico")
+    mesmo_subsetor = [_c(tk, seg="Atacado", sub="Comércio e Distribuição",
+                        setor="Consumo não Cíclico")
+                     for tk in ("ATAC3", "DIST3", "MERC3")]
+    farmacia = _c("FARM3", seg="Medicamentos", sub="Comércio e Distribuição",
+                  setor="Saúde")
+    g = p.selecionar(alvo, [farmacia, *mesmo_subsetor])
+    assert {par.ticker for par in g.pares} == {"ATAC3", "DIST3", "MERC3"}
+    assert g.nivel == "subsetor" and g.ampliado
+    assert "grupo ampliado" in g.descricao.lower()
 
 
 def test_afrouxamento_de_porte_e_risco_fica_registrado():
@@ -289,12 +318,12 @@ def test_candidatos_b3_taxonomia_financeira_e_escala():
     mult = [{"Ticker": "ITUB4", "P/L": 9, "P/VP": 1.8, "DY": 0.07,
              "EV_EBIT": 5, "ROE": 0.2, "data": date(2025, 12, 31)},
             {"Ticker": "WEGE3", "P/L": -3, "P/VP": 8, "DY": 0.02,
-             "EV_EBIT": 20, "data": date(2025, 12, 31)}]
+             "EV_EBIT": 20, "Valor_Mercado": 1e11, "data": date(2025, 12, 31)}]
     setores = {"ITUB4": {"SETOR": "Fin", "SUBSETOR": "Intermediários Financeiros",
                          "SEGMENTO": "Bancos", "nome_empresa": "Itaú"},
                "WEGE3": {"SETOR": "Bens", "SUBSETOR": "Máquinas",
                          "SEGMENTO": "Motores"}}
-    cand = fv.candidatos_b3(mult, setores, {"WEGE3": {"porte": 1e11,
+    cand = fv.candidatos_b3(mult, setores, {"WEGE3": {"porte": 1e9,
                                                       "volatilidade": 25}})
     itub = cand["ITUB4"]
     assert "ev_ebit" not in itub.metricas
@@ -331,6 +360,51 @@ def test_dy_mediano_5a_sem_dado_vira_none():
     # um ano de defasagem é aceito (exercício fiscal dos EUA)
     assert fv.dy_mediano(velho, 2022) == pytest.approx(5.0)
     assert fv.dy_mediano(None, 2025) is None
+
+
+def test_dy_mediano_b3_so_conta_observacoes_do_historico():
+    hist = {"historico": {"dividend_yield": [[2020, 12.0], [2021, 4.0],
+                                             [2023, 6.0], [2025, 14.0]],
+                          "p_vp": [[ano, 1.0] for ano in range(2020, 2026)]}}
+    cand = fv.candidatos_b3([{"Ticker": "AAAA3"}], {}, {"AAAA3": hist})
+    assert cand["AAAA3"].metricas["dy_mediano_5a"] == pytest.approx(6.0)
+
+
+def test_dy_mediano_b3_ignora_ausencias_e_registra_cobertura_insuficiente():
+    mult = [{"Ticker": tk} for tk in ("AAAA3", "BBBB3", "CCCC3", "DDDD3")]
+    taxonomia = {"SEGMENTO": "Alimentos", "SUBSETOR": "Comércio e Distribuição",
+                 "SETOR": "Consumo não Cíclico"}
+    hist = {"historico": {"dividend_yield": [[2021, 4.0], [2025, 14.0]],
+                          "p_vp": [[ano, 1.0] for ano in range(2021, 2026)]}}
+    cand = fv.candidatos_b3(mult, dict.fromkeys((m["Ticker"] for m in mult), taxonomia),
+                            {"AAAA3": hist})
+    alvo = cand["AAAA3"]
+    linha = p.comparar(alvo, p.selecionar(alvo, cand.values())).linha("dy_mediano_5a")
+    assert linha.valor is None and linha.mediana_pares is None
+    assert linha.posicao == v.SEM_DADO
+    assert "cobertura" in linha.interpretacao.lower()
+    sem_grupo = p.comparar(alvo, p.selecionar(alvo, []))
+    assert "segmento ou subsetor" in sem_grupo.motivo
+    assert "cobertura" in sem_grupo.motivo.lower()
+
+
+def test_dy_mediano_b3_zero_explicito_e_valido_e_valor_negativo_fica_fora():
+    hist = {"historico": {"dividend_yield": [[2021, -5.0], [2022, 6.0],
+                                             [2023, 0.0], [2025, 14.0]]}}
+    cand = fv.candidatos_b3([{"Ticker": "AAAA3"}], {}, {"AAAA3": hist})
+    assert cand["AAAA3"].metricas["dy_mediano_5a"] == pytest.approx(6.0)
+
+
+def test_retorno_b3_informa_a_janela_real_do_historico():
+    hist = {"AAAA3": {"retorno_12m": -12, "momento_ref": "2025-10-31 a 2026-10-29"}}
+    cand = fv.candidatos_b3([{"Ticker": "AAAA3"}], {}, hist)["AAAA3"]
+    comp = fv.p.comparar(cand, fv.p.GrupoPares())
+    linha = fv.p.ComparacaoPares.de_dict(comp.como_dict()).linha("retorno_12m")
+    assert linha.valor == -12
+    assert linha.referencia == "31/10/2025 a 29/10/2026"
+    hist["AAAA3"].pop("momento_ref")
+    cand = fv.candidatos_b3([{"Ticker": "AAAA3"}], {}, hist)["AAAA3"]
+    assert "retorno_12m" not in cand.metricas
 
 
 def test_candidatos_b3_e_eua_levam_dy_mediano_e_pares_comparam_por_ele():

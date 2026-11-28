@@ -259,7 +259,7 @@ def promover_fechamento_pregao_acoes(dry_run: bool = False) -> dict:
     return prog
 
 
-def preco_atual(conn, ticker: str, *, existe: bool) -> tuple[float | None, float | None]:
+def preco_atual(conn, ticker: str, *, existe: bool, com_data: bool = False):
     """Cotação vigente de UM ticker: leitor único (`cotacao_pregao.preco_vigente`)
     entre a última barra de `historical_prices` e o slot do fechamento.
 
@@ -279,4 +279,8 @@ def preco_atual(conn, ticker: str, *, existe: bool) -> tuple[float | None, float
                          {"t": ticker}).fetchone()
         slot = (float(r[0]), r[1]) if r else None
     vig = cp.preco_vigente((barra[0], float(barra[1])) if barra else None, slot)
-    return (vig[0] if vig else None), (float(barra[1]) if barra else None)
+    valores = (vig[0] if vig else None), (float(barra[1]) if barra else None)
+    if com_data:
+        data = vig[1].astimezone(cp._TZ_PREGAO).date() if vig and vig[1] else None
+        return (*valores, data)
+    return valores

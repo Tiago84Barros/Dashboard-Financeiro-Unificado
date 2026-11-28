@@ -33,8 +33,18 @@
     ATENCAO: nao ha `WakeToRun`. Acordar a maquina sozinha para publicar seria
     decisao do usuario sobre a propria maquina, nao do script.
 #>
+param([string]$RepositorioPublicacao)
+
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
+if (-not $RepositorioPublicacao) {
+    $dedicado = Join-Path $env:LOCALAPPDATA "DFU/publicacao"
+    $RepositorioPublicacao = if (Test-Path -LiteralPath $dedicado) { $dedicado } else { $repo }
+}
+$RepositorioPublicacao = (Resolve-Path -LiteralPath $RepositorioPublicacao).Path
+if ((git -C $RepositorioPublicacao branch --show-current) -ne "main") {
+    throw "A atualização das vitrines exige um checkout dedicado na branch main."
+}
 
 $python = "C:\Users\Tiago Barros\AppData\Local\Programs\Python\Python312\python.exe"
 if (-not (Test-Path $python)) {
@@ -48,10 +58,11 @@ function Registrar-Tarefa {
         [string]$Nome,
         [string]$Descricao,
         [object[]]$Gatilhos,
-        [string]$Argumentos
+        [string]$Argumentos,
+        [string]$Diretorio = $repo
     )
     $acao = New-ScheduledTaskAction -Execute $python -Argument $Argumentos `
-        -WorkingDirectory $repo
+        -WorkingDirectory $Diretorio
     $config = New-ScheduledTaskSettingsSet `
         -StartWhenAvailable `
         -MultipleInstances IgnoreNew `
@@ -81,7 +92,8 @@ Registrar-Tarefa -Nome "DFU - Atualizar vitrines" `
                 "para o Supabase. Decide por cadencia, verifica pelo leitor da " +
                 "tela e avisa no Telegram quando falha.") `
     -Gatilhos @($diario, $logon) `
-    -Argumentos "`"$repo\scripts\atualizar_vitrines.py`""
+    -Diretorio $RepositorioPublicacao `
+    -Argumentos "`"$RepositorioPublicacao\scripts\atualizar_vitrines.py`""
 
 # --- Coleta de noticias -------------------------------------------------------
 # Este e o agendador REAL da coleta, e ele mora aqui e nao no GitHub Actions.

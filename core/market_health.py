@@ -98,7 +98,8 @@ def market_health_summary() -> dict:
                     "por_severidade": por_sev,
                 },
                 "frescor": {
-                    "ultimo_calc": sc("SELECT max(updated_at) FROM market.calculated_metrics"),
+                    "ultimo_calc": sc("SELECT max(updated_at) FROM market.calculated_metrics "
+                                     "WHERE period='ttm' AND year > 0 AND quarter > 0"),
                     "bootstrap_ok": int(sc("SELECT count(*) FROM market.bootstrap_state "
                                            "WHERE status='ok'") or 0),
                 },

@@ -2699,7 +2699,13 @@ FLOW_EMPRESAS_B3_TELAS = FlowSpec(
             "anual, CAGR, último exercício, demonstrações, dividendos por ação, múltiplos, "
             "fluxo de caixa, estrutura de capital e dívida, rentabilidade, valuation e o score. "
             "A cotação vale a mais nova entre a última barra de preço e o fechamento do pregão da "
-            "B3 (COTAHIST, etapa de fechamento do pregão); market cap, P/L, P/VP e DY acompanham esse preço.",
+            "B3 (COTAHIST, etapa de fechamento do pregão). P/L, P/VP e EV/EBIT usam "
+            "o valor de mercado desse pregão. Para os 12 meses, a referência preferencial "
+            "é o ITR/DFP da CVM com lucro e patrimônio dos controladores. EV usa dívida "
+            "financeira de curto e longo prazo menos caixa e equivalentes. "
+            "Indicadores correntes exigem competência rastreável. Quando o balanço novo "
+            "aguarda recálculo, os múltiplos antigos ficam indisponíveis. Razões de preço "
+            "exigem cotação vigente com até quatro dias corridos.",
             (
                 "_tab_analise()",
                 "buscar_empresas(): um candidato abre direto; vários viram escolha",
@@ -2857,7 +2863,7 @@ FLOW_INTELIGENCIA_IR = FlowSpec(
                 "fica recolhido em 'Ver a análise técnica completa'",
                 "Desde 13/11/2026 os cartões de baixo também falam simples: 'Como está a "
                 "economia agora' (cada item com o que é, o número em frases comuns e se sobe "
-                "ou cai), 'Como se compara com empresas parecidas' (típico do setor, nomes "
+                "ou cai), 'Como se compara com empresas parecidas' (mediana do grupo, nomes "
                 "comuns com a sigla entre parênteses), 'Por que você tem este ativo', 'O que "
                 "da economia mexe com este ativo' e 'Se vender, por qual trocar?', que mostra "
                 "o que o substituto tem de melhor e de pior, com os números dos dois lados "

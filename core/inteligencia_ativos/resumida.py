@@ -1143,6 +1143,7 @@ class MetricaPares:
     pontos: tuple[Ponto, ...]
     mediana_pos: float | None           # 0 a 100
     leitura: str
+    referencia: str | None = None
 
 
 ROTULO_POSICAO = {prs.ACIMA: "acima da mediana", prs.ABAIXO: "abaixo da mediana",
@@ -1160,6 +1161,8 @@ class TabelaPares:
     nomes: tuple[tuple[str, str], ...] = ()           # (ticker, nome)
     n_grupo: int = 0                    # pares no segmento inteiro
     setor: str = ""                     # o valor do grupo ("Bancos"), sem o nível
+    referencia: str | None = None
+    ampliado: bool = False
 
 
 def _metrica_pares(ln, pares, ticker: str, moeda: str) -> MetricaPares:
@@ -1181,7 +1184,7 @@ def _metrica_pares(ln, pares, ticker: str, moeda: str) -> MetricaPares:
         formatar(med, ln.unidade, moeda) if med is not None else "—",
         ln.n_pares, ln.posicao, pontos,
         None if med is None else _pos(float(med)),
-        prs.LEITURA.get(ln.chave, ""))
+        prs.LEITURA.get(ln.chave, ""), ln.referencia)
 
 
 def _comparacao(a: m.AnaliseAtivo) -> prs.ComparacaoPares | None:
@@ -1194,15 +1197,19 @@ def tabela_pares(a: m.AnaliseAtivo, n: int = N_PARES_TABELA) -> TabelaPares:
     """O ativo e os ``n`` pares mais próximos, lado a lado, métrica a
     métrica. Só colunas com algum dado. Puro."""
     c = _comparacao(a)
-    if c is None or not c.grupo.pares:
+    b3 = c is not None and c.tipo == "acao" and c.moeda == "BRL"
+    if c is None or (not c.grupo.pares and not b3):
         motivo = ((c.motivo or c.grupo.motivo) if c else None) or a.pares.resumo
         return TabelaPares("", (), (), motivo or inf.NAO_DISPONIVEL)
+    referencia = next((ln["referencia"] for ln in
+                       (a.valuation.dados or {}).get("linhas", ())
+                       if ln.get("referencia")), None) if b3 else None
     pares = sorted(c.grupo.pares, key=lambda p: p.distancia)[:n]
     metricas = [ln for ln in c.linhas
                 if ln.valor is not None
                 or any(_tem_valor(p.metricas.get(ln.chave)) for p in pares)]
     if not metricas:
-        return TabelaPares("", (), (), "Nenhuma métrica com dado para "
+        return TabelaPares("", (), (), c.motivo or "Nenhuma métrica com dado para "
                                        "comparar com os pares.")
 
     def _val(v, ln) -> str:
@@ -1217,7 +1224,8 @@ def tabela_pares(a: m.AnaliseAtivo, n: int = N_PARES_TABELA) -> TabelaPares:
         titulo, tuple(ln.metrica for ln in metricas), tuple(linhas),
         metricas=tuple(_metrica_pares(ln, pares, a.ativo.ticker, c.moeda)
                        for ln in metricas),
-        nomes=nomes, n_grupo=len(c.grupo.pares), setor=c.grupo.valor or "")
+        nomes=nomes, n_grupo=len(c.grupo.pares), setor=c.grupo.valor or "",
+        referencia=referencia, motivo=c.motivo, ampliado=c.grupo.ampliado)
 
 
 def substitutos(a: m.AnaliseAtivo, na_carteira, n: int = N_PARES_TABELA

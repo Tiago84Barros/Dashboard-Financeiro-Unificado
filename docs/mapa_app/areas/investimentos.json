@@ -868,7 +868,7 @@
             {
               "nome": "Como se compara com empresas parecidas",
               "resumo": "O ativo contra os concorrentes, indicador a indicador",
-              "explicacao": "Uma régua por indicador comparando o ativo com dois parecidos e com o típico do setor; cada indicador tem nome comum ('Lucro sobre o dinheiro dos sócios', com a sigla ROE entre parênteses) e, embaixo, o que ele mede em palavras simples. A avaliação por dimensões passou para dentro de 'Ver a análise técnica completa'. Num ETF, os indicadores do fundo (índice, maiores posições, concentração, taxa, liquidez e setores) vêm do yfinance; o tracking error não é calculado.",
+              "explicacao": "Uma régua por indicador comparando o ativo com os pares disponíveis e a mediana do grupo. Nas ações B3 o grupo usa o segmento ou o subsetor dentro do mesmo setor. Os múltiplos correntes usam ITR/DFP da CVM e cotação vigente do armazém. O DY típico exige histórico observado. Cada indicador tem nome comum ('Lucro sobre o dinheiro dos sócios', com a sigla ROE entre parênteses) e, embaixo, o que ele mede em palavras simples. A avaliação por dimensões passou para dentro de 'Ver a análise técnica completa'. Num ETF, os indicadores do fundo (índice, maiores posições, concentração, taxa, liquidez e setores) vêm do yfinance; o tracking error não é calculado.",
               "so_admin": false,
               "fonte": "views/inteligencia_ativos_resumida.py:260, :343",
               "filhos": []

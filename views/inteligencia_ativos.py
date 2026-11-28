@@ -257,7 +257,7 @@ def _lista(itens) -> str:
 
 
 def _indisponivel(secao: str, motivo: str | None, padrao: str) -> str:
-    """Seção sem dado: a tela diz só "não disponível"; o motivo vai ao log."""
+    """Registra a falta de dado e retorna a mensagem a exibir, escapada."""
     aviso_lacuna(f"{secao}: {motivo or padrao}",
                  codigo="tela.inteligencia.secao_sem_dado", entidade=secao)
     return escape(padrao)
@@ -540,7 +540,11 @@ def corpo_pares(c: prs.ComparacaoPares) -> str:
     dos pares | Diferença | Interpretação. Puro."""
     g = c.grupo
     if not g.pares:
-        return _indisponivel("Pares", c.motivo or g.motivo, fund.NAO_DISPONIVEL)
+        motivo = c.motivo or g.motivo
+        mensagem = fund.NAO_DISPONIVEL
+        if c.tipo == fund.ACAO and c.moeda == "BRL" and motivo:
+            mensagem = motivo
+        return _indisponivel("Pares", motivo, mensagem)
     lista = ('<ul style="margin:2px 0 0 18px;padding:0;font-size:0.82rem;'
              'color:var(--app-muted)">')
     pares_li = "".join(
@@ -550,11 +554,15 @@ def corpo_pares(c: prs.ComparacaoPares) -> str:
     linhas = ""
     for ln in c.linhas:
         cor = "var(--app-text)" if ln.valor is not None else "var(--app-subtle)"
+        referencia = ""
+        if ln.chave == "retorno_12m" and ln.referencia:
+            referencia = ('<div style="font-size:0.75rem;font-weight:400;'
+                          f'color:var(--app-muted)">{escape(ln.referencia)}</div>')
         linhas += (
             f'<tr><td {_TD}color:var(--app-muted)">{escape(c.ativo)}</td>'
             f'<td {_TD}color:var(--app-muted)">{escape(ln.metrica)}</td>'
             f'<td {_TD}color:{cor};font-weight:600">'
-            f'{escape(ln.texto_valor(c.moeda))}</td>'
+            f'{escape(ln.texto_valor(c.moeda))}{referencia}</td>'
             f'<td {_TD}color:var(--app-text)">'
             f'{escape(ln.texto_mediana(c.moeda))}'
             f'{f" ({ln.n_pares})" if ln.n_pares else ""}</td>'

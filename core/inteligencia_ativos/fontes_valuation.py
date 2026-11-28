@@ -5,7 +5,7 @@ I/O das duas camadas; ``valuation`` e ``pares`` são puros.
 
 De onde vem cada número:
 
-- Ações B3: valor atual de ``load_multiplos_todos`` (vitrine no Supabase),
+- Ações B3: valor atual de ``load_multiplos_todos`` (armazém, CVM e pregão),
   taxonomia de ``load_setores``; histórico anual, porte e volatilidade do
   arquivo ``data/public/valuation_historico.json.gz``, gerado do armazém
   local por ``scripts/publish_valuation_historico.py`` (o histórico gravado
@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 ARQUIVO = Path(__file__).resolve().parents[2] / "data" / "public" / \
     "valuation_historico.json.gz"
 
-FONTE_MULTIPLOS_B3 = "Vitrine de múltiplos B3 (Supabase)"
+FONTE_MULTIPLOS_B3 = "Indicadores do armazém B3"
 FONTE_FII = "Vitrine de FIIs (retrato da metodologia)"
 FONTE_HISTORICO = "Histórico de valuation (armazém local, arquivo publicado)"
 FONTE_EUA = "Retrato de Empresas Americanas (SEC + preço)"
@@ -141,6 +141,7 @@ def ultimo_ano_dy(art_mercado: dict) -> int | None:
 
 
 def dy_janela(historico: dict | None, ano_mercado: int | None, *,
+              mercado: str = "",
               anos: int = ANOS_DY_MEDIANO,
               minimo: int = MIN_ANOS_DY_MEDIANO
               ) -> tuple[tuple[int, float], ...] | None:
@@ -148,6 +149,8 @@ def dy_janela(historico: dict | None, ano_mercado: int | None, *,
     a regra de :func:`dy_mediano`. Puro."""
     historico = historico or {}
     dy = _anos_serie(historico, "dividend_yield")
+    if mercado == "b3":
+        dy = {ano: valor for ano, valor in dy.items() if valor >= 0}
     if not dy:
         return None
     observados = (set(dy) | set(_anos_serie(historico, "p_l"))
@@ -155,31 +158,39 @@ def dy_janela(historico: dict | None, ano_mercado: int | None, *,
     fim = max(observados)
     if ano_mercado is not None and fim < ano_mercado - 1:
         return None
-    janela = tuple((a, dy.get(a, 0.0)) for a in range(fim - anos + 1, fim + 1)
-                   if a in observados)
+    faixa = range(fim - anos + 1, fim + 1)
+    if mercado == "b3":
+        janela = tuple((a, dy[a]) for a in faixa if a in dy)
+    else:
+        janela = tuple((a, dy.get(a, 0.0)) for a in faixa if a in observados)
     return janela if len(janela) >= minimo else None
 
 
 def dy_mediano(historico: dict | None, ano_mercado: int | None, *,
+               mercado: str = "",
                anos: int = ANOS_DY_MEDIANO,
                minimo: int = MIN_ANOS_DY_MEDIANO) -> float | None:
     """Mediana do DY anual (%) nos ``anos`` exercícios até o último do
     próprio ativo. Puro.
 
-    O histórico só grava ano com provento: ano observado (com P/L ou P/VP)
-    e sem DY conta como 0%, senão a empresa que pulou o dividendo pareceria
-    pagadora constante. Ano sem nenhum dado fica fora da conta. Sem
-    nenhum DY no histórico não há como separar "não paga" de "sem dado de
-    provento": sai None. Também None com menos de ``minimo`` anos
-    observados na janela ou com o último exercício mais de um ano atrás do
-    mercado (ativo que parou de publicar).
+    B3 usa apenas exercícios com DY explícito: o arquivo não distingue
+    ausência de proventos da falta de cobertura por data-ex. Nos demais
+    mercados vale a convenção de 0% no ano com P/L ou P/VP e sem DY, desde
+    que a série tenha algum DY registrado. Retorna None com menos de
+    minimo observações na janela ou série defasada em mais de um ano.
     """
-    janela = dy_janela(historico, ano_mercado, anos=anos, minimo=minimo)
+    janela = dy_janela(historico, ano_mercado, mercado=mercado,
+                       anos=anos, minimo=minimo)
     return None if janela is None else statistics.median(v for _, v in janela)
 
 
-def premissa_dy_mediano(ano_mercado: int | None) -> str:
+def premissa_dy_mediano(ano_mercado: int | None, *, mercado: str = "") -> str:
     janela = (f" (até {ano_mercado})" if ano_mercado is not None else "")
+    if mercado == "b3":
+        return (f"DY mediano de {ANOS_DY_MEDIANO} anos: mediana dos exercícios "
+                f"com DY registrado na janela dos últimos {ANOS_DY_MEDIANO} "
+                f"exercícios do próprio ativo{janela}. Anos sem DY registrado "
+                f"ficam fora da amostra; exige {MIN_ANOS_DY_MEDIANO} observações.")
     return (f"DY mediano de {ANOS_DY_MEDIANO} anos (comparação com pares): "
             f"mediana do DY anual dos últimos {ANOS_DY_MEDIANO} exercícios do "
             f"próprio ativo{janela}; ano sem provento conta como 0%; exige "
@@ -224,12 +235,22 @@ def _premissas_arquivo(art: dict, mercado: str) -> tuple[str, ...]:
 
 # -- B3 ------------------------------------------------------------------------------
 
-def _ref_multiplos(linha: dict) -> str | None:
-    d = linha.get("data")
+def _data_br(valor) -> str | None:
     try:
-        return f"exercício {d.year}" if hasattr(d, "year") else _txt(d)
-    except Exception:
+        return valor.strftime("%d/%m/%Y")
+    except (AttributeError, ValueError):
         return None
+
+
+def referencia_b3(linha: dict) -> str | None:
+    base = _data_br(linha.get("data"))
+    if base is None:
+        return None
+    pregao = _data_br(linha.get("data_preco"))
+    dados = ("CVM (ITR/DFP)" if linha.get("fonte_ttm") == "market.compute.cvm"
+             else "demonstrativos via brapi")
+    referencia = f"12 meses até {base} · {dados}"
+    return f"{referencia} · cotação de {pregao}" if pregao else referencia
 
 
 def candidatos_b3(multiplos: list[dict], setores: dict[str, dict],
@@ -243,16 +264,18 @@ def candidatos_b3(multiplos: list[dict], setores: dict[str, dict],
         s = setores.get(tk) or {}
         a = art_b3.get(tk) or {}
         financeira = s.get("SUBSETOR") in SUBSETORES_FINANCEIROS
-        porte, vol = _positivo(a.get("porte")), _positivo(a.get("volatilidade"))
+        porte = _positivo(m.get("Valor_Mercado"))
+        vol = _positivo(a.get("volatilidade"))
+        janela = _janela_momento_b3(a.get("momento_ref"))
         metricas = {
             "p_l": _positivo(m.get("P/L")), "p_vp": _positivo(m.get("P/VP")),
             "dividend_yield": _pct(m.get("DY")),
-            "dy_mediano_5a": dy_mediano(a.get("historico"), ano_mercado),
+            "dy_mediano_5a": dy_mediano(a.get("historico"), ano_mercado, mercado="b3"),
             "ev_ebit": None if financeira else _positivo(m.get("EV_EBIT")),
             "roe": _pct(m.get("ROE")),
             "margem_liquida": _pct(m.get("Margem_Liquida")),
             "volatilidade": vol, "porte": porte,
-            "retorno_12m": _num(a.get("retorno_12m")),
+            "retorno_12m": _num(a.get("retorno_12m")) if janela else None,
             # Não entra na tabela de pares: alimenta o teto de Dív/PL da
             # avaliação, refinado pelo p90 dos pares como na Empresas B3.
             "divida_bruta_patrimonio": None if financeira else
@@ -265,15 +288,23 @@ def candidatos_b3(multiplos: list[dict], setores: dict[str, dict],
              ("setor", _txt(s.get("SETOR")))),
             porte, vol, "volatilidade",
             {k: x for k, x in metricas.items() if x is not None}, _raiz_b3(tk),
-            _ano(m.get("data")))
+            _ano(m.get("data")), {"retorno_12m": janela} if janela else {})
     return saida
+
+
+def _janela_momento_b3(valor) -> str | None:
+    try:
+        inicio, fim = map(date.fromisoformat, str(valor).split(" a "))
+    except ValueError:
+        return None
+    return f"{_data_br(inicio)} a {_data_br(fim)}" if fim > inicio else None
 
 
 def entradas_b3(linha: dict | None, art: dict | None,
                 financeira: bool) -> dict[str, v.Entrada]:
     linha, art = linha or {}, art or {}
     hist = art.get("historico") or {}
-    ref = _ref_multiplos(linha)
+    ref = referencia_b3(linha)
 
     def entrada(chave, bruto, *, pct=False, excl_nao_positivo=None,
                 excluida=None):
@@ -587,10 +618,11 @@ def ler_sem_cache(ticker: str, nome: str, classe: str, moeda: str):
         return _montar(tipo, moeda,
                        entradas_b3(linha, (art.get("b3") or {}).get(tk), financeira),
                        alvo, list(universo.values()),
-                       (f"Valor atual: {FONTE_MULTIPLOS_B3} (múltiplos do "
-                        "último exercício publicado a preço recente); o "
-                        "histórico usa o fechamento de cada fim de ano.",
-                        premissa_dy_mediano(ultimo_ano_dy(art.get("b3") or {})))
+                       ((referencia_b3(linha or {}) or
+                         "Múltiplos correntes sem base de cálculo verificável.") +
+                        " O histórico usa o fechamento de cada fim de ano.",
+                        premissa_dy_mediano(ultimo_ano_dy(art.get("b3") or {}),
+                                            mercado="b3"))
                        + _premissas_arquivo(art, "b3"))
     if tipo == ACAO:
         art = arquivo()

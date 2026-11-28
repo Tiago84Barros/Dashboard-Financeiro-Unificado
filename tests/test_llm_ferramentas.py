@@ -304,9 +304,9 @@ def test_texto_proventos_anos_fechados_media_mediana_e_ano_em_curso():
             "com pagamento até 31/12") in texto
     assert "parcial até" not in texto
     assert "Anunciado com pagamento nos anos seguintes: 2027 R$ 0,40" in texto
-    # DY: 5, 7, 0 (2023 com P/VP e sem DY), 8, 34 → mediana 7
-    assert "2023 0,0%" in texto and "mediana 7,0%" in texto
-    assert "média 10,8%" in texto.lower()
+    # DY: 5, 7, 8, 34 → mediana 7,5; P/VP em 2023 não prova DY zero.
+    assert "2023 0,0%" not in texto and "mediana 7,5%" in texto
+    assert "média 13,5%" in texto.lower()
 
 
 def test_texto_proventos_janela_de_cinco_anos_nao_segue_a_listagem():
