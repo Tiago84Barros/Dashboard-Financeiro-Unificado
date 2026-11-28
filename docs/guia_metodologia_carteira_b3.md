@@ -1,4 +1,4 @@
-# Guia da Metodologia de Criação de Portfólio B3
+﻿# Guia da Metodologia de Criação de Portfólio B3
 
 > Documento explicativo para uso pessoal. Nível: intermediário.
 > Objetivo: entender **o que** a aba "Criação de Portfólio" faz, **por que** ela é
@@ -832,6 +832,27 @@ Grava `data/oos_decaimento_lideranca_b3.json`.
 média da diferença pareada líquida (sem desconto menos com desconto, carteira
 sem portão) for > 0 e o IC 95% excluir o zero. Senão fica como está.
 
+**Resultado (medido em 23/11/2026, armazém local, perfil Equilibrado, 9
+safras):** diferença pareada líquida (sem desconto menos com desconto) de
++3,6 pp, IC 95% de −1,8 a +10,0 pp. A média é positiva, mas o IC cruza o zero:
+pela regra acima o desconto **fica ligado**. Com IR, +3,5 pp, IC de −2,0 a
++10,0 pp. Números em `data/oos_decaimento_lideranca_b3.json`.
+
+### Segunda rodada das cinco carteiras e do filtro de nota (23/11/2026)
+
+Refeita do zero a partir da `origin/main` (6a9dce3a), com as regras desta
+seção sem nenhuma mudança, no armazém local e com `--cache-dir data/cache`. Os
+números das cinco carteiras repetem os da tabela acima, inclusive o da líder
+segurada (−0,6 pp, IC de −5,0 a +4,1 pp; sem a melhor safra −2,3 pp; contra a
+padrão −3,5 pp: fora em (a), (b) e (c)). Seguem candidatas só a rota de valor
+e a fórmula mágica. Na líder com filtro de nota e fatores, a diferença pareada
+líquida é de −0,3 pp (IC de −2,2 a +1,1 pp), negativa em 2019, 2023 e 2024:
+**fica opcional**, como antes. Nada muda na tela.
+
+Cuidado ao repetir: a `SUPABASE_DB_URL` do `.env` vence a `DATABASE_URL`. Uma
+primeira passada desta rodada leu o banco da nuvem (o JSON diz "banco publicado
+(nuvem)" no campo `fundamentos`). Foi descartada e refeita no armazém local.
+Confira esse campo antes de aceitar uma medição.
 ## 20. Rota de valor enxuta: 10, 15 e 20 ações (22/11/2026, medido: nenhum corte passa)
 
 ### Que pergunta responde

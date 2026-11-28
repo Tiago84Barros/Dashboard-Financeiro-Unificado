@@ -1,0 +1,379 @@
+{
+  "versao_medicao": "decaimento-lideranca-b3-1.0.0",
+  "versao_metodologia": "2.33.0",
+  "versao_presets": "b3-presets-1.0.0",
+  "medido_em": "2026-11-23T12:36:57",
+  "perfil": "Equilibrado (padrão)",
+  "desconto": "core.pesos_por_score.apply_decay_penalty: 7% a.a. por ano consecutivo de liderança, teto 30%; desligado = identidade nas duas chamadas da aba (laço anual e carteira atual)",
+  "regra_de_decisao": "o desconto de liderança sai da B3 só se a média da diferença pareada LÍQUIDA (sem desconto menos com desconto, carteira sem portão) for > 0 e o IC 95% excluir o zero; senão fica ligado, como está",
+  "decisao": "fica ligado",
+  "metrica_principal": "diferença pareada por safra do retorno LÍQUIDO da carteira sem portão: sem desconto menos com desconto",
+  "diferenca_pareada": {
+    "liquido": {
+      "media": 0.03617187310437527,
+      "ic95": [
+        -0.017505691638938694,
+        0.1004703819077515
+      ],
+      "n_safras": 9,
+      "safras_negativas": [
+        2021,
+        2022,
+        2023
+      ],
+      "ic_cruza_zero": true,
+      "melhor_safra": 2020,
+      "media_sem_melhor_safra": 0.01184683268727274
+    },
+    "com_ir": {
+      "media": 0.03450199123795324,
+      "ic95": [
+        -0.019862624700240597,
+        0.10016811773189346
+      ],
+      "n_safras": 9,
+      "safras_negativas": [
+        2021,
+        2022,
+        2023,
+        2025
+      ],
+      "ic_cruza_zero": true,
+      "melhor_safra": 2020,
+      "media_sem_melhor_safra": 0.009968215587547985
+    }
+  },
+  "com_desconto": {
+    "vs_equal_weight": {
+      "media": 0.029228827757321614,
+      "ic95": [
+        -0.0487053424246967,
+        0.11128831033210945
+      ],
+      "n_safras": 9,
+      "safras_negativas": [
+        2017,
+        2018,
+        2023
+      ],
+      "ic_cruza_zero": true,
+      "melhor_safra": 2020,
+      "media_sem_melhor_safra": 0.004634582168131764
+    },
+    "vs_equal_weight_com_ir": {
+      "media": 0.01627509615488902,
+      "ic95": [
+        -0.05646157353680306,
+        0.09368200013023868
+      ],
+      "n_safras": 9,
+      "safras_negativas": [
+        2017,
+        2018,
+        2019,
+        2023,
+        2025
+      ],
+      "ic_cruza_zero": true,
+      "melhor_safra": 2020,
+      "media_sem_melhor_safra": -0.009938365884604873
+    },
+    "vs_selic": {
+      "media": 0.0813581388592548,
+      "ic95": [
+        -0.07170620165769716,
+        0.27603737063547323
+      ],
+      "n_safras": 9,
+      "safras_negativas": [
+        2019,
+        2022,
+        2024
+      ],
+      "ic_cruza_zero": true,
+      "melhor_safra": 2020,
+      "media_sem_melhor_safra": -0.001384997890798323
+    },
+    "safras_em_caixa": [
+      2017
+    ],
+    "safras_sem_carteira": [
+      2015,
+      2016
+    ]
+  },
+  "sem_desconto": {
+    "vs_equal_weight": {
+      "media": 0.06540070086169689,
+      "ic95": [
+        -0.04703034837740614,
+        0.1963621725029768
+      ],
+      "n_safras": 9,
+      "safras_negativas": [
+        2017,
+        2018,
+        2023
+      ],
+      "ic_cruza_zero": true,
+      "melhor_safra": 2020,
+      "media_sem_melhor_safra": 0.0164814148554045
+    },
+    "vs_equal_weight_com_ir": {
+      "media": 0.05077708739284226,
+      "ic95": [
+        -0.05848562539879514,
+        0.18331576400284277
+      ],
+      "n_safras": 9,
+      "safras_negativas": [
+        2017,
+        2018,
+        2022,
+        2023,
+        2025
+      ],
+      "ic_cruza_zero": true,
+      "melhor_safra": 2020,
+      "media_sem_melhor_safra": 2.984970294310843e-05
+    },
+    "vs_selic": {
+      "media": 0.11753001196363007,
+      "ic95": [
+        -0.05906646614120424,
+        0.3629202813147968
+      ],
+      "n_safras": 9,
+      "safras_negativas": [
+        2019,
+        2022,
+        2023
+      ],
+      "ic_cruza_zero": true,
+      "melhor_safra": 2020,
+      "media_sem_melhor_safra": 0.010461834796474417
+    },
+    "safras_em_caixa": [
+      2017
+    ],
+    "safras_sem_carteira": [
+      2015,
+      2016
+    ]
+  },
+  "por_safra": {
+    "2015": {
+      "com_desconto": {
+        "n_ativos": 0,
+        "giro": null,
+        "custo": null,
+        "liquido": null,
+        "maiores": ""
+      },
+      "sem_desconto": {
+        "n_ativos": 0,
+        "giro": null,
+        "custo": null,
+        "liquido": null,
+        "maiores": ""
+      }
+    },
+    "2016": {
+      "com_desconto": {
+        "n_ativos": 0,
+        "giro": null,
+        "custo": null,
+        "liquido": null,
+        "maiores": ""
+      },
+      "sem_desconto": {
+        "n_ativos": 0,
+        "giro": null,
+        "custo": null,
+        "liquido": null,
+        "maiores": ""
+      }
+    },
+    "2017": {
+      "com_desconto": {
+        "n_ativos": 0,
+        "giro": 0.0,
+        "custo": 0.0,
+        "liquido": 0.08688227602256071,
+        "maiores": "caixa a Selic (sem carteira-modelo salvável)"
+      },
+      "sem_desconto": {
+        "n_ativos": 0,
+        "giro": 0.0,
+        "custo": 0.0,
+        "liquido": 0.08688227602256071,
+        "maiores": "caixa a Selic (sem carteira-modelo salvável)"
+      }
+    },
+    "2018": {
+      "com_desconto": {
+        "n_ativos": 15,
+        "giro": 1.0000000000000002,
+        "custo": 0.0011737120266312236,
+        "liquido": 0.06768653507950573,
+        "maiores": "ABEV3 9%, BPAC11 9%, HYPE3 9%, DXCO3 7%, EMBJ3 7%"
+      },
+      "sem_desconto": {
+        "n_ativos": 12,
+        "giro": 1.0,
+        "custo": 0.0011011299435025252,
+        "liquido": 0.14382477145761352,
+        "maiores": "ABEV3 13%, B3SA3 13%, BPAC11 13%, DXCO3 7%, EMBJ3 7%"
+      }
+    },
+    "2019": {
+      "com_desconto": {
+        "n_ativos": 13,
+        "giro": 0.7580483967445465,
+        "custo": 0.002060339856367191,
+        "liquido": -0.07281794664182994,
+        "maiores": "BRML3 8%, BRQB3 8%, CIEL3 8%, ISAE4 8%, SAPR4 8%"
+      },
+      "sem_desconto": {
+        "n_ativos": 13,
+        "giro": 0.695365209757801,
+        "custo": 0.0018553906473546566,
+        "liquido": -0.050927844422150814,
+        "maiores": "B3SA3 10%, ISAE4 10%, SAUD3 10%, DXCO3 8%, UNIP6 8%"
+      }
+    },
+    "2020": {
+      "com_desconto": {
+        "n_ativos": 12,
+        "giro": 0.9096808622665393,
+        "custo": 0.0021046237082160356,
+        "liquido": 0.7668352276356087,
+        "maiores": "ISAE4 9%, ITSA3 9%, JBSS3 9%, LAME4 9%, PRIO3 9%"
+      },
+      "sem_desconto": {
+        "n_ativos": 8,
+        "giro": 0.7779716002285088,
+        "custo": 0.001556916818110258,
+        "liquido": 0.9976074240768043,
+        "maiores": "B3SA3 13%, ISAE4 13%, LAME4 13%, PRIO3 13%, RADL3 13%"
+      }
+    },
+    "2021": {
+      "com_desconto": {
+        "n_ativos": 18,
+        "giro": 0.9517023940835412,
+        "custo": 0.002174193135307637,
+        "liquido": 0.2198667359739903,
+        "maiores": "APTI4 7%, BEEF3 7%, CESP6 7%, SANB4 7%, TOTS3 7%"
+      },
+      "sem_desconto": {
+        "n_ativos": 16,
+        "giro": 0.9333333333333332,
+        "custo": 0.0019167682582700188,
+        "liquido": 0.18109811070157766,
+        "maiores": "APTI4 7%, B3SA3 7%, BEEF3 7%, CESP6 7%, SANB4 7%"
+      }
+    },
+    "2022": {
+      "com_desconto": {
+        "n_ativos": 19,
+        "giro": 0.732652516313637,
+        "custo": 0.0019139654243459543,
+        "liquido": -0.12435185617039757,
+        "maiores": "AGRO3 6%, B3SA3 6%, BRQB3 6%, ISAE4 6%, ITSA4 6%"
+      },
+      "sem_desconto": {
+        "n_ativos": 18,
+        "giro": 0.7826332304481753,
+        "custo": 0.002031941372821318,
+        "liquido": -0.1450100876266549,
+        "maiores": "TASA3 6%, AGRO3 6%, AZZA3 6%, B3SA3 6%, BRAP3 6%"
+      }
+    },
+    "2023": {
+      "com_desconto": {
+        "n_ativos": 9,
+        "giro": 0.6608438865305667,
+        "custo": 0.001587179143914741,
+        "liquido": 0.20231206341320895,
+        "maiores": "AGRO3 20%, BBAS3 20%, BRAP3 9%, ENAT3 9%, UNIP3 9%"
+      },
+      "sem_desconto": {
+        "n_ativos": 8,
+        "giro": 0.6698570425107768,
+        "custo": 0.00153390353878427,
+        "liquido": 0.12361488432501644,
+        "maiores": "AGRO3 20%, CMIG4 20%, BRAP3 10%, ENAT3 10%, LOGN3 10%"
+      }
+    },
+    "2024": {
+      "com_desconto": {
+        "n_ativos": 12,
+        "giro": 0.7333333333330101,
+        "custo": 0.0018769172127612891,
+        "liquido": 0.06056040669735441,
+        "maiores": "APTI4 13%, BBAS3 13%, CPFE3 13%, BRAP4 7%, DEXP3 7%"
+      },
+      "sem_desconto": {
+        "n_ativos": 12,
+        "giro": 0.6499999999995907,
+        "custo": 0.0015820603754344348,
+        "liquido": 0.19486181342294095,
+        "maiores": "AGRO3 10%, BBAS3 10%, CMIG4 10%, MBRF3 10%, BRAP3 8%"
+      }
+    },
+    "2025": {
+      "com_desconto": {
+        "n_ativos": 9,
+        "giro": 0.795325264273009,
+        "custo": 0.0017591862602357197,
+        "liquido": 0.3423631158886118,
+        "maiores": "AGRO3 20%, ITUB3 20%, EMBJ3 9%, BRAP3 9%, LEVE3 9%"
+      },
+      "sem_desconto": {
+        "n_ativos": 9,
+        "giro": 0.6547077694573242,
+        "custo": 0.0013360882978273527,
+        "liquido": 0.34293206788028274,
+        "maiores": "AGRO3 20%, ITUB3 20%, EMBJ3 9%, BRAP3 9%, LEVE3 9%"
+      }
+    }
+  },
+  "comeca_em": 2017,
+  "safras_por_carteira": {
+    "com_desconto": [
+      2015,
+      2016,
+      2017,
+      2018,
+      2019,
+      2020,
+      2021,
+      2022,
+      2023,
+      2024,
+      2025
+    ],
+    "sem_desconto": [
+      2015,
+      2016,
+      2017,
+      2018,
+      2019,
+      2020,
+      2021,
+      2022,
+      2023,
+      2024,
+      2025
+    ]
+  },
+  "limites": [
+    "o desconto muda o líder e, com ele, o backtest e a aprovação de cada segmento: a diferença mede os dois efeitos juntos, como na tela",
+    "nove safras não separam sorte de regra com folga"
+  ],
+  "fora_da_regra": [
+    "portão de LLM (Inteligência e gate qualitativo) não roda na medição",
+    "o histórico de compras da aba (aporte que nunca vende) não é a régua; a régua rebalanceia em abril, como a carteira recomendada"
+  ]
+}
